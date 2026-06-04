@@ -32,6 +32,7 @@ This single README is the complete setup and reference document for the package.
 16. Error Handling, Safe Error Responses, and Hidden Technical Logs
 17. Memory Management and Resource Safety
 18. Throughput and Performance Capacity Management
+19. Hide Server IP and Origin Identity Protection
 
 ---
 
@@ -122,6 +123,14 @@ APP_URL=http://localhost
 APP_KEY=CHANGE_ME_WITH_bin_mnb-secure_key_generate
 FORCE_HTTPS=false
 TRUSTED_HOSTS=localhost,127.0.0.1
+
+# Origin/server identity protection
+# PHP can help block direct IP Host requests and remove app-level fingerprint headers.
+# For real origin IP hiding, put the site behind a CDN/reverse proxy and firewall the origin.
+ORIGIN_PROTECTION_ENABLED=true
+BLOCK_DIRECT_IP_HOST=true
+CDN_OR_PROXY_ENABLED=false
+REQUIRE_CDN_OR_PROXY_IN_PRODUCTION=true
 
 SESSION_SECURE=false
 SESSION_HTTP_ONLY=true
@@ -400,7 +409,67 @@ Use `SecurityHeaders` or `SecurityHeadersMiddleware` to attach headers at the re
 
 ---
 
-## 14. Cache strategy
+## 14. Hide server IP and origin identity protection
+
+A PHP library cannot fully hide a public server IP by itself. If DNS points directly to the server, attackers may still find the origin. Real origin IP protection needs deployment controls:
+
+- Put the site behind a CDN, reverse proxy, or load balancer.
+- Proxy the DNS record where your DNS provider supports it.
+- Firewall the origin server so only trusted CDN/proxy IP ranges can reach HTTP/HTTPS ports.
+- Remove or minimize `Server`, `X-Powered-By`, framework, generator, and version headers.
+- Block requests where the `Host` header is a direct IP address.
+- Keep `APP_DEBUG=false` and use safe public error responses in production.
+
+`mnb-secure-core` now includes `ServerIdentityHider` and `ServerIdentityProtectionMiddleware` to help with the application-level part: block direct IP Host requests and strip fingerprint headers from application responses.
+
+```php
+use Mnb\SecurityCore\Http\Middleware\ServerIdentityProtectionMiddleware;
+use Mnb\SecurityCore\Http\MiddlewarePipeline;
+
+$pipeline = new MiddlewarePipeline([
+    new ServerIdentityProtectionMiddleware($config['origin_protection'] ?? []),
+    // other middleware...
+]);
+```
+
+Recommended production config:
+
+```php
+'origin_protection' => [
+    'enabled' => true,
+    'block_direct_ip_host' => true,
+    'cdn_or_proxy_enabled' => true,
+    'require_cdn_or_proxy_in_production' => true,
+    'strip_headers' => ['Server', 'X-Powered-By', 'X-Generator', 'X-Runtime', 'X-Version'],
+],
+```
+
+Important server-level settings:
+
+```apache
+# Apache
+ServerTokens Prod
+ServerSignature Off
+Header unset X-Powered-By
+```
+
+```nginx
+# Nginx
+server_tokens off;
+proxy_hide_header X-Powered-By;
+```
+
+```ini
+; php.ini
+expose_php = Off
+display_errors = Off
+```
+
+Use the production checker to warn when direct IP host access is allowed or origin protection is disabled.
+
+---
+
+## 15. Cache strategy
 
 The cache layer is intended for safe, bounded, non-sensitive data.
 
@@ -414,7 +483,7 @@ Rules:
 
 ---
 
-## 15. Environment and secret management
+## 16. Environment and secret management
 
 Use `.env` only for local configuration and server-specific secrets. Never commit real secrets.
 
@@ -428,7 +497,7 @@ Recommended secret rules:
 
 ---
 
-## 16. Logging, audit, and monitoring
+## 17. Logging, audit, and monitoring
 
 Use two different logging styles:
 
@@ -451,7 +520,7 @@ Never log raw passwords, tokens, cookies, API keys, encryption keys, or private 
 
 ---
 
-## 17. Error handling strategy
+## 18. Error handling strategy
 
 The error handling layer separates public messages from internal diagnostic details.
 
@@ -489,7 +558,7 @@ Recommended public statuses:
 
 ---
 
-## 18. Backup, recovery, and incident response
+## 19. Backup, recovery, and incident response
 
 Backup rules:
 
@@ -511,7 +580,7 @@ Incident response basics:
 
 ---
 
-## 19. Memory management and resource safety
+## 20. Memory management and resource safety
 
 Use memory guards for large files, exports, imports, conversions, and batch operations.
 
@@ -534,7 +603,7 @@ Risk examples:
 
 ---
 
-## 20. Throughput and performance capacity management
+## 21. Throughput and performance capacity management
 
 Throughput controls help prevent accidental overload and abuse.
 
@@ -557,7 +626,7 @@ php bin/mnb-secure throughput:plan 80 150 25 500 900
 
 ---
 
-## 21. Vulnerability blocking matrix
+## 22. Vulnerability blocking matrix
 
 | Vulnerability | Main controls |
 | --- | --- |
@@ -575,10 +644,11 @@ php bin/mnb-secure throughput:plan 80 150 25 500 900
 | Memory exhaustion | Request limits, upload limits, MemoryGuard, chunk processing |
 | Throughput overload | Rate limits, throughput monitor, capacity planner |
 | Unauthorized schema alter | Migration/schema guard with explicit allow-list and permission |
+| Origin IP / server fingerprint exposure | ServerIdentityProtectionMiddleware, trusted hosts, CDN/proxy/firewall checklist |
 
 ---
 
-## 22. Concept to file map
+## 23. Concept to file map
 
 | Concept | Main files/classes |
 | --- | --- |
@@ -600,10 +670,11 @@ php bin/mnb-secure throughput:plan 80 150 25 500 900
 | Safe Error Handling | `src/Errors/*`, `src/Exceptions/*` |
 | Memory Management | `src/Memory/*` |
 | Throughput Management | `src/Throughput/*` |
+| Hide Server IP / Origin Identity | `src/Security/ServerIdentityHider.php`, `src/Http/Middleware/ServerIdentityProtectionMiddleware.php` |
 
 ---
 
-## 23. Demos
+## 24. Demos
 
 Run all CLI demos:
 
@@ -645,10 +716,11 @@ Demo map:
 | Error Handling | `demos/16-error-handling-custom-errors-logs-hidden-frontend.php` |
 | Memory Management | `demos/17-memory-management-resource-safety.php` |
 | Throughput Management | `demos/18-throughput-performance-capacity-management.php` |
+| Hide Server IP / Origin Identity | `demos/19-hide-server-ip-origin-protection.php` |
 
 ---
 
-## 24. CLI commands
+## 25. CLI commands
 
 From package root:
 
@@ -663,7 +735,7 @@ php bin/mnb-secure throughput:plan 80 150 25 500 900
 
 ---
 
-## 25. Testing checklist
+## 26. Testing checklist
 
 Before using this library in production, verify:
 
@@ -687,7 +759,7 @@ Before using this library in production, verify:
 
 ---
 
-## 26. Penetration testing workflow
+## 27. Penetration testing workflow
 
 Only test systems you own or are authorized to test.
 
@@ -719,7 +791,7 @@ Retest result:
 
 ---
 
-## 27. Production checklist
+## 28. Production checklist
 
 Before deployment:
 
@@ -728,6 +800,9 @@ Before deployment:
 - HTTPS enabled
 - HSTS enabled only after HTTPS is stable
 - Trusted hosts configured
+- Direct IP Host requests blocked
+- CDN/reverse proxy enabled when you want to hide the origin server IP
+- Origin firewall allows only trusted proxy/CDN IP ranges
 - Real `APP_KEY` generated and protected
 - Production `.env` not committed
 - Private storage outside public root
@@ -744,7 +819,7 @@ Before deployment:
 
 ---
 
-## 28. Starter integration template
+## 29. Starter integration template
 
 Use `templates/no-framework-app/` as a copy/paste reference for integrating the security core into a custom PHP app.
 
@@ -760,7 +835,7 @@ Typical flow:
 
 ---
 
-## 29. Package structure
+## 30. Package structure
 
 ```text
 mnb-secure-core/
@@ -776,12 +851,3 @@ mnb-secure-core/
 ├── tests/run-tests.php
 └── README.md
 ```
-
----
-
-## 30. Notes for version 1.0
-
-- This ZIP is labeled and packaged as `mnb-secure-core` version `1.0`.
-- Author metadata is set to `Nagendra babu Macharla`.
-- Composer package metadata uses the valid Composer format `mnb/mnb-secure-core` while the library display name remains `mnb-secure-core`.
-- Documentation has been consolidated into this single README to avoid many separate Markdown files.
