@@ -1,0 +1,125 @@
+#!/usr/bin/env php
+<?php
+require __DIR__ . '/../autoload.php';
+
+use Mnb\SecurityCore\Env\EnvLoader;
+use Mnb\SecurityCore\Env\SecretScanner;
+use Mnb\SecurityCore\Security\ProductionSecurityChecker;
+use Mnb\SecurityCore\Security\VulnerabilityMatrix;
+use Mnb\SecurityCore\Pentest\PentestChecklist;
+use Mnb\SecurityCore\Pentest\PayloadLibrary;
+use Mnb\SecurityCore\Pentest\PentestReportBuilder;
+use Mnb\SecurityCore\Pentest\VerificationMatrix;
+use Mnb\SecurityCore\Errors\SafeErrorHandler;
+use Mnb\SecurityCore\Exceptions\AppException;
+use Mnb\SecurityCore\Http\Request;
+use Mnb\SecurityCore\Logging\FileLogger;
+use Mnb\SecurityCore\Memory\MemoryConfig;
+use Mnb\SecurityCore\Memory\MemoryGuard;
+use Mnb\SecurityCore\Throughput\ThroughputConfig;
+use Mnb\SecurityCore\Throughput\ThroughputPlanner;
+
+$command = $argv[1] ?? 'help';
+$root = getcwd();
+$envFile = $root . '/.env';
+if (is_file($envFile)) {
+    EnvLoader::load($envFile);
+}
+$configFile = $root . '/config/security.php';
+$config = is_file($configFile) ? require $configFile : (is_file(__DIR__ . '/../config/security.php') ? require __DIR__ . '/../config/security.php' : []);
+
+switch ($command) {
+    case 'key:generate':
+        echo bin2hex(random_bytes(32)) . PHP_EOL;
+        break;
+    case 'check:production':
+        $report = (new ProductionSecurityChecker($config, $root))->check();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
+    case 'secrets:scan':
+        $findings = (new SecretScanner())->scanDirectory($root);
+        echo json_encode(['findings' => $findings], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(count($findings) === 0 ? 0 : 1);
+    case 'matrix:export':
+        echo json_encode((new VulnerabilityMatrix())->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'pentest:checklist':
+        echo json_encode((new PentestChecklist())->grouped(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'pentest:payloads':
+        echo json_encode((new PayloadLibrary())->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'pentest:matrix':
+        echo json_encode((new VerificationMatrix())->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'pentest:report-template':
+        echo (new PentestReportBuilder())->buildMarkdown('Application Name', ['Web admin', 'API', 'Database', 'Files'], []);
+        break;
+    case 'memory:check':
+        $memoryConfig = MemoryConfig::fromArray($config['memory'] ?? []);
+        $guard = new MemoryGuard($memoryConfig);
+        echo json_encode([
+            'memory_limit' => $memoryConfig->isUnlimited() ? 'unlimited' : MemoryGuard::bytesToHuman($memoryConfig->maxBytes()),
+            'warning_at' => $memoryConfig->isUnlimited() ? null : MemoryGuard::bytesToHuman($memoryConfig->warningBytes()),
+            'critical_at' => $memoryConfig->isUnlimited() ? null : MemoryGuard::bytesToHuman($memoryConfig->criticalBytes()),
+            'snapshot' => $guard->snapshot('cli-memory-check')->toArray(),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'memory:sample-plan':
+        $memoryConfig = MemoryConfig::fromArray($config['memory'] ?? []);
+        $guard = new MemoryGuard($memoryConfig);
+        $averageItemBytes = (int)($argv[2] ?? 2048);
+        echo json_encode([
+            'average_item_bytes' => $averageItemBytes,
+            'recommended_chunk_size' => $guard->recommendedChunkSize($averageItemBytes),
+            'default_chunk_size' => $memoryConfig->defaultChunkSize(),
+            'min_chunk_size' => $memoryConfig->minChunkSize(),
+            'max_chunk_size' => $memoryConfig->maxChunkSize(),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:check':
+        $throughputConfig = ThroughputConfig::fromArray($config['throughput'] ?? []);
+        echo json_encode([
+            'target_rps' => $throughputConfig->targetRequestsPerSecond(),
+            'warning_latency_ms' => $throughputConfig->warningLatencyMs(),
+            'critical_latency_ms' => $throughputConfig->criticalLatencyMs(),
+            'max_concurrency' => $throughputConfig->maxConcurrency(),
+            'queue_warning_depth' => $throughputConfig->queueWarningDepth(),
+            'sample_window_seconds' => $throughputConfig->sampleWindowSeconds(),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:plan':
+        $targetRps = (float)($argv[2] ?? (($config['throughput']['target_rps'] ?? 50)));
+        $averageLatencyMs = (float)($argv[3] ?? 150);
+        $maxConcurrency = (int)($argv[4] ?? (($config['throughput']['max_concurrency'] ?? 25)));
+        $queueDepth = (int)($argv[5] ?? 0);
+        $averageJobMs = (float)($argv[6] ?? 1000);
+        echo json_encode(ThroughputPlanner::plan($targetRps, $averageLatencyMs, $maxConcurrency, $queueDepth, $averageJobMs), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'errors:sample-response':
+        $config['app']['env'] = $config['app']['env'] ?? 'production';
+        $config['app']['debug'] = false;
+        $config['errors']['response_format'] = 'json';
+        $logPath = ($config['paths']['logs'] ?? ($root . '/storage/logs')) . '/cli-error-sample.log';
+        $handler = new SafeErrorHandler(new FileLogger($logPath), $config);
+        $response = $handler->renderThrowable(new AppException('Internal CLI sample error token=secret', 'Sample safe error message.', 500, 'SAMPLE_ERROR'), new Request('GET', '/cli/errors/sample', [], [], ['accept' => 'application/json']));
+        echo $response->body() . PHP_EOL;
+        break;
+    default:
+        echo "MNB Secure Core v1.0 CLI\n";
+        echo "Commands:\n";
+        echo "  key:generate             Generate 64-char app key\n";
+        echo "  check:production         Run production security readiness checks\n";
+        echo "  secrets:scan             Scan project for accidental secrets\n";
+        echo "  matrix:export            Export vulnerability blocking matrix\n";
+        echo "  pentest:checklist        Export pentest checklist\n";
+        echo "  pentest:payloads         Export safe pentest payload library\n";
+        echo "  pentest:matrix           Export verification matrix\n";
+        echo "  pentest:report-template  Print pentest report template\n";
+        echo "  errors:sample-response   Show safe error response and write private error log\n";
+        echo "  memory:check             Show PHP memory limit, thresholds, and current snapshot\n";
+        echo "  memory:sample-plan       Show recommended chunk size for an item byte estimate\n";
+        echo "  throughput:check         Show throughput thresholds and capacity settings\n";
+        echo "  throughput:plan          Plan concurrency/workers: rps latency_ms concurrency queue_depth job_ms\n";
+        break;
+}

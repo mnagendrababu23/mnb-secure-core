@@ -1,0 +1,39 @@
+{
+  "name": "mnb/mnb-secure-core",
+  "description": "mnb-secure-core v1.0 reusable no-framework PHP security core for custom applications.",
+  "version": "1.0.0",
+  "type": "library",
+  "license": "proprietary",
+  "authors": [
+    {
+      "name": "Nagendra babu Macharla"
+    }
+  ],
+  "keywords": [
+    "mnb-secure-core",
+    "php-security",
+    "no-framework",
+    "security-core",
+    "csrf",
+    "rate-limiting",
+    "audit-logging"
+  ],
+  "require": {
+    "php": ">=8.1"
+  },
+  "autoload": {
+    "psr-4": {
+      "Mnb\\SecurityCore\\": "src/"
+    }
+  },
+  "bin": [
+    "bin/mnb-secure"
+  ],
+  "scripts": {
+    "test": "php tests/run-tests.php",
+    "demo": "php demos/run-all-demos.php"
+  },
+  "extra": {
+    "library-name": "mnb-secure-core"
+  }
+}

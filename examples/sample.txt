@@ -1,0 +1,1 @@
+Sample safe text upload file.
