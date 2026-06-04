@@ -47,6 +47,16 @@ return [
         'referrer_policy' => 'strict-origin-when-cross-origin',
     ],
 
+    'origin_protection' => [
+        // This helps hide server/application identity. To truly hide the origin IP,
+        // also use a CDN/reverse proxy and firewall the origin server.
+        'enabled' => filter_var($_ENV['ORIGIN_PROTECTION_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'block_direct_ip_host' => filter_var($_ENV['BLOCK_DIRECT_IP_HOST'] ?? true, FILTER_VALIDATE_BOOL),
+        'cdn_or_proxy_enabled' => filter_var($_ENV['CDN_OR_PROXY_ENABLED'] ?? false, FILTER_VALIDATE_BOOL),
+        'require_cdn_or_proxy_in_production' => filter_var($_ENV['REQUIRE_CDN_OR_PROXY_IN_PRODUCTION'] ?? true, FILTER_VALIDATE_BOOL),
+        'strip_headers' => ['Server', 'X-Powered-By', 'X-AspNet-Version', 'X-AspNetMvc-Version', 'X-Generator', 'X-Runtime', 'X-Version'],
+    ],
+
 
     'errors' => [
         'hide_frontend_errors' => true,

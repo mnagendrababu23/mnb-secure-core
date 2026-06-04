@@ -15,6 +15,7 @@ class ProductionSecurityChecker
         $cookies = $this->config['cookies'] ?? [];
         $paths = $this->config['paths'] ?? [];
         $errors = $this->config['errors'] ?? [];
+        $originProtection = $this->config['origin_protection'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -36,6 +37,23 @@ class ProductionSecurityChecker
         }
         if (empty($app['trusted_hosts'])) {
             $issues[] = ['level' => 'medium', 'key' => 'trusted_hosts_empty', 'message' => 'Trusted hosts list is empty.'];
+        }
+        foreach ((array)($app['trusted_hosts'] ?? []) as $trustedHost) {
+            if (ServerIdentityHider::isIpAddressHost((string)$trustedHost)) {
+                $issues[] = ['level' => 'medium', 'key' => 'trusted_host_is_ip', 'message' => 'Trusted hosts should prefer public domains, not direct server IP addresses.'];
+                break;
+            }
+        }
+        if (($app['env'] ?? 'local') === 'production') {
+            if (empty($originProtection['enabled'])) {
+                $issues[] = ['level' => 'medium', 'key' => 'origin_protection_disabled', 'message' => 'Origin/server identity protection should be enabled in production.'];
+            }
+            if (empty($originProtection['block_direct_ip_host'])) {
+                $issues[] = ['level' => 'high', 'key' => 'direct_ip_host_allowed', 'message' => 'Direct IP Host requests should be blocked in production.'];
+            }
+            if (!empty($originProtection['require_cdn_or_proxy_in_production']) && empty($originProtection['cdn_or_proxy_enabled'])) {
+                $issues[] = ['level' => 'medium', 'key' => 'cdn_or_proxy_not_marked_enabled', 'message' => 'Use a CDN/reverse proxy plus firewall rules to truly hide the origin server IP.'];
+            }
         }
         foreach (['private_storage', 'backups', 'logs', 'audit'] as $key) {
             if (!empty($paths[$key]) && $this->looksPublic((string)$paths[$key])) {

@@ -27,6 +27,17 @@ class Response
         return $clone;
     }
 
+    public function withoutHeader(string $name): self
+    {
+        $clone = clone $this;
+        foreach (array_keys($clone->headers) as $existingName) {
+            if (strcasecmp((string)$existingName, $name) === 0) {
+                unset($clone->headers[$existingName]);
+            }
+        }
+        return $clone;
+    }
+
     public function status(): int { return $this->status; }
     public function body(): string { return $this->body; }
     public function headers(): array { return $this->headers; }

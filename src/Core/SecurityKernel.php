@@ -9,6 +9,7 @@ use Mnb\SecurityCore\RateLimit\FileRateLimiter;
 use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
 use Mnb\SecurityCore\Logging\FileLogger;
+use Mnb\SecurityCore\Security\ServerIdentityHider;
 
 class SecurityKernel
 {
@@ -35,5 +36,10 @@ class SecurityKernel
     {
         $logger = new FileLogger($this->config['paths']['logs'] . '/memory.log');
         return new MemoryGuard(MemoryConfig::fromArray($this->config['memory'] ?? []), $logger);
+    }
+
+    public function serverIdentityHider(): ServerIdentityHider
+    {
+        return new ServerIdentityHider($this->config['origin_protection'] ?? []);
     }
 }
