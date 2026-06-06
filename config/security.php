@@ -20,6 +20,7 @@ return [
         'logs' => $_ENV['LOG_PATH'] ?? __DIR__ . '/../storage/logs',
         'audit' => $_ENV['AUDIT_PATH'] ?? __DIR__ . '/../storage/audit',
         'backups' => $_ENV['BACKUP_PATH'] ?? __DIR__ . '/../storage/backups',
+        'tokens' => $_ENV['TOKEN_STORE_FILE'] ?? __DIR__ . '/../storage/tokens/tokens.json',
     ],
     'limits' => [
         'request_max_bytes' => 5 * 1024 * 1024,
@@ -32,9 +33,47 @@ return [
     'uploads' => [
         'allowed_extensions' => ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv'],
         'allowed_mime_prefixes' => ['image/', 'application/pdf', 'text/', 'application/vnd.', 'application/msword'],
+        'blocked_extensions' => ['php', 'phtml', 'phar', 'cgi', 'pl', 'sh', 'exe', 'com', 'bat', 'cmd', 'js', 'html', 'htm', 'svg'],
         'deny_double_extensions' => true,
         'randomize_names' => true,
+        'max_original_name_length' => 180,
+        'reject_executable_content' => true,
+        'scanner' => [
+            // none, heuristic, clamav, composite
+            'driver' => $_ENV['UPLOAD_SCANNER_DRIVER'] ?? 'heuristic',
+            'clamav_binary' => $_ENV['CLAMAV_BINARY'] ?? 'clamscan',
+            'timeout_seconds' => (int)($_ENV['UPLOAD_SCAN_TIMEOUT'] ?? 30),
+            'fail_closed' => filter_var($_ENV['UPLOAD_SCAN_FAIL_CLOSED'] ?? false, FILTER_VALIDATE_BOOL),
+            'heuristic_read_bytes' => (int)($_ENV['UPLOAD_HEURISTIC_READ_BYTES'] ?? 2097152),
+        ],
     ],
+
+    'cache' => [
+        // file, redis, database
+        'driver' => $_ENV['CACHE_DRIVER'] ?? 'file',
+        'prefix' => $_ENV['CACHE_PREFIX'] ?? 'mnb:cache:',
+        'table' => $_ENV['CACHE_TABLE'] ?? 'mnb_cache',
+    ],
+    'rate_limiter' => [
+        // file, redis, database
+        'driver' => $_ENV['RATE_LIMIT_DRIVER'] ?? 'file',
+        'prefix' => $_ENV['RATE_LIMIT_PREFIX'] ?? 'mnb:rate:',
+        'table' => $_ENV['RATE_LIMIT_TABLE'] ?? 'mnb_rate_limits',
+    ],
+    'token_store' => [
+        // file, redis, database
+        'driver' => $_ENV['TOKEN_STORE_DRIVER'] ?? 'file',
+        'prefix' => $_ENV['TOKEN_STORE_PREFIX'] ?? 'mnb:token:',
+        'table' => $_ENV['TOKEN_STORE_TABLE'] ?? 'mnb_api_tokens',
+    ],
+    'redis' => [
+        'host' => $_ENV['REDIS_HOST'] ?? '127.0.0.1',
+        'port' => (int)($_ENV['REDIS_PORT'] ?? 6379),
+        'password' => $_ENV['REDIS_PASSWORD'] ?? null,
+        'database' => isset($_ENV['REDIS_DATABASE']) ? (int)$_ENV['REDIS_DATABASE'] : null,
+        'timeout' => (float)($_ENV['REDIS_TIMEOUT'] ?? 1.5),
+    ],
+
     'cors' => [
         'allowed_origins' => ['http://localhost'],
         'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

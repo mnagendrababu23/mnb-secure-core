@@ -27,7 +27,9 @@ use Mnb\SecurityCore\Exceptions\SecurityException;
 use Mnb\SecurityCore\Files\FileUploadPolicy;
 use Mnb\SecurityCore\Files\LocalPrivateStorage;
 use Mnb\SecurityCore\Files\SecureFileManager;
+use Mnb\SecurityCore\Files\HeuristicMalwareScanner;
 use Mnb\SecurityCore\Http\Middleware\HttpsMiddleware;
+use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
 use Mnb\SecurityCore\Http\MiddlewarePipeline;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Http\Response;
@@ -132,6 +134,19 @@ ok($storage->exists($stored['storage_path']), 'secure file upload accepts safe f
 $blocked = false;
 try { $manager->storeFromPath($safe, 'evil.php.txt', 'test'); } catch (SecurityException $e) { $blocked = true; }
 ok($blocked, 'secure file upload blocks double extension');
+
+$malicious = $base . '/malicious.txt';
+file_put_contents($malicious, '<?php system($_GET["cmd"]);');
+$scanner = new HeuristicMalwareScanner();
+ok(!$scanner->scan($malicious), 'heuristic malware scanner blocks executable PHP pattern');
+
+$blockedContent = false;
+try { $manager->storeFromPath($malicious, 'malicious.txt', 'test'); } catch (SecurityException $e) { $blockedContent = true; }
+ok($blockedContent, 'secure file upload blocks executable content patterns');
+
+$headersPipeline = new MiddlewarePipeline([new SecurityHeadersMiddleware(['hsts' => true])]);
+$headersResponse = $headersPipeline->handle(new Request('GET', '/', [], [], [], ['HTTPS' => 'on']), fn() => Response::text('ok'));
+ok(isset($headersResponse->headers()['Content-Security-Policy']) && isset($headersResponse->headers()['Strict-Transport-Security']), 'security headers middleware applies CSP and HSTS');
 
 $request = new Request('GET', '/', [], [], [], ['HTTPS' => 'off']);
 $pipeline = new MiddlewarePipeline([new HttpsMiddleware(true)]);

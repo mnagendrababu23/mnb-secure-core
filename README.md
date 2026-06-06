@@ -190,14 +190,14 @@ use Mnb\SecurityCore\Http\Response;
 $request = Request::fromGlobals();
 
 $pipeline = new MiddlewarePipeline([
-    new TrustedHostMiddleware($config['trusted_hosts'] ?? []),
-    new HttpsMiddleware((bool)($config['force_https'] ?? false)),
-    new RequestSizeMiddleware((int)($config['max_request_bytes'] ?? 2097152)),
-    new SecurityHeadersMiddleware($config['headers'] ?? []),
+    new TrustedHostMiddleware($config['app']['trusted_hosts'] ?? []),
+    new HttpsMiddleware((bool)($config['app']['force_https'] ?? false)),
+    new RequestSizeMiddleware((int)($config['limits']['request_max_bytes'] ?? 2097152)),
+    new SecurityHeadersMiddleware($config['security_headers'] ?? []),
 ]);
 
 $response = $pipeline->handle($request, function (Request $request): Response {
-    return new Response('Secure page');
+    return Response::text('Secure page');
 });
 
 $response->send();
@@ -209,28 +209,29 @@ $response->send();
 
 ```php
 use Mnb\SecurityCore\Auth\OpaqueTokenService;
-use Mnb\SecurityCore\Auth\Stores\FileTokenStore;
-use Mnb\SecurityCore\RateLimit\FileRateLimiter;
+use Mnb\SecurityCore\Core\SecurityKernel;
 use Mnb\SecurityCore\Http\Request;
 
-$store = new FileTokenStore(__DIR__ . '/../storage/tokens');
-$tokens = new OpaqueTokenService($store);
+$security = new SecurityKernel($config);
+$tokens = new OpaqueTokenService($security->tokenStore());
 
-$issued = $tokens->issue('user-1001', ['api:read'], 3600);
+$issued = $tokens->issue('user-1001', ['api:read'], ttlSeconds: 3600);
 
 $request = Request::fromGlobals();
 $plainToken = $request->bearerToken();
+$record = $plainToken ? $tokens->validate($plainToken, $request->ip(), (string)$request->header('user-agent', '')) : null;
 
-if (!$plainToken || !$tokens->verify($plainToken, 'api:read')) {
+if (!$record || !in_array('api:read', $record['scopes'] ?? [], true)) {
     http_response_code(401);
     exit('Unauthorized');
 }
 
-$limiter = new FileRateLimiter(__DIR__ . '/../storage/cache/rate-limits');
-$result = $limiter->hit('api:' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 60, 120);
+$limiter = $security->rateLimiter();
+$result = $limiter->attempt('api:' . $request->ip(), 120, 60);
 
 if (!$result->allowed) {
     http_response_code(429);
+    header('Retry-After: ' . $result->retryAfter);
     exit('Too many requests');
 }
 ```
@@ -242,12 +243,15 @@ if (!$result->allowed) {
 ```php
 use Mnb\SecurityCore\Auth\Csrf;
 
-$csrf = new Csrf($_SESSION);
+$csrf = new Csrf('_csrf_token');
 $token = $csrf->token();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $postedToken = $_POST['_csrf'] ?? '';
-    $csrf->validate($postedToken);
+    if (!$csrf->verify($postedToken)) {
+        http_response_code(419);
+        exit('Invalid CSRF token');
+    }
 }
 ```
 
@@ -292,7 +296,7 @@ $crypto = new Encryption($_ENV['APP_KEY']);
 $cipherText = $crypto->encrypt('Sensitive value');
 $plainText = $crypto->decrypt($cipherText);
 
-$maskedEmail = DataMasker::email('student@example.com');
+$maskedEmail = (new DataMasker())->email('student@example.com');
 ```
 
 Protect secrets and sensitive data using encryption, masking, and field-level filtering. Never log raw passwords, tokens, session IDs, API keys, cookies, private file paths, or full database error traces.
@@ -319,30 +323,28 @@ use Mnb\SecurityCore\Database\PdoConnectionFactory;
 use Mnb\SecurityCore\Database\SecureDatabase;
 use Mnb\SecurityCore\Database\TableSecurityPolicy;
 
-$dbConfig = new DatabaseConfig(
-    driver: 'mysql',
-    host: '127.0.0.1',
-    database: 'app_db',
-    username: 'app_user',
-    password: 'secret',
-);
+$dbConfig = DatabaseConfig::fromArray([
+    'driver' => 'mysql',
+    'host' => '127.0.0.1',
+    'database' => 'app_db',
+    'username' => 'app_user',
+    'password' => 'secret',
+]);
 
-$connection = PdoConnectionFactory::make($dbConfig);
+$connection = (new PdoConnectionFactory())->create($dbConfig);
 
 $policy = new TableSecurityPolicy(
     table: 'students',
-    allowedColumns: ['id', 'school_id', 'name', 'class', 'status'],
-    tenantColumn: 'school_id',
-    requiredPermissions: [
-        'view' => 'student.view',
-        'create' => 'student.create',
-        'update' => 'student.update',
-        'delete' => 'student.delete',
-    ]
+    resourceType: 'student',
+    selectableColumns: ['id', 'school_id', 'name', 'class_id', 'status'],
+    insertableColumns: ['name', 'class_id', 'status'],
+    updatableColumns: ['name', 'class_id', 'status'],
+    searchableColumns: ['name'],
+    orderableColumns: ['id', 'name']
 );
 
-$secureDb = new SecureDatabase($connection);
-$rows = $secureDb->search($context, $policy, ['status' => 'active'], limit: 50);
+// Pair SecureDatabase with a PolicyRegistry and AuditLogger as shown in examples/secure-database.php.
+$rows = $connection->fetchAll('SELECT id, name FROM students WHERE school_id = ? LIMIT 50', [$context->schoolId]);
 ```
 
 Database operation rules:
@@ -357,29 +359,67 @@ Database operation rules:
 | Search | Allow-list searchable columns and cap limits |
 | Alter | Use schema guard with explicit permission and allow-list |
 
+
 ---
 
-## 12. File upload, download, and private document pattern
+## 12. Redis and database-backed storage options
+
+File-based cache, rate limits, and token storage are simple and good for one server. For high traffic or multiple web servers, use Redis or a database-backed store.
+
+```php
+use Mnb\SecurityCore\Core\SecurityKernel;
+
+$security = new SecurityKernel($config);
+
+$cache = $security->cache();        // file, redis, or database based on config/security.php
+$limiter = $security->rateLimiter();
+$tokenStore = $security->tokenStore();
+```
+
+Relevant config keys:
+
+```php
+$config['cache']['driver'];        // file, redis, database
+$config['rate_limiter']['driver']; // file, redis, database
+$config['token_store']['driver'];  // file, redis, database
+$config['redis'];                  // host, port, password, database, timeout
+```
+
+Database-backed stores create their lightweight tables automatically when first used. Redis stores need the PHP `ext-redis` extension and a reachable Redis server.
+
+## 13. File upload, download, and private document pattern
 
 ```php
 use Mnb\SecurityCore\Files\FileUploadPolicy;
 use Mnb\SecurityCore\Files\SecureFileManager;
 use Mnb\SecurityCore\Files\LocalPrivateStorage;
-use Mnb\SecurityCore\Files\NullMalwareScanner;
+use Mnb\SecurityCore\Files\CompositeMalwareScanner;
+use Mnb\SecurityCore\Files\HeuristicMalwareScanner;
+use Mnb\SecurityCore\Files\ClamAvMalwareScanner;
 
 $policy = new FileUploadPolicy(
+    allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg'],
+    allowedMimePrefixes: ['application/pdf', 'image/png', 'image/jpeg'],
     maxBytes: 5 * 1024 * 1024,
-    allowedMimeTypes: ['application/pdf', 'image/png', 'image/jpeg'],
-    allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg']
 );
+
+$scanner = new CompositeMalwareScanner([
+    new HeuristicMalwareScanner(),
+    new ClamAvMalwareScanner(failClosedWhenUnavailable: false),
+]);
 
 $manager = new SecureFileManager(
-    $policy,
     new LocalPrivateStorage(__DIR__ . '/../storage/private'),
-    new NullMalwareScanner()
+    $policy,
+    __DIR__ . '/../storage/quarantine',
+    $scanner
 );
 
-$result = $manager->store($_FILES['document']);
+$result = $manager->storeFromPath(
+    $_FILES['document']['tmp_name'],
+    $_FILES['document']['name'],
+    'documents'
+);
 ```
 
 File security checklist:
@@ -394,7 +434,7 @@ File security checklist:
 
 ---
 
-## 13. Security headers
+## 14. Security headers
 
 Recommended production headers:
 
@@ -409,7 +449,7 @@ Use `SecurityHeaders` or `SecurityHeadersMiddleware` to attach headers at the re
 
 ---
 
-## 14. Hide server IP and origin identity protection
+## 15. Hide server IP and origin identity protection
 
 A PHP library cannot fully hide a public server IP by itself. If DNS points directly to the server, attackers may still find the origin. Real origin IP protection needs deployment controls:
 

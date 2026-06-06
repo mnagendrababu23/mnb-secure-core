@@ -50,4 +50,9 @@ class PdoDatabaseConnection implements DatabaseConnectionInterface
     {
         return $this->pdo->lastInsertId();
     }
+
+    public function pdo(): PDO
+    {
+        return $this->pdo;
+    }
 }

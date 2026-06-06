@@ -37,6 +37,8 @@ class SecureFileManager
         if (!$this->mimeAllowed($mime)) {
             throw new SecurityException('File MIME type is not allowed: ' . $mime);
         }
+        $this->validateMimeExtensionPair($extension, $mime);
+        $this->validateFileContent($sourcePath, $extension, $mime);
 
         $quarantine = rtrim($this->quarantinePath, '/') . '/' . Str::random(12) . '.' . $extension;
         copy($sourcePath, $quarantine);
@@ -67,16 +69,77 @@ class SecureFileManager
 
     private function validateName(string $name): void
     {
-        $base = basename($name);
+        if (str_contains($name, "\0")) {
+            throw new SecurityException('Upload filename contains a null byte');
+        }
+        $base = basename(str_replace('\\', '/', $name));
+        if ($base === '' || $base === '.' || $base === '..') {
+            throw new SecurityException('Upload filename is invalid');
+        }
+        if (strlen($base) > $this->policy->maxOriginalNameLength) {
+            throw new SecurityException('Upload filename is too long');
+        }
+
+        $parts = array_values(array_filter(array_map('strtolower', explode('.', $base)), fn($part) => $part !== ''));
+        if (!$parts) {
+            throw new SecurityException('Upload filename has no extension');
+        }
+        $finalExtension = end($parts);
+        if (in_array($finalExtension, $this->policy->blockedExtensions, true)) {
+            throw new SecurityException('Executable upload extension is not allowed');
+        }
         if ($this->policy->denyDoubleExtensions) {
-            $dangerous = ['php', 'phtml', 'phar', 'cgi', 'pl', 'sh', 'exe', 'js', 'html'];
-            $parts = array_map('strtolower', explode('.', $base));
             array_pop($parts);
             foreach ($parts as $part) {
-                if (in_array($part, $dangerous, true)) {
+                if (in_array($part, $this->policy->blockedExtensions, true)) {
                     throw new SecurityException('Double extension is not allowed');
                 }
             }
+        }
+    }
+
+
+    private function validateMimeExtensionPair(string $extension, string $mime): void
+    {
+        $map = $this->policy->mimeByExtension ?: [
+            'jpg' => ['image/jpeg'],
+            'jpeg' => ['image/jpeg'],
+            'png' => ['image/png'],
+            'gif' => ['image/gif'],
+            'webp' => ['image/webp'],
+            'pdf' => ['application/pdf'],
+            'txt' => ['text/plain'],
+            'csv' => ['text/plain', 'text/csv', 'application/csv', 'application/vnd.ms-excel'],
+            'json' => ['application/json', 'text/plain'],
+            'xml' => ['application/xml', 'text/xml', 'text/plain'],
+            'doc' => ['application/msword', 'application/octet-stream'],
+            'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip'],
+            'xls' => ['application/vnd.ms-excel', 'application/octet-stream'],
+            'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip'],
+        ];
+        if (!isset($map[$extension])) {
+            return;
+        }
+        if (!in_array($mime, $map[$extension], true)) {
+            throw new SecurityException('File MIME type does not match extension');
+        }
+    }
+
+    private function validateFileContent(string $path, string $extension, string $mime): void
+    {
+        if (!$this->policy->rejectExecutableContent) {
+            return;
+        }
+        $sample = file_get_contents($path, false, null, 0, 2097152) ?: '';
+        $textLike = str_starts_with($mime, 'text/') || in_array($extension, ['txt', 'csv', 'json', 'xml'], true);
+        if ($textLike && preg_match('/<\?(php|=)?|<\s*script\b|\b(eval|shell_exec|passthru|system|exec|proc_open|popen)\s*\(/i', $sample)) {
+            throw new SecurityException('Upload content contains executable code patterns');
+        }
+        if ($extension === 'pdf' && !str_starts_with($sample, '%PDF-')) {
+            throw new SecurityException('PDF signature is invalid');
+        }
+        if (in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true) && @getimagesize($path) === false) {
+            throw new SecurityException('Image signature is invalid');
         }
     }
 

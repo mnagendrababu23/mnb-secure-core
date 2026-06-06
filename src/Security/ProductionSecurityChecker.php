@@ -16,6 +16,7 @@ class ProductionSecurityChecker
         $paths = $this->config['paths'] ?? [];
         $errors = $this->config['errors'] ?? [];
         $originProtection = $this->config['origin_protection'] ?? [];
+        $uploads = $this->config['uploads'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -54,6 +55,12 @@ class ProductionSecurityChecker
             if (!empty($originProtection['require_cdn_or_proxy_in_production']) && empty($originProtection['cdn_or_proxy_enabled'])) {
                 $issues[] = ['level' => 'medium', 'key' => 'cdn_or_proxy_not_marked_enabled', 'message' => 'Use a CDN/reverse proxy plus firewall rules to truly hide the origin server IP.'];
             }
+        }
+        if (($app['env'] ?? 'local') === 'production' && (($uploads['scanner']['driver'] ?? 'heuristic') === 'none')) {
+            $issues[] = ['level' => 'medium', 'key' => 'upload_scanner_disabled', 'message' => 'Enable at least heuristic upload scanning in production.'];
+        }
+        if (!empty($uploads['allowed_extensions']) && array_intersect((array)$uploads['allowed_extensions'], ['php', 'phtml', 'phar', 'exe', 'sh'])) {
+            $issues[] = ['level' => 'critical', 'key' => 'executable_upload_extension_allowed', 'message' => 'Executable upload extensions must not be allowed.'];
         }
         foreach (['private_storage', 'backups', 'logs', 'audit'] as $key) {
             if (!empty($paths[$key]) && $this->looksPublic((string)$paths[$key])) {
