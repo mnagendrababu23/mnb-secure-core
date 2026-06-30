@@ -5,7 +5,7 @@
 **Type:** reusable no-framework PHP security library  
 **PHP:** 8.1+  
 **License:** MIT  
-**Author:** Nagendra babu Macharla
+**Author:** Nagendra babu Macharla (www.linkedin.com/in/nagendra-babu-macharla-55b703152)
 
 MNB Secure Core is a reusable PHP security foundation for custom applications that do not depend on a framework. It is designed for admin panels, APIs, school/ERP systems, CRM tools, billing platforms, file tools, reporting dashboards, and other PHP applications that need production-grade security building blocks without adopting Laravel/Symfony/Slim as a hard dependency.
 
