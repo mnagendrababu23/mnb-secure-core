@@ -376,3 +376,7 @@ MNB Secure Core v1.0.1 adds the Async Request, Response Queue, and Background Jo
 - Demo `demos/38-async-request-response-queue-background-job-engine.php`.
 - Pentest payloads/checklist/matrix coverage for background job risks.
 - Vulnerability matrix coverage for unsafe background jobs, duplicate execution, retry storms, dead-letter growth, payload secret exposure, queue overload, stale workers, and privilege confusion.
+
+## v1.0.1 — Upgrade 35: Token Revocation and Session Control Engine
+
+Added the Token Revocation and Session Control Engine, introducing token lifecycle governance, refresh token rotation, revocation stores, token introspection, replay/reuse detection, session registry, session rotation, forced logout, concurrent session limits, remember-me token rotation, device session tracking, CLI diagnostics, pentest coverage, and vulnerability matrix coverage for token/session risks.

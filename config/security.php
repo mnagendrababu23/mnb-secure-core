@@ -1539,6 +1539,92 @@ return [
         'release_gate' => ['enabled' => true, 'block_on_failed_jobs' => false, 'block_on_dead_letter_growth' => true, 'block_on_queue_overload' => true, 'block_on_missing_handlers' => true],
     ],
 
+
+    'tokens' => [
+        'enabled' => true,
+        'access_tokens' => [
+            'ttl_seconds' => (int)(getenv('TOKEN_ACCESS_TTL') ?: 900),
+            'require_jti' => true,
+            'require_fingerprint' => true,
+            'allow_after_password_change' => false,
+            'allow_after_role_change' => false,
+        ],
+        'refresh_tokens' => [
+            'enabled' => true,
+            'ttl_seconds' => (int)(getenv('TOKEN_REFRESH_TTL') ?: 2592000),
+            'rotation_enabled' => true,
+            'reuse_detection_enabled' => true,
+            'revoke_family_on_reuse' => true,
+            'max_family_size' => 50,
+        ],
+        'api_tokens' => [
+            'enabled' => true,
+            'require_hash_storage' => true,
+            'allow_plaintext_storage' => false,
+            'ttl_seconds' => (int)(getenv('TOKEN_API_TTL') ?: 7776000),
+            'last_used_tracking' => true,
+        ],
+        'revocation' => [
+            'enabled' => true,
+            'store' => getenv('TOKEN_REVOCATION_STORE') ?: 'file',
+            'path' => __DIR__ . '/../storage/tokens/revoked',
+            'check_on_every_request' => true,
+            'cleanup_expired_records' => true,
+            'retain_revoked_days' => 30,
+        ],
+        'introspection' => [
+            'enabled' => true,
+            'include_reason' => false,
+            'include_user_id' => false,
+            'safe_public_status_only' => true,
+        ],
+    ],
+
+    'sessions' => [
+        'enabled' => true,
+        'registry' => [
+            'enabled' => true,
+            'store' => getenv('SESSION_REGISTRY_STORE') ?: 'file',
+            'path' => __DIR__ . '/../storage/tokens/sessions',
+        ],
+        'timeouts' => [
+            'idle_timeout_seconds' => (int)(getenv('SESSION_IDLE_TIMEOUT') ?: 1800),
+            'absolute_timeout_seconds' => (int)(getenv('SESSION_ABSOLUTE_TIMEOUT') ?: 43200),
+            'remember_me_timeout_seconds' => (int)(getenv('REMEMBER_ME_TIMEOUT') ?: 2592000),
+        ],
+        'rotation' => [
+            'rotate_on_login' => true,
+            'rotate_on_privilege_change' => true,
+            'rotate_on_password_change' => true,
+        ],
+        'concurrency' => [
+            'enabled' => true,
+            'max_sessions_per_user' => 5,
+            'max_admin_sessions_per_user' => 2,
+            'when_exceeded' => 'revoke_oldest',
+        ],
+        'device_tracking' => [
+            'enabled' => true,
+            'fingerprint_user_agent' => true,
+            'fingerprint_ip_prefix' => true,
+            'detect_location_change' => false,
+        ],
+        'forced_logout' => [
+            'enabled' => true,
+            'on_password_change' => true,
+            'on_role_change' => true,
+            'on_permission_change' => true,
+            'on_account_disabled' => true,
+            'on_security_incident' => true,
+        ],
+        'remember_me' => [
+            'enabled' => true,
+            'rotate_on_use' => true,
+            'hash_storage' => true,
+            'revoke_on_password_change' => true,
+        ],
+    ],
+
     'pentest' => [
         'enabled' => filter_var(getenv('PENTEST_ENABLED') ?: true, FILTER_VALIDATE_BOOL),
         'safe_mode' => true,

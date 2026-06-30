@@ -55,6 +55,7 @@ class SecurityConfigValidator
         $this->validateDatabase();
         $this->validateThroughput();
         $this->validateQueue();
+        $this->validateTokenSessionControl();
         $this->validatePentest();
 
         $errors = array_values(array_filter($this->issues, fn(array $issue): bool => in_array($issue['level'], ['critical', 'high'], true)));
@@ -2456,6 +2457,48 @@ class SecurityConfigValidator
         foreach (['max_depth','max_string_bytes'] as $key) { if (isset($payload[$key])) { $this->positiveInt($payload, $key, 'queue.payload_security.' . $key, required: false); } }
         $release = is_array($queue['release_gate'] ?? null) ? $queue['release_gate'] : [];
         foreach (['enabled','block_on_failed_jobs','block_on_dead_letter_growth','block_on_queue_overload','block_on_missing_handlers'] as $key) { if (isset($release[$key])) { $this->bool($release, $key, 'queue.release_gate.' . $key, required: false); } }
+    }
+
+
+    private function validateTokenSessionControl(): void
+    {
+        $tokens = $this->section('tokens', false);
+        if ($tokens !== null) {
+            $this->bool($tokens, 'enabled', 'tokens.enabled', required: false);
+            $access = is_array($tokens['access_tokens'] ?? null) ? $tokens['access_tokens'] : [];
+            foreach (['require_jti','require_fingerprint','allow_after_password_change','allow_after_role_change'] as $key) { if (isset($access[$key])) { $this->bool($access, $key, 'tokens.access_tokens.' . $key, required: false); } }
+            if (isset($access['ttl_seconds'])) { $this->positiveInt($access, 'ttl_seconds', 'tokens.access_tokens.ttl_seconds', required: false); }
+            $refresh = is_array($tokens['refresh_tokens'] ?? null) ? $tokens['refresh_tokens'] : [];
+            foreach (['enabled','rotation_enabled','reuse_detection_enabled','revoke_family_on_reuse'] as $key) { if (isset($refresh[$key])) { $this->bool($refresh, $key, 'tokens.refresh_tokens.' . $key, required: false); } }
+            foreach (['ttl_seconds','max_family_size'] as $key) { if (isset($refresh[$key])) { $this->positiveInt($refresh, $key, 'tokens.refresh_tokens.' . $key, required: false); } }
+            $api = is_array($tokens['api_tokens'] ?? null) ? $tokens['api_tokens'] : [];
+            foreach (['enabled','require_hash_storage','allow_plaintext_storage','last_used_tracking'] as $key) { if (isset($api[$key])) { $this->bool($api, $key, 'tokens.api_tokens.' . $key, required: false); } }
+            if (!empty($api['allow_plaintext_storage'])) { $this->issue('high', 'plaintext_api_tokens_allowed', 'tokens.api_tokens.allow_plaintext_storage', 'Plaintext API token storage should not be allowed.', false, true); }
+            if (isset($api['ttl_seconds'])) { $this->positiveInt($api, 'ttl_seconds', 'tokens.api_tokens.ttl_seconds', required: false); }
+            $revocation = is_array($tokens['revocation'] ?? null) ? $tokens['revocation'] : [];
+            foreach (['enabled','check_on_every_request','cleanup_expired_records'] as $key) { if (isset($revocation[$key])) { $this->bool($revocation, $key, 'tokens.revocation.' . $key, required: false); } }
+            if (isset($revocation['store']) && (!$this->isStringLike($revocation['store']) || !in_array((string)$revocation['store'], ['file','database','memory'], true))) { $this->issue('high', 'invalid_token_revocation_store', 'tokens.revocation.store', 'Token revocation store must be file, database, or memory.', 'file|database|memory', $revocation['store']); }
+        }
+
+        $sessions = $this->section('sessions', false);
+        if ($sessions !== null) {
+            $this->bool($sessions, 'enabled', 'sessions.enabled', required: false);
+            $registry = is_array($sessions['registry'] ?? null) ? $sessions['registry'] : [];
+            $this->bool($registry, 'enabled', 'sessions.registry.enabled', required: false);
+            if (isset($registry['store']) && (!$this->isStringLike($registry['store']) || !in_array((string)$registry['store'], ['file','database','memory'], true))) { $this->issue('high', 'invalid_session_registry_store', 'sessions.registry.store', 'Session registry store must be file, database, or memory.', 'file|database|memory', $registry['store']); }
+            $timeouts = is_array($sessions['timeouts'] ?? null) ? $sessions['timeouts'] : [];
+            foreach (['idle_timeout_seconds','absolute_timeout_seconds','remember_me_timeout_seconds'] as $key) { if (isset($timeouts[$key])) { $this->positiveInt($timeouts, $key, 'sessions.timeouts.' . $key, required: false); } }
+            if (isset($timeouts['idle_timeout_seconds'], $timeouts['absolute_timeout_seconds']) && (int)$timeouts['idle_timeout_seconds'] > (int)$timeouts['absolute_timeout_seconds']) { $this->issue('medium', 'idle_timeout_gt_absolute_timeout', 'sessions.timeouts', 'Idle timeout should not be greater than absolute timeout.', 'idle <= absolute', $timeouts); }
+            $rotation = is_array($sessions['rotation'] ?? null) ? $sessions['rotation'] : [];
+            foreach (['rotate_on_login','rotate_on_privilege_change','rotate_on_password_change'] as $key) { if (isset($rotation[$key])) { $this->bool($rotation, $key, 'sessions.rotation.' . $key, required: false); } }
+            $concurrency = is_array($sessions['concurrency'] ?? null) ? $sessions['concurrency'] : [];
+            $this->bool($concurrency, 'enabled', 'sessions.concurrency.enabled', required: false);
+            foreach (['max_sessions_per_user','max_admin_sessions_per_user'] as $key) { if (isset($concurrency[$key])) { $this->positiveInt($concurrency, $key, 'sessions.concurrency.' . $key, required: false); } }
+            if (isset($concurrency['when_exceeded']) && (!$this->isStringLike($concurrency['when_exceeded']) || !in_array((string)$concurrency['when_exceeded'], ['revoke_oldest','block_new_login','require_admin_confirmation'], true))) { $this->issue('medium', 'invalid_session_concurrency_action', 'sessions.concurrency.when_exceeded', 'Session concurrency action must be revoke_oldest, block_new_login, or require_admin_confirmation.', 'known action', $concurrency['when_exceeded']); }
+            $remember = is_array($sessions['remember_me'] ?? null) ? $sessions['remember_me'] : [];
+            foreach (['enabled','rotate_on_use','hash_storage','revoke_on_password_change'] as $key) { if (isset($remember[$key])) { $this->bool($remember, $key, 'sessions.remember_me.' . $key, required: false); } }
+            if (array_key_exists('hash_storage', $remember) && !$remember['hash_storage']) { $this->issue('high', 'remember_me_plaintext_storage', 'sessions.remember_me.hash_storage', 'Remember-me tokens must be hashed at rest.', true, false); }
+        }
     }
 
     private function validatePentest(): void

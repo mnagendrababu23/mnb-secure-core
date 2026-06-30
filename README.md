@@ -1798,3 +1798,29 @@ php bin/mnb-secure queue:release-gate
 ```
 
 The engine is intended for long-running or expensive work such as file scans, database exports, backups, audit exports, webhook dispatch, security verification runs, and report generation.
+
+### Upgrade 35 — Token Revocation and Session Control Engine
+
+The v1.0.1 release line now includes token/session lifecycle governance:
+
+- Access/refresh/API token policy and revocation checks
+- File, memory, and database-stub revocation stores
+- Refresh token rotation and reuse detection
+- Token family revocation support
+- Safe token introspection and replay detection
+- Session registry, validation, timeout policy, and rotation
+- Concurrent session limiting and forced logout workflows
+- Remember-me token hashing and rotation
+- Device session tracking and admin session controls
+
+Example diagnostics:
+
+```bash
+php bin/mnb-secure token:policy
+php bin/mnb-secure token:revoke demo_jti
+php bin/mnb-secure token:introspect demo_jti
+php bin/mnb-secure session:policy
+php bin/mnb-secure session:list
+php bin/mnb-secure session:devices demo-user
+php bin/mnb-secure vulnerabilities:check refresh_token_replay
+```

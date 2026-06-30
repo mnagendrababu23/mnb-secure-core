@@ -364,3 +364,9 @@ MNB Secure Core v1.0.1 adds the Origin Identity Protection and Exposure Hardenin
 MNB Secure Core v1.0.1 adds the Async Request, Response Queue, and Background Job Orchestration Engine, introducing secure job dispatch, request-to-background deferral, response acknowledgement patterns, retry and dead-letter handling, idempotency protection, worker supervision, queue pressure controls, job audit trails, CLI worker diagnostics, and vulnerability matrix coverage for retry storms, duplicate execution, lost jobs, queue overload, and unsafe background processing risks.
 
 Validation summary for this patch: PHP lint passed, tests passed, demos passed, config validation passed, queue CLI commands passed, and vulnerability report remained Grade A+.
+
+### Upgrade 35 — Token Revocation and Session Control Engine
+
+MNB Secure Core v1.0.1 adds the Token Revocation and Session Control Engine, introducing token lifecycle governance, refresh token rotation, revocation lists, session registry, device session tracking, forced logout, replay detection, idle and absolute session timeouts, remember-me token safety, token audit trails, CLI diagnostics, and vulnerability matrix coverage for stolen token reuse, session hijacking, session fixation, refresh token replay, and unrevoked session risks.
+
+New CLI commands include `token:policy`, `token:revoke`, `token:introspect`, `token:cleanup`, `token:family`, `token:revoke-family`, `session:policy`, `session:list`, `session:revoke`, `session:revoke-user`, `session:cleanup`, `session:check`, and `session:devices`.

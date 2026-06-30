@@ -204,6 +204,32 @@ use Mnb\SecurityCore\Queue\RetryPolicy;
 use Mnb\SecurityCore\Queue\Worker;
 use Mnb\SecurityCore\Queue\WorkerConfig;
 use Mnb\SecurityCore\Queue\WorkerSupervisor;
+use Mnb\SecurityCore\Token\DatabaseTokenRevocationStore;
+use Mnb\SecurityCore\Token\FileTokenRevocationStore;
+use Mnb\SecurityCore\Token\InMemoryTokenRevocationStore;
+use Mnb\SecurityCore\Token\RefreshTokenReuseDetector;
+use Mnb\SecurityCore\Token\RefreshTokenRotator;
+use Mnb\SecurityCore\Token\TokenIntrospectionService;
+use Mnb\SecurityCore\Token\TokenPolicy;
+use Mnb\SecurityCore\Token\TokenReplayDetector;
+use Mnb\SecurityCore\Token\TokenRevocationService;
+use Mnb\SecurityCore\Token\TokenRevocationStoreInterface;
+use Mnb\SecurityCore\Token\TokenValidator;
+use Mnb\SecurityCore\Session\AdminSessionControl;
+use Mnb\SecurityCore\Session\ConcurrentSessionLimiter;
+use Mnb\SecurityCore\Session\DatabaseSessionRegistry;
+use Mnb\SecurityCore\Session\DeviceSessionTracker;
+use Mnb\SecurityCore\Session\FileSessionRegistry;
+use Mnb\SecurityCore\Session\ForcedLogoutService;
+use Mnb\SecurityCore\Session\InMemorySessionRegistry;
+use Mnb\SecurityCore\Session\RememberMeTokenManager;
+use Mnb\SecurityCore\Session\SessionManager;
+use Mnb\SecurityCore\Session\SessionPolicy;
+use Mnb\SecurityCore\Session\SessionRegistryInterface;
+use Mnb\SecurityCore\Session\SessionRevocationService;
+use Mnb\SecurityCore\Session\SessionRotationService;
+use Mnb\SecurityCore\Session\SessionTimeoutPolicy;
+use Mnb\SecurityCore\Session\SessionValidator;
 use Mnb\SecurityCore\Http\Middleware\CacheControlMiddleware;
 use Mnb\SecurityCore\Web\CacheControlPolicy;
 use Mnb\SecurityCore\Web\HtmlSanitizer;
@@ -1472,6 +1498,122 @@ class SecurityKernel
     public function jobStatusResponseFactory(): JobStatusResponseFactory
     {
         return new JobStatusResponseFactory();
+    }
+
+
+
+    public function tokenPolicy(): TokenPolicy
+    {
+        return TokenPolicy::fromConfig($this->config);
+    }
+
+    public function tokenRevocationStore(): TokenRevocationStoreInterface
+    {
+        $policy = $this->tokenPolicy();
+        return match ($policy->revocationStore()) {
+            'memory' => new InMemoryTokenRevocationStore(),
+            'database' => new DatabaseTokenRevocationStore(),
+            default => new FileTokenRevocationStore(StorageDriverResolver::directoryPath($policy->revocationPath(), 'token revocation store')),
+        };
+    }
+
+    public function tokenRevocationService(?TokenRevocationStoreInterface $store = null): TokenRevocationService
+    {
+        return new TokenRevocationService($store ?: $this->tokenRevocationStore(), $this->tokenPolicy());
+    }
+
+    public function tokenValidator(?TokenRevocationStoreInterface $store = null): TokenValidator
+    {
+        $store = $store ?: $this->tokenRevocationStore();
+        return new TokenValidator($this->tokenPolicy(), $store);
+    }
+
+    public function tokenIntrospectionService(?TokenRevocationStoreInterface $store = null): TokenIntrospectionService
+    {
+        return new TokenIntrospectionService($this->tokenValidator($store));
+    }
+
+    public function refreshTokenRotator(?TokenRevocationStoreInterface $store = null): RefreshTokenRotator
+    {
+        $store = $store ?: $this->tokenRevocationStore();
+        return new RefreshTokenRotator($this->tokenPolicy(), $this->tokenRevocationService($store));
+    }
+
+    public function refreshTokenReuseDetector(?TokenRevocationStoreInterface $store = null): RefreshTokenReuseDetector
+    {
+        return new RefreshTokenReuseDetector($store ?: $this->tokenRevocationStore(), $this->tokenPolicy());
+    }
+
+    public function tokenReplayDetector(): TokenReplayDetector
+    {
+        return new TokenReplayDetector();
+    }
+
+    public function sessionPolicy(): SessionPolicy
+    {
+        return SessionPolicy::fromConfig($this->config);
+    }
+
+    public function sessionRegistry(): SessionRegistryInterface
+    {
+        $policy = $this->sessionPolicy();
+        return match ($policy->registryStore()) {
+            'memory' => new InMemorySessionRegistry(),
+            'database' => new DatabaseSessionRegistry(),
+            default => new FileSessionRegistry(StorageDriverResolver::directoryPath($policy->registryPath(), 'session registry')),
+        };
+    }
+
+    public function sessionManager(?SessionRegistryInterface $registry = null): SessionManager
+    {
+        return new SessionManager($this->sessionPolicy(), $registry ?: $this->sessionRegistry());
+    }
+
+    public function sessionValidator(): SessionValidator
+    {
+        return new SessionValidator($this->sessionPolicy());
+    }
+
+    public function sessionRevocationService(?SessionRegistryInterface $registry = null): SessionRevocationService
+    {
+        return new SessionRevocationService($registry ?: $this->sessionRegistry());
+    }
+
+    public function sessionRotationService(?SessionRegistryInterface $registry = null): SessionRotationService
+    {
+        $registry = $registry ?: $this->sessionRegistry();
+        return new SessionRotationService($this->sessionManager($registry), $this->sessionRevocationService($registry));
+    }
+
+    public function sessionTimeoutPolicy(): SessionTimeoutPolicy
+    {
+        return new SessionTimeoutPolicy($this->sessionPolicy());
+    }
+
+    public function concurrentSessionLimiter(?SessionRegistryInterface $registry = null): ConcurrentSessionLimiter
+    {
+        return new ConcurrentSessionLimiter($this->sessionPolicy(), $registry ?: $this->sessionRegistry());
+    }
+
+    public function deviceSessionTracker(?SessionRegistryInterface $registry = null): DeviceSessionTracker
+    {
+        return new DeviceSessionTracker($registry ?: $this->sessionRegistry());
+    }
+
+    public function forcedLogoutService(?SessionRegistryInterface $registry = null): ForcedLogoutService
+    {
+        return new ForcedLogoutService($this->sessionRevocationService($registry));
+    }
+
+    public function rememberMeTokenManager(): RememberMeTokenManager
+    {
+        return new RememberMeTokenManager();
+    }
+
+    public function adminSessionControl(?SessionRegistryInterface $registry = null): AdminSessionControl
+    {
+        $registry = $registry ?: $this->sessionRegistry();
+        return new AdminSessionControl($this->sessionRevocationService($registry), $this->deviceSessionTracker($registry));
     }
 
     public function originProtectionPolicy(): OriginProtectionPolicy

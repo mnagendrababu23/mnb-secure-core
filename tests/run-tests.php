@@ -2454,5 +2454,72 @@ $queueMatrix = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityControlMapper($
 ok(isset($queueMatrix['unsafe_background_job']) && isset($queueMatrix['retry_storm']) && $queueMatrix['unsafe_background_job']->status() === 'protected', 'vulnerability matrix maps async queue and retry storm protections');
 ok(in_array('PT-QUEUE-001', array_column((new PentestChecklist())->toArray(), 'id'), true) && isset((new PayloadLibrary())->all()['queue']) && isset((new VerificationMatrix())->all()['Async Request, Response Queue, and Background Jobs']), 'pentest checklist, payloads, and matrix include async queue cases');
 
+
+
+$tokenSessionConfig = array_replace_recursive(require __DIR__ . '/../config/security.php', [
+    'tokens' => [
+        'enabled' => true,
+        'access_tokens' => ['ttl_seconds' => 900, 'require_jti' => true, 'require_fingerprint' => true, 'allow_after_password_change' => false, 'allow_after_role_change' => false],
+        'refresh_tokens' => ['enabled' => true, 'ttl_seconds' => 2592000, 'rotation_enabled' => true, 'reuse_detection_enabled' => true, 'revoke_family_on_reuse' => true, 'max_family_size' => 50],
+        'api_tokens' => ['enabled' => true, 'require_hash_storage' => true, 'allow_plaintext_storage' => false, 'ttl_seconds' => 7776000, 'last_used_tracking' => true],
+        'revocation' => ['enabled' => true, 'store' => 'memory', 'path' => __DIR__ . '/../storage/tokens/revoked', 'check_on_every_request' => true, 'cleanup_expired_records' => true],
+    ],
+    'sessions' => [
+        'enabled' => true,
+        'registry' => ['enabled' => true, 'store' => 'memory', 'path' => __DIR__ . '/../storage/tokens/sessions'],
+        'timeouts' => ['idle_timeout_seconds' => 1800, 'absolute_timeout_seconds' => 43200, 'remember_me_timeout_seconds' => 2592000],
+        'rotation' => ['rotate_on_login' => true, 'rotate_on_privilege_change' => true, 'rotate_on_password_change' => true],
+        'concurrency' => ['enabled' => true, 'max_sessions_per_user' => 2, 'max_admin_sessions_per_user' => 1, 'when_exceeded' => 'revoke_oldest'],
+        'device_tracking' => ['enabled' => true, 'fingerprint_user_agent' => true, 'fingerprint_ip_prefix' => true],
+        'forced_logout' => ['enabled' => true, 'on_password_change' => true, 'on_role_change' => true, 'on_permission_change' => true, 'on_account_disabled' => true, 'on_security_incident' => true],
+        'remember_me' => ['enabled' => true, 'rotate_on_use' => true, 'hash_storage' => true, 'revoke_on_password_change' => true],
+    ],
+]);
+$tokenKernel = new SecurityKernel($tokenSessionConfig);
+$tokenStore = new \Mnb\SecurityCore\Token\InMemoryTokenRevocationStore();
+$tokenPolicy = $tokenKernel->tokenPolicy();
+ok($tokenPolicy->accessTtl() === 900 && $tokenPolicy->refreshRotationEnabled(), 'token policy loads access and refresh token controls');
+$access = \Mnb\SecurityCore\Token\TokenRecord::issue(\Mnb\SecurityCore\Token\TokenType::ACCESS, 'user-1', 900);
+ok($tokenKernel->tokenValidator($tokenStore)->validate($access)->allowed(), 'active token validates before revocation');
+$revoked = $tokenKernel->tokenRevocationService($tokenStore)->revoke($access, \Mnb\SecurityCore\Token\TokenRevocationReason::LOGOUT);
+ok($revoked->reason() === \Mnb\SecurityCore\Token\TokenRevocationReason::LOGOUT && !$tokenKernel->tokenValidator($tokenStore)->validate($access)->allowed(), 'revoked token fails validation');
+$introspection = $tokenKernel->tokenIntrospectionService($tokenStore)->introspect($access);
+ok(!$introspection['active'] && $introspection['safe_reason'] === 'token_revoked' && !isset($introspection['user_id']), 'token introspection returns safe inactive status without sensitive user data');
+$refresh = \Mnb\SecurityCore\Token\TokenRecord::issue(\Mnb\SecurityCore\Token\TokenType::REFRESH, 'user-1', 2592000, 'fam_demo');
+$rotation = $tokenKernel->refreshTokenRotator($tokenStore)->rotate($refresh);
+ok($rotation['rotated'] && $rotation['new_token'] instanceof \Mnb\SecurityCore\Token\TokenRecord && $tokenStore->isRevoked($refresh->id()), 'refresh token rotation revokes old token and issues new token');
+$reuse = $tokenKernel->refreshTokenReuseDetector($tokenStore)->detect($refresh);
+ok($reuse['reused'] && $reuse['action'] === 'revoke_family', 'refresh token reuse detector flags reused rotated token');
+$replay = $tokenKernel->tokenReplayDetector();
+ok(!$replay->checkAndMark('jti-1')['replay'] && $replay->checkAndMark('jti-1')['replay'], 'token replay detector flags repeated token identifier');
+
+$sessionRegistry = new \Mnb\SecurityCore\Session\InMemorySessionRegistry();
+$sessionManager = $tokenKernel->sessionManager($sessionRegistry);
+$context = new \Mnb\SecurityCore\Session\SessionContext('198.51.100.42', 'UnitTestBrowser/1.0');
+$session = $sessionManager->create('user-1', $context);
+ok($tokenKernel->sessionValidator()->validate($session, $context->fingerprint())->allowed(), 'session validator accepts active session with matching fingerprint');
+$rotatedSession = $tokenKernel->sessionRotationService($sessionRegistry)->rotate($session, 'login', $context);
+ok($rotatedSession['rotated'] && !$tokenKernel->sessionValidator()->validate($sessionRegistry->find($session->id()))->allowed(), 'session rotation invalidates old session id');
+$sessionManager->create('user-1', $context);
+$sessionManager->create('user-1', $context);
+$sessionManager->create('user-1', $context);
+$limit = $tokenKernel->concurrentSessionLimiter($sessionRegistry)->enforce('user-1');
+ok($limit['passed'] && count($limit['revoked']) >= 1, 'concurrent session limiter revokes oldest sessions above configured maximum');
+$forced = $tokenKernel->forcedLogoutService($sessionRegistry)->forceUser('user-1', 'password_changed');
+ok($forced['forced_logout'] && $forced['revoked_sessions'] >= 1, 'forced logout revokes user sessions after sensitive account change');
+$remember = $tokenKernel->rememberMeTokenManager();
+$rememberIssued = $remember->issue('user-1', 3600);
+ok($remember->validate($rememberIssued['id'], $rememberIssued['token']), 'remember-me token validates with hashed storage');
+$rememberRotated = $remember->rotate($rememberIssued['id'], $rememberIssued['token'], 3600);
+ok(is_array($rememberRotated) && !$remember->validate($rememberIssued['id'], $rememberIssued['token']) && $remember->validate($rememberRotated['id'], $rememberRotated['token']), 'remember-me token rotates on use and rejects old token');
+ok(count($tokenKernel->deviceSessionTracker($sessionRegistry)->devices('user-1')) >= 1, 'device session tracker lists redacted user sessions');
+$tokenSessionConfigReport = (new SecurityConfigValidator($tokenSessionConfig))->validate();
+ok($tokenSessionConfigReport['passed'], 'security config validator accepts token revocation and session control config');
+$unsafeTokenSessionConfigReport = (new SecurityConfigValidator(['tokens' => ['api_tokens' => ['allow_plaintext_storage' => true], 'revocation' => ['store' => 'shell']], 'sessions' => ['registry' => ['store' => 'bad'], 'timeouts' => ['idle_timeout_seconds' => 5000, 'absolute_timeout_seconds' => 1000], 'remember_me' => ['hash_storage' => false]]]))->validate();
+ok(!$unsafeTokenSessionConfigReport['passed'], 'security config validator flags unsafe token/session configuration');
+$tokenSessionMatrix = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityControlMapper($tokenSessionConfig))->definitions();
+ok(isset($tokenSessionMatrix['stolen_token_reuse']) && isset($tokenSessionMatrix['session_fixation']) && $tokenSessionMatrix['stolen_token_reuse']->status() === 'protected', 'vulnerability matrix maps token revocation and session control risks');
+ok(in_array('PT-TOKEN-001', array_column((new PentestChecklist())->toArray(), 'id'), true) && isset((new PayloadLibrary())->all()['token_session']) && isset((new VerificationMatrix())->all()['Token Revocation and Session Control']), 'pentest checklist, payloads, and matrix include token/session cases');
+
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

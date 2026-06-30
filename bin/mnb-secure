@@ -616,6 +616,72 @@ switch ($command) {
         $report = $kernel->queueReleaseGate()->evaluate($kernel->queueStore()->metrics(), $kernel->jobHandlerRegistry(), $required);
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit(!empty($report['passed']) ? 0 : 1);
+    case 'token:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->tokenPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'token:revoke':
+        $kernel = new SecurityKernel($config);
+        $jti = $argv[2] ?? ('cli_' . bin2hex(random_bytes(8)));
+        $reason = $argv[3] ?? Mnb\SecurityCore\Token\TokenRevocationReason::ADMIN_REVOKE;
+        $record = $kernel->tokenRevocationService()->revoke($jti, $reason, 'cli');
+        echo json_encode(['passed' => true, 'revoked' => $record->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'token:introspect':
+        $kernel = new SecurityKernel($config);
+        $jti = $argv[2] ?? '';
+        $record = $jti !== '' ? new Mnb\SecurityCore\Token\TokenRecord($jti, Mnb\SecurityCore\Token\TokenType::ACCESS, 'cli_user', null, Mnb\SecurityCore\Token\TokenStatus::ACTIVE, time() + 3600) : null;
+        echo json_encode($kernel->tokenIntrospectionService()->introspect($record), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'token:cleanup':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'cleaned' => $kernel->tokenRevocationService()->cleanup()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'token:family':
+        $kernel = new SecurityKernel($config);
+        $family = $argv[2] ?? '';
+        echo json_encode(['passed' => true, 'family_id' => $family, 'revocations' => array_map(fn($r) => $r->toArray(), $kernel->tokenRevocationStore()->forFamily($family))], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'token:revoke-family':
+        $kernel = new SecurityKernel($config);
+        $family = $argv[2] ?? ('fam_' . bin2hex(random_bytes(6)));
+        echo json_encode(['passed' => true, 'family_id' => $family, 'records' => $kernel->tokenRevocationService()->revokeFamily($family, Mnb\SecurityCore\Token\TokenRevocationReason::SECURITY_INCIDENT, 'cli')], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'session:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->sessionPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'session:list':
+        $kernel = new SecurityKernel($config);
+        $user = $argv[2] ?? null;
+        echo json_encode(['passed' => true, 'sessions' => $kernel->sessionManager()->list($user)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'session:revoke':
+        $kernel = new SecurityKernel($config);
+        $sid = $argv[2] ?? '';
+        $ok = $sid !== '' && $kernel->sessionRevocationService()->revoke($sid, 'admin_revoke');
+        echo json_encode(['passed' => $ok, 'session_id' => $sid, 'status' => $ok ? 'revoked' : 'not_found'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($ok ? 0 : 1);
+    case 'session:revoke-user':
+        $kernel = new SecurityKernel($config);
+        $user = $argv[2] ?? 'demo-user';
+        echo json_encode($kernel->forcedLogoutService()->forceUser($user, 'cli_forced_logout'), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'session:cleanup':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'cleaned' => $kernel->sessionRegistry()->cleanupExpired()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'session:check':
+        $kernel = new SecurityKernel($config);
+        $sid = $argv[2] ?? '';
+        $record = $sid !== '' ? $kernel->sessionRegistry()->find($sid) : null;
+        echo json_encode($kernel->sessionValidator()->validate($record)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($record ? 0 : 1);
+    case 'session:devices':
+        $kernel = new SecurityKernel($config);
+        $user = $argv[2] ?? 'demo-user';
+        echo json_encode(['passed' => true, 'devices' => $kernel->deviceSessionTracker()->devices($user)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
     case 'origin:policy':
         $kernel = new SecurityKernel($config);
         echo json_encode($kernel->originProtectionPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
