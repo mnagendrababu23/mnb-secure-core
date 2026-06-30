@@ -36,6 +36,7 @@ class SecurityConfigValidator
         $this->validateRequestValidation();
         $this->validateAuthentication();
         $this->validateAuthorization();
+        $this->validateDataProtection();
         $this->validateRequestReceiving();
         $this->validateTrustBoundaries();
         $this->validateSuggestions();
@@ -948,6 +949,149 @@ class SecurityConfigValidator
                     }
                 }
             }
+        }
+    }
+
+
+    private function validateDataProtection(): void
+    {
+        $dp = $this->section('data_protection', false);
+        if ($dp === null) {
+            return;
+        }
+        $validClasses = ['public', 'internal', 'confidential', 'sensitive', 'highly_sensitive'];
+        foreach (['enabled', 'deny_unclassified_fields', 'audit'] as $key) {
+            $this->bool($dp, $key, 'data_protection.' . $key, required: false);
+        }
+        if (isset($dp['default_class']) && !in_array((string)$dp['default_class'], $validClasses, true)) {
+            $this->issue('high', 'invalid_data_protection_default_class', 'data_protection.default_class', 'Default data class must be known.', implode('|', $validClasses), $dp['default_class']);
+        }
+
+        if (isset($dp['encryption'])) {
+            if (!is_array($dp['encryption'])) {
+                $this->issue('high', 'invalid_data_encryption_config', 'data_protection.encryption', 'Data encryption config must be an array.', 'array', $dp['encryption']);
+            } else {
+                $enc = $dp['encryption'];
+                foreach (['enabled', 'aad'] as $key) {
+                    $this->bool($enc, $key, 'data_protection.encryption.' . $key, required: false);
+                }
+                if (isset($enc['current_key_id']) && (!$this->isStringLike($enc['current_key_id']) || !preg_match('/^[A-Za-z0-9_.:-]{1,80}$/', (string)$enc['current_key_id']))) {
+                    $this->issue('high', 'invalid_data_key_id', 'data_protection.encryption.current_key_id', 'Data encryption key id must be a safe identifier.', 'safe key id', $enc['current_key_id']);
+                }
+                $keys = $enc['keys'] ?? [];
+                if (!empty($enc['enabled'])) {
+                    if (!is_array($keys) || $keys === []) {
+                        $this->issue($this->isProduction($this->config['app'] ?? []) ? 'high' : 'medium', 'missing_data_encryption_keys', 'data_protection.encryption.keys', 'Data encryption is enabled but no data protection keys are configured.', 'key id => secret map', $keys);
+                    } else {
+                        $current = (string)($enc['current_key_id'] ?? 'app-v1');
+                        if (!array_key_exists($current, $keys)) {
+                            $this->issue('high', 'data_current_key_missing', 'data_protection.encryption.current_key_id', 'Current data protection key id must exist in the configured key map.', 'existing key id', $current);
+                        }
+                        foreach ($keys as $id => $key) {
+                            if (!is_string($id) || !preg_match('/^[A-Za-z0-9_.:-]{1,80}$/', $id)) {
+                                $this->issue('high', 'invalid_data_key_map_id', 'data_protection.encryption.keys', 'Data encryption key ids must be safe identifiers.', 'safe key id', $id);
+                            }
+                            if (!$this->isStringLike($key) || strlen((string)$key) < 32) {
+                                $this->issue($this->isProduction($this->config['app'] ?? []) ? 'high' : 'medium', 'weak_data_encryption_key', 'data_protection.encryption.keys.' . (string)$id, 'Data encryption keys should be at least 32 characters.', '>=32 character secret', $this->isStringLike($key) ? strlen((string)$key) . ' chars' : $key);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isset($dp['search_hash'])) {
+            if (!is_array($dp['search_hash'])) {
+                $this->issue('high', 'invalid_data_search_hash_config', 'data_protection.search_hash', 'Search hash config must be an array.', 'array', $dp['search_hash']);
+            } else {
+                $search = $dp['search_hash'];
+                $this->bool($search, 'enabled', 'data_protection.search_hash.enabled', required: false);
+                foreach (['key', 'prefix'] as $key) {
+                    if (isset($search[$key]) && (!$this->isStringLike($search[$key]) || preg_match('/[\r\n]/', (string)$search[$key]))) {
+                        $this->issue('medium', 'invalid_data_search_hash_' . $key, 'data_protection.search_hash.' . $key, 'Search hash values must be safe single-line strings.', 'safe string', $search[$key]);
+                    }
+                }
+                if (!empty($search['enabled']) && (!$this->isStringLike($search['key'] ?? null) || strlen((string)($search['key'] ?? '')) < 32)) {
+                    $this->issue($this->isProduction($this->config['app'] ?? []) ? 'high' : 'medium', 'weak_data_search_hash_key', 'data_protection.search_hash.key', 'Search hash key should be at least 32 characters.', '>=32 character secret', isset($search['key']) ? strlen((string)$search['key']) . ' chars' : null);
+                }
+            }
+        }
+
+        if (isset($dp['resources'])) {
+            if (!is_array($dp['resources'])) {
+                $this->issue('high', 'invalid_data_resources', 'data_protection.resources', 'Data protection resources must be an array.', 'array', $dp['resources']);
+            } else {
+                foreach ($dp['resources'] as $resource => $policy) {
+                    if (!is_string($resource) || !preg_match('/^[A-Za-z_][A-Za-z0-9_:-]*$/', $resource)) {
+                        $this->issue('high', 'invalid_data_resource_name', 'data_protection.resources', 'Data protection resource names must be safe identifiers.', 'safe resource name', $resource);
+                        continue;
+                    }
+                    if (!is_array($policy)) {
+                        $this->issue('high', 'invalid_data_resource_policy', 'data_protection.resources.' . $resource, 'Data protection resource policy must be an array.', 'array', $policy);
+                        continue;
+                    }
+                    $path = 'data_protection.resources.' . $resource;
+                    if (isset($policy['default_class']) && !in_array((string)$policy['default_class'], $validClasses, true)) {
+                        $this->issue('high', 'invalid_data_resource_default_class', $path . '.default_class', 'Resource default class must be known.', implode('|', $validClasses), $policy['default_class']);
+                    }
+                    $this->bool($policy, 'tenant_scoped', $path . '.tenant_scoped', required: false);
+                    if (isset($policy['fields'])) {
+                        if (!is_array($policy['fields'])) {
+                            $this->issue('high', 'invalid_data_resource_fields', $path . '.fields', 'Resource fields must be an array.', 'array', $policy['fields']);
+                            continue;
+                        }
+                        foreach ($policy['fields'] as $field => $fieldConfig) {
+                            if (!is_string($field) || !preg_match('/^[A-Za-z_][A-Za-z0-9_.:-]*$/', $field)) {
+                                $this->issue('high', 'invalid_data_field_name', $path . '.fields', 'Protected field names must be safe identifiers.', 'safe field name', $field);
+                                continue;
+                            }
+                            if (is_string($fieldConfig)) {
+                                if (!in_array($fieldConfig, $validClasses, true)) {
+                                    $this->issue('high', 'invalid_data_field_class', $path . '.fields.' . $field, 'Protected field class is unknown.', implode('|', $validClasses), $fieldConfig);
+                                }
+                                continue;
+                            }
+                            if (!is_array($fieldConfig)) {
+                                $this->issue('high', 'invalid_data_field_config', $path . '.fields.' . $field, 'Protected field config must be an array or classification string.', 'array|string', $fieldConfig);
+                                continue;
+                            }
+                            $class = (string)($fieldConfig['class'] ?? $fieldConfig['classification'] ?? 'internal');
+                            if (!in_array($class, $validClasses, true)) {
+                                $this->issue('high', 'invalid_data_field_class', $path . '.fields.' . $field . '.class', 'Protected field class is unknown.', implode('|', $validClasses), $class);
+                            }
+                            foreach (['encrypt', 'search_hash', 'read', 'write', 'log'] as $boolKey) {
+                                $this->bool($fieldConfig, $boolKey, $path . '.fields.' . $field . '.' . $boolKey, required: false);
+                            }
+                            if (isset($fieldConfig['mask']) && $fieldConfig['mask'] !== null && $fieldConfig['mask'] !== false && (!$this->isStringLike($fieldConfig['mask']) || preg_match('/[\r\n]/', (string)$fieldConfig['mask']))) {
+                                $this->issue('medium', 'invalid_data_field_mask', $path . '.fields.' . $field . '.mask', 'Mask rule must be a safe string.', 'safe mask rule', $fieldConfig['mask']);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isset($dp['exports'])) {
+            if (!is_array($dp['exports'])) {
+                $this->issue('high', 'invalid_data_exports', 'data_protection.exports', 'Data export config must be an array.', 'array', $dp['exports']);
+            } else {
+                foreach (['csv_injection_protection', 'audit'] as $key) {
+                    $this->bool($dp['exports'], $key, 'data_protection.exports.' . $key, required: false);
+                }
+                $this->intRange($dp['exports'], 'max_rows', 'data_protection.exports.max_rows', 1, 10000000, required: false);
+            }
+        }
+        if (isset($dp['storage']) && is_array($dp['storage'])) {
+            $this->bool($dp['storage'], 'encrypt_files', 'data_protection.storage.encrypt_files', required: false);
+        }
+        if (isset($dp['backups']) && is_array($dp['backups'])) {
+            foreach (['encrypt', 'sign'] as $key) {
+                $this->bool($dp['backups'], $key, 'data_protection.backups.' . $key, required: false);
+            }
+            $this->intRange($dp['backups'], 'retention_days', 'data_protection.backups.retention_days', 1, 3650, required: false);
+        }
+        if (isset($dp['logs']) && is_array($dp['logs'])) {
+            $this->bool($dp['logs'], 'redact_before_write', 'data_protection.logs.redact_before_write', required: false);
         }
     }
 

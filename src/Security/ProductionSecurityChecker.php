@@ -25,6 +25,7 @@ class ProductionSecurityChecker
         $authentication = $this->config['authentication'] ?? [];
         $authorization = $this->config['authorization'] ?? [];
         $trustBoundaries = $this->config['trust_boundaries'] ?? [];
+        $dataProtection = $this->config['data_protection'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -157,6 +158,48 @@ class ProductionSecurityChecker
                     if (($profile['auth'] ?? null) === null && empty($profile['auth_strategy']) && str_contains((string)$profileName, 'admin')) {
                         $issues[] = ['level' => 'high', 'key' => 'admin_receiving_profile_without_auth', 'message' => 'Admin request receiving profiles should require auth or an auth_strategy.'];
                     }
+                }
+            }
+
+            if (is_array($dataProtection)) {
+                if (array_key_exists('enabled', $dataProtection) && empty($dataProtection['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'data_protection_disabled', 'message' => 'Data protection strategy should be enabled in production to enforce classification, encryption, masking, export, and storage controls.'];
+                }
+                if (array_key_exists('deny_unclassified_fields', $dataProtection) && empty($dataProtection['deny_unclassified_fields'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'data_protection_allows_unclassified_fields', 'message' => 'Production data protection should deny or explicitly classify sensitive resource fields.'];
+                }
+                $encryption = is_array($dataProtection['encryption'] ?? null) ? $dataProtection['encryption'] : [];
+                if (array_key_exists('enabled', $encryption) && empty($encryption['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'data_encryption_disabled', 'message' => 'Data encryption should be enabled in production for confidential and sensitive protected fields.'];
+                }
+                if (!empty($encryption['enabled'])) {
+                    $keys = is_array($encryption['keys'] ?? null) ? $encryption['keys'] : [];
+                    $current = (string)($encryption['current_key_id'] ?? '');
+                    if ($keys === [] || $current === '' || !array_key_exists($current, $keys) || strlen((string)($keys[$current] ?? '')) < 32) {
+                        $issues[] = ['level' => 'high', 'key' => 'data_encryption_key_not_ready', 'message' => 'Data encryption requires a current key id mapped to a 32+ character key in production.'];
+                    }
+                }
+                if (empty($dataProtection['resources']) || !is_array($dataProtection['resources'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'data_protection_resources_missing', 'message' => 'Define data protection resource policies for sensitive database records, files, exports, logs, and backups.'];
+                }
+                $exports = is_array($dataProtection['exports'] ?? null) ? $dataProtection['exports'] : [];
+                if (array_key_exists('csv_injection_protection', $exports) && empty($exports['csv_injection_protection'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'csv_injection_protection_disabled', 'message' => 'CSV export injection protection should stay enabled in production.'];
+                }
+                $storage = is_array($dataProtection['storage'] ?? null) ? $dataProtection['storage'] : [];
+                if (array_key_exists('encrypt_files', $storage) && empty($storage['encrypt_files'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'encrypted_file_storage_disabled', 'message' => 'Consider encrypted private storage for uploaded sensitive files.'];
+                }
+                $backups = is_array($dataProtection['backups'] ?? null) ? $dataProtection['backups'] : [];
+                if (array_key_exists('encrypt', $backups) && empty($backups['encrypt'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'encrypted_backups_disabled', 'message' => 'Production backups should be encrypted because they often contain highly sensitive data.'];
+                }
+                if (array_key_exists('sign', $backups) && empty($backups['sign'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'backup_signing_disabled', 'message' => 'Production backups should be signed or integrity-protected.'];
+                }
+                $logs = is_array($dataProtection['logs'] ?? null) ? $dataProtection['logs'] : [];
+                if (array_key_exists('redact_before_write', $logs) && empty($logs['redact_before_write'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'log_redaction_disabled', 'message' => 'Audit/log redaction should stay enabled before writing production logs.'];
                 }
             }
             if (is_array($trustBoundaries)) {

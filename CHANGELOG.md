@@ -104,3 +104,16 @@ Added a unified authorization layer while preserving existing `Auth\PermissionGu
 - Integrated `authorization` into secure request receiving profile options.
 - Added config validation and production readiness warnings for authorization policies.
 - Added demo `22-authorization-strategy-engine.php` and tests for decisions, middleware, audit, field filtering, validation, and suggestions.
+
+### v1.0.1 — Data Protection Strategy Engine
+
+Added a unified data protection layer for classification, encryption, masking, searchable hashes, safe exports, and encrypted private storage while preserving existing `Encryption`, `DataClassifier`, `DataMasker`, and `FieldFilter` APIs.
+
+- Added `DataProtectionRegistry`, `DataProtectionPolicy`, `ProtectedField`, `FieldProtector`, `KeyRing`, `SearchHash`, `SafeCsvExporter`, and `EncryptedStorage`.
+- Added field-level protection policies for storage, response, logs, and exports.
+- Added AES-256-GCM payloads with key ids and AAD support for future key rotation.
+- Added keyed search hashes for encrypted lookup fields.
+- Added CSV injection protection for exports.
+- Added data-protection config validation and production readiness checks.
+- Added `SecurityKernel` helpers for data protection, safe CSV export, key ring, and encrypted private storage.
+- Added demo `23-data-protection-strategy-engine.php`.

@@ -362,3 +362,21 @@ Secure request receiving profiles can reference an authorization policy:
     'input_validation' => true,
 ]
 ```
+
+## Data Protection Strategy
+
+```php
+$registry = $kernel->dataProtectionRegistry();
+
+$stored = $registry->protectForStorage('students', [
+    'name' => 'Ravi',
+    'email' => 'ravi@example.com',
+    'parent_phone' => '9876543210',
+]);
+
+$response = $registry->protectForResponse('students', $stored, $request);
+$logSafe = $registry->protectForLog('students', $stored);
+$csv = $kernel->safeCsvExporter()->export('students', [$stored]);
+```
+
+Use `data_protection.resources.*.fields` to define field classes, encryption, search hashes, masks, export behavior, and log rules.

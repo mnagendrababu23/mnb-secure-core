@@ -28,6 +28,11 @@ use Mnb\SecurityCore\Data\DataClassifier;
 use Mnb\SecurityCore\Data\DataMasker;
 use Mnb\SecurityCore\Data\Encryption;
 use Mnb\SecurityCore\Data\FieldFilter;
+use Mnb\SecurityCore\Data\DataProtectionRegistry;
+use Mnb\SecurityCore\Data\KeyRing;
+use Mnb\SecurityCore\Data\SafeCsvExporter;
+use Mnb\SecurityCore\Data\ExportPolicy;
+use Mnb\SecurityCore\Files\EncryptedStorage;
 use Mnb\SecurityCore\Core\SecurityKernel;
 use Mnb\SecurityCore\Core\StorageDriverResolver;
 use Mnb\SecurityCore\Authz\Policies\DatabaseResourcePolicy;
@@ -1247,6 +1252,72 @@ ok(!$authzConfigReport['passed'], 'security config validator catches invalid aut
 
 $authzSuggestions = (new AutoSuggestionEngine())->suggestFromCode('PermissionGuard::requirePermission($request, "student.update"); TenantGuard;');
 ok(count(array_filter($authzSuggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_authorization_strategy' || ($item['id'] ?? '') === 'authorization_strategy')) >= 1, 'auto suggestion engine recommends authorization strategy for manual permission code');
+
+
+
+$dataProtectionConfig = [
+    'app' => ['key' => str_repeat('D', 40), 'env' => 'testing'],
+    'data_protection' => [
+        'enabled' => true,
+        'default_class' => DataClassifier::INTERNAL,
+        'audit' => true,
+        'encryption' => [
+            'enabled' => true,
+            'current_key_id' => 'test-v1',
+            'keys' => ['test-v1' => str_repeat('K', 40)],
+            'aad' => true,
+        ],
+        'search_hash' => [
+            'enabled' => true,
+            'key' => str_repeat('H', 40),
+            'prefix' => 'mnb:test',
+        ],
+        'resources' => [
+            'students' => [
+                'default_class' => 'sensitive',
+                'tenant_scoped' => true,
+                'fields' => [
+                    'id' => ['class' => 'internal'],
+                    'name' => ['class' => 'internal'],
+                    'email' => ['class' => 'confidential', 'encrypt' => true, 'search_hash' => true, 'mask' => 'email', 'export' => 'masked', 'log' => false],
+                    'parent_phone' => ['class' => 'sensitive', 'encrypt' => true, 'search_hash' => true, 'mask' => 'last4', 'export' => 'masked', 'log' => false],
+                    'password_hash' => ['class' => 'highly_sensitive', 'read' => false, 'write' => false, 'export' => false, 'log' => false],
+                ],
+            ],
+        ],
+        'exports' => ['csv_injection_protection' => true, 'max_rows' => 10, 'audit' => true],
+        'storage' => ['encrypt_files' => true],
+        'backups' => ['encrypt' => true, 'sign' => true, 'retention_days' => 30],
+        'logs' => ['redact_before_write' => true],
+    ],
+];
+$dataProtectionAudit = new SecurityAuditTrail(new TamperEvidentAuditLogger($base . '/audit/data-protection.log'));
+$dataRegistry = DataProtectionRegistry::fromConfig($dataProtectionConfig, $dataProtectionAudit);
+$protectedStudent = $dataRegistry->protectForStorage('students', [
+    'id' => 7,
+    'name' => 'Ravi',
+    'email' => 'ravi@example.com',
+    'parent_phone' => '9876543210',
+    'password_hash' => 'hash',
+]);
+ok(isset($protectedStudent['email_hash'], $protectedStudent['parent_phone_hash']) && str_starts_with((string)$protectedStudent['email'], KeyRing::PREFIX) && !isset($protectedStudent['password_hash']), 'data protection registry encrypts fields and creates search hashes for storage');
+$unprotectedStudent = $dataRegistry->unprotectFromStorage('students', $protectedStudent);
+ok($unprotectedStudent['email'] === 'ravi@example.com' && $unprotectedStudent['parent_phone'] === '9876543210', 'data protection registry decrypts protected fields from storage');
+$responseStudent = $dataRegistry->protectForResponse('students', $protectedStudent);
+$logStudent = $dataRegistry->protectForLog('students', $protectedStudent);
+ok(isset($responseStudent['email']) && $responseStudent['email'] !== 'ravi@example.com' && !isset($responseStudent['password_hash']) && ($logStudent['email'] ?? '') === '[redacted]', 'data protection registry masks responses and redacts logs');
+$csv = (new SafeCsvExporter($dataRegistry, new ExportPolicy(['csv_injection_protection' => true, 'max_rows' => 10])))->export('students', [
+    ['name' => '=HYPERLINK("http://evil")', 'email' => 'ravi@example.com', 'parent_phone' => '9876543210', 'password_hash' => 'hash'],
+]);
+ok(str_contains($csv, "'=HYPERLINK") && !str_contains($csv, '9876543210') && !str_contains($csv, 'password_hash'), 'safe CSV exporter masks fields and blocks CSV formula injection');
+$encryptedStorage = new EncryptedStorage(new LocalPrivateStorage($base . '/encrypted-storage'), new KeyRing('test-v1', ['test-v1' => str_repeat('S', 40)]));
+$encryptedStorage->put('docs/secret.txt', 'secret file body');
+$rawStored = file_get_contents($encryptedStorage->absolutePath('docs/secret.txt'));
+ok($encryptedStorage->read('docs/secret.txt') === 'secret file body' && is_string($rawStored) && !str_contains($rawStored, 'secret file body'), 'encrypted storage protects file contents at rest');
+$dpInvalidReport = (new SecurityConfigValidator(['data_protection' => ['enabled' => true, 'encryption' => ['enabled' => true, 'current_key_id' => 'missing', 'keys' => ['old' => 'short']], 'resources' => ['bad resource' => []]]]))->validate();
+ok(!$dpInvalidReport['passed'], 'security config validator catches invalid data protection policies and keys');
+$dpSuggestions = (new AutoSuggestionEngine())->suggestFromCode('Response::json($student); fputcsv($handle, $row); $student["parent_phone"]');
+ok(count(array_filter($dpSuggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_data_protection_strategy' || ($item['id'] ?? '') === 'data_protection_strategy')) >= 1, 'auto suggestion engine recommends data protection strategy for sensitive output/export code');
 
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

@@ -342,6 +342,58 @@ return [
     ],
 
 
+    'data_protection' => [
+        'enabled' => filter_var($_ENV['DATA_PROTECTION_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'default_class' => $_ENV['DATA_PROTECTION_DEFAULT_CLASS'] ?? 'internal',
+        'deny_unclassified_fields' => filter_var($_ENV['DATA_PROTECTION_DENY_UNCLASSIFIED_FIELDS'] ?? false, FILTER_VALIDATE_BOOL),
+        'audit' => filter_var($_ENV['DATA_PROTECTION_AUDIT'] ?? false, FILTER_VALIDATE_BOOL),
+        'encryption' => [
+            'enabled' => filter_var($_ENV['DATA_ENCRYPTION_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'current_key_id' => $_ENV['DATA_KEY_ID'] ?? 'app-v1',
+            'keys' => [
+                $_ENV['DATA_KEY_ID'] ?? 'app-v1' => $_ENV['DATA_KEY'] ?? ($_ENV['APP_KEY'] ?? ''),
+            ],
+            'aad' => filter_var($_ENV['DATA_ENCRYPTION_AAD'] ?? true, FILTER_VALIDATE_BOOL),
+        ],
+        'search_hash' => [
+            'enabled' => filter_var($_ENV['DATA_SEARCH_HASH_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'key' => $_ENV['DATA_SEARCH_HASH_KEY'] ?? ($_ENV['APP_KEY'] ?? ''),
+            'prefix' => $_ENV['DATA_SEARCH_HASH_PREFIX'] ?? 'mnb:search',
+        ],
+        'resources' => [
+            'students' => [
+                'default_class' => 'sensitive',
+                'tenant_scoped' => true,
+                'fields' => [
+                    'id' => ['class' => 'internal'],
+                    'name' => ['class' => 'internal'],
+                    'email' => ['class' => 'confidential', 'encrypt' => true, 'search_hash' => true, 'mask' => 'email', 'export' => 'masked', 'log' => false],
+                    'parent_phone' => ['class' => 'sensitive', 'encrypt' => true, 'search_hash' => true, 'mask' => 'last4', 'export' => 'masked', 'log' => false],
+                    'school_id' => ['class' => 'internal'],
+                    'branch_id' => ['class' => 'internal'],
+                    'password_hash' => ['class' => 'highly_sensitive', 'read' => false, 'write' => false, 'export' => false, 'log' => false],
+                ],
+            ],
+        ],
+        'exports' => [
+            'csv_injection_protection' => true,
+            'audit' => true,
+            'max_rows' => (int)($_ENV['DATA_EXPORT_MAX_ROWS'] ?? 50000),
+        ],
+        'storage' => [
+            'encrypt_files' => filter_var($_ENV['DATA_ENCRYPT_FILES'] ?? false, FILTER_VALIDATE_BOOL),
+        ],
+        'backups' => [
+            'encrypt' => filter_var($_ENV['DATA_BACKUP_ENCRYPT'] ?? false, FILTER_VALIDATE_BOOL),
+            'sign' => filter_var($_ENV['DATA_BACKUP_SIGN'] ?? false, FILTER_VALIDATE_BOOL),
+            'retention_days' => (int)($_ENV['DATA_BACKUP_RETENTION_DAYS'] ?? 30),
+        ],
+        'logs' => [
+            'redact_before_write' => true,
+        ],
+    ],
+
+
     'request_receiving' => [
         'enabled' => filter_var($_ENV['REQUEST_RECEIVING_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
         'reject_body_on_get' => true,

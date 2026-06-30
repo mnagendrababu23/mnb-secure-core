@@ -70,6 +70,11 @@ use Mnb\SecurityCore\Logging\NullSecurityAuditTrail;
 use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
 use Mnb\SecurityCore\Logging\AutoAuditLogger;
 use Mnb\SecurityCore\Contracts\LoggerInterface;
+use Mnb\SecurityCore\Data\DataProtectionRegistry;
+use Mnb\SecurityCore\Data\ExportPolicy;
+use Mnb\SecurityCore\Data\KeyRing;
+use Mnb\SecurityCore\Data\SafeCsvExporter;
+use Mnb\SecurityCore\Files\EncryptedStorage;
 use Mnb\SecurityCore\Suggestions\AutoSuggestionEngine;
 use Mnb\SecurityCore\Trust\TrustBoundaryRegistry;
 use Mnb\SecurityCore\Trust\TrustBoundaryPolicy;
@@ -358,6 +363,31 @@ class SecurityKernel
         $suggestionConfig = is_array($this->config['suggestions'] ?? null) ? $this->config['suggestions'] : [];
         $rules = is_array($suggestionConfig['rules'] ?? null) ? $suggestionConfig['rules'] : [];
         return new AutoSuggestionEngine(array_merge($rules, $customRules));
+    }
+
+
+    public function dataKeyRing(): KeyRing
+    {
+        $dataProtection = is_array($this->config['data_protection'] ?? null) ? $this->config['data_protection'] : [];
+        $encryption = is_array($dataProtection['encryption'] ?? null) ? $dataProtection['encryption'] : [];
+        return KeyRing::fromConfig($encryption, (string)($this->config['app']['key'] ?? ''));
+    }
+
+    public function dataProtectionRegistry(?SecurityAuditTrail $audit = null): DataProtectionRegistry
+    {
+        return DataProtectionRegistry::fromConfig($this->config, $audit ?: $this->auditTrail());
+    }
+
+    public function safeCsvExporter(?SecurityAuditTrail $audit = null): SafeCsvExporter
+    {
+        $dp = is_array($this->config['data_protection'] ?? null) ? $this->config['data_protection'] : [];
+        $export = is_array($dp['exports'] ?? null) ? $dp['exports'] : [];
+        return new SafeCsvExporter($this->dataProtectionRegistry($audit), new ExportPolicy($export));
+    }
+
+    public function encryptedPrivateStorage(): EncryptedStorage
+    {
+        return new EncryptedStorage(new LocalPrivateStorage($this->config['paths']['private_storage']), $this->dataKeyRing());
     }
 
 

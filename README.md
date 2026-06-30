@@ -1308,3 +1308,37 @@ $safeWrite = $kernel->authorizationRegistry()->filterWritableFields('students.up
 ```
 
 Existing `Auth\PermissionGuard`, `Authz\PermissionGuard`, tenant guards, trust boundaries, and database policies remain available.
+
+## Data Protection Strategy Engine
+
+`mnb-secure-core v1.0.1` includes a unified data-protection layer for protected resources and fields. It connects classification, encryption, masking, search hashes, log redaction, export safety, and encrypted private storage.
+
+```php
+$protected = $kernel->dataProtectionRegistry()->protectForStorage('students', [
+    'name' => 'Ravi',
+    'email' => 'ravi@example.com',
+    'parent_phone' => '9876543210',
+]);
+
+$safeResponse = $kernel->dataProtectionRegistry()->protectForResponse('students', $protected, $request);
+$logSafe = $kernel->dataProtectionRegistry()->protectForLog('students', $protected);
+$csv = $kernel->safeCsvExporter()->export('students', [$protected]);
+```
+
+Main helpers:
+
+```php
+$kernel->dataKeyRing();
+$kernel->dataProtectionRegistry();
+$kernel->safeCsvExporter();
+$kernel->encryptedPrivateStorage();
+```
+
+Supported protection behavior:
+
+- Field classification: `public`, `internal`, `confidential`, `sensitive`, `highly_sensitive`.
+- AES-256-GCM field encryption with key ids and optional AAD.
+- Search hashes for encrypted lookup fields.
+- Response masking and log redaction.
+- CSV formula-injection protection.
+- Encrypted private file storage wrapper.

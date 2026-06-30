@@ -176,3 +176,7 @@ $middleware = $kernel->authorizationMiddleware('students.update');
 ```
 
 Existing direct guards and trust-boundary APIs remain supported.
+
+### Data Protection Strategy Engine
+
+This release line now includes the Data Protection Strategy Engine. It unifies field classification, AES-256-GCM encrypted fields, keyed search hashes, response masking, log redaction, safe CSV exports, and encrypted private storage wrappers.
