@@ -1,6 +1,7 @@
 <?php
 namespace Mnb\SecurityCore\Security;
 
+use Mnb\SecurityCore\Core\StorageDriverResolver;
 use Mnb\SecurityCore\Database\SqlIdentifier;
 use Throwable;
 
@@ -220,21 +221,74 @@ class SecurityConfigValidator
 
     private function validateStores(): void
     {
+        $paths = is_array($this->config['paths'] ?? null) ? $this->config['paths'] : [];
+        $database = is_array($this->config['database'] ?? null) ? $this->config['database'] : [];
+        $databaseDriver = strtolower((string)($database['driver'] ?? 'mysql'));
+
         foreach (['cache', 'rate_limiter', 'token_store'] as $sectionName) {
             $section = $this->section($sectionName, true);
             if ($section === null) {
                 continue;
             }
+
             $driver = $section['driver'] ?? 'file';
-            if (!$this->isStringLike($driver) || !in_array((string)$driver, ['file', 'redis', 'database'], true)) {
+            $normalizedDriver = is_scalar($driver) ? strtolower(trim((string)$driver)) : null;
+            if (!$this->isStringLike($driver) || !in_array((string)$normalizedDriver, StorageDriverResolver::supportedDrivers(), true)) {
                 $this->issue('high', 'invalid_' . $sectionName . '_driver', $sectionName . '.driver', "{$sectionName} driver must be file, redis, or database.", 'file|redis|database', $driver);
+                continue;
             }
+
             if (isset($section['prefix']) && !$this->isStringLike($section['prefix'])) {
                 $this->issue('medium', 'invalid_' . $sectionName . '_prefix', $sectionName . '.prefix', "{$sectionName} prefix should be a string.", 'string', $section['prefix']);
             }
+
+            if (isset($section['prefix']) && is_scalar($section['prefix']) && (string)$section['prefix'] === '') {
+                $this->issue('low', 'empty_' . $sectionName . '_prefix', $sectionName . '.prefix', "{$sectionName} prefix is empty. This is allowed, but distinct prefixes help avoid key collisions across apps.", 'non-empty prefix recommended', '');
+            }
+
             if (isset($section['table'])) {
                 $this->sqlIdentifier($section['table'], $sectionName . '.table', $sectionName . ' table');
             }
+
+            if ($normalizedDriver === StorageDriverResolver::FILE) {
+                $this->validateFileStorePath($sectionName, $paths);
+            }
+
+            if ($normalizedDriver === StorageDriverResolver::REDIS) {
+                if (!class_exists('Redis')) {
+                    $this->issue('medium', 'redis_extension_missing_for_' . $sectionName, $sectionName . '.driver', "{$sectionName} uses redis driver, but ext-redis is not installed. Inject a compatible Redis client manually or install ext-redis.", 'ext-redis or injected Redis-compatible client', 'ext-redis missing');
+                }
+                if (!is_array($this->config['redis'] ?? null)) {
+                    $this->issue('high', 'missing_redis_config_for_' . $sectionName, 'redis', "{$sectionName} uses redis driver, but redis config section is missing.", 'redis config array', null);
+                }
+            }
+
+            if ($normalizedDriver === StorageDriverResolver::DATABASE) {
+                if (!isset($section['table']) || !$this->isStringLike($section['table']) || trim((string)$section['table']) === '') {
+                    $this->issue('medium', 'missing_' . $sectionName . '_table', $sectionName . '.table', "{$sectionName} uses database driver, so a table name should be configured explicitly.", 'safe SQL table identifier', $section['table'] ?? null);
+                }
+                if ($databaseDriver !== 'mysql') {
+                    $this->issue('high', 'unsupported_database_store_driver_for_' . $sectionName, 'database.driver', "Database-backed {$sectionName} storage currently requires MySQL/MariaDB because the bundled store uses MySQL-compatible upsert and locking semantics.", 'mysql', $databaseDriver ?: null);
+                }
+            }
+        }
+    }
+
+    private function validateFileStorePath(string $sectionName, array $paths): void
+    {
+        if ($sectionName === 'cache') {
+            $path = $paths['cache'] ?? null;
+            $pathName = 'paths.cache';
+        } elseif ($sectionName === 'rate_limiter') {
+            $path = $paths['cache'] ?? null;
+            $pathName = 'paths.cache';
+        } else {
+            $path = $paths['tokens'] ?? null;
+            $pathName = 'paths.tokens';
+        }
+
+        if (!$this->isStringLike($path) || trim((string)$path) === '') {
+            $this->issue('high', 'missing_file_store_path_for_' . $sectionName, $pathName, "{$sectionName} uses file driver, but its storage path is missing or empty.", 'non-empty path string', $path);
         }
     }
 

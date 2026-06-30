@@ -35,48 +35,74 @@ class SecurityKernel
 
     public function fileCache(): FileCache
     {
-        return new FileCache($this->config['paths']['cache']);
+        return new FileCache(StorageDriverResolver::directoryPath($this->config['paths']['cache'] ?? '', 'cache'));
     }
 
     public function cache(?PDO $pdo = null, ?object $redis = null): CacheInterface
     {
-        $driver = $this->config['cache']['driver'] ?? ($_ENV['CACHE_DRIVER'] ?? 'file');
-        if ($driver === 'redis') {
-            return new RedisCache($redis ?: $this->redis(), $this->config['cache']['prefix'] ?? 'mnb:cache:');
+        $driver = StorageDriverResolver::driver($this->config, 'cache', 'CACHE_DRIVER');
+        $cacheConfig = is_array($this->config['cache'] ?? null) ? $this->config['cache'] : [];
+
+        if ($driver === StorageDriverResolver::REDIS) {
+            $client = $redis ?: $this->redis();
+            StorageDriverResolver::assertRedisClient($client, ['get', 'set', 'del'], 'cache');
+            return new RedisCache($client, StorageDriverResolver::prefix($cacheConfig['prefix'] ?? null, 'mnb:cache:', 'cache'));
         }
-        if ($driver === 'database') {
-            return new DatabaseCache($pdo ?: $this->pdo(), $this->config['cache']['table'] ?? 'mnb_cache', $this->config['cache']['prefix'] ?? 'mnb:cache:');
+
+        if ($driver === StorageDriverResolver::DATABASE) {
+            $connection = $pdo ?: $this->pdo();
+            StorageDriverResolver::assertDatabaseStoreDriver($connection, 'cache');
+            return new DatabaseCache($connection, $cacheConfig['table'] ?? 'mnb_cache', StorageDriverResolver::prefix($cacheConfig['prefix'] ?? null, 'mnb:cache:', 'cache'));
         }
+
         return $this->fileCache();
     }
 
     public function fileRateLimiter(): FileRateLimiter
     {
-        return new FileRateLimiter($this->config['paths']['cache'] . '/rate_limits');
+        $cachePath = StorageDriverResolver::directoryPath($this->config['paths']['cache'] ?? '', 'cache');
+        return new FileRateLimiter(StorageDriverResolver::directoryPath($cachePath . '/rate_limits', 'rate limiter cache'));
     }
 
     public function rateLimiter(?PDO $pdo = null, ?object $redis = null): RateLimiterInterface
     {
-        $driver = $this->config['rate_limiter']['driver'] ?? ($_ENV['RATE_LIMIT_DRIVER'] ?? 'file');
-        if ($driver === 'redis') {
-            return new RedisRateLimiter($redis ?: $this->redis(), $this->config['rate_limiter']['prefix'] ?? 'mnb:rate:');
+        $driver = StorageDriverResolver::driver($this->config, 'rate_limiter', 'RATE_LIMIT_DRIVER');
+        $rateConfig = is_array($this->config['rate_limiter'] ?? null) ? $this->config['rate_limiter'] : [];
+
+        if ($driver === StorageDriverResolver::REDIS) {
+            $client = $redis ?: $this->redis();
+            StorageDriverResolver::assertRedisClient($client, ['incr', 'expire', 'del'], 'rate limiter');
+            return new RedisRateLimiter($client, StorageDriverResolver::prefix($rateConfig['prefix'] ?? null, 'mnb:rate:', 'rate limiter'));
         }
-        if ($driver === 'database') {
-            return new DatabaseRateLimiter($pdo ?: $this->pdo(), $this->config['rate_limiter']['table'] ?? 'mnb_rate_limits', $this->config['rate_limiter']['prefix'] ?? 'mnb:rate:');
+
+        if ($driver === StorageDriverResolver::DATABASE) {
+            $connection = $pdo ?: $this->pdo();
+            StorageDriverResolver::assertDatabaseStoreDriver($connection, 'rate limiter');
+            return new DatabaseRateLimiter($connection, $rateConfig['table'] ?? 'mnb_rate_limits', StorageDriverResolver::prefix($rateConfig['prefix'] ?? null, 'mnb:rate:', 'rate limiter'));
         }
+
         return $this->fileRateLimiter();
     }
 
     public function tokenStore(?PDO $pdo = null, ?object $redis = null): TokenStoreInterface
     {
-        $driver = $this->config['token_store']['driver'] ?? ($_ENV['TOKEN_STORE_DRIVER'] ?? 'file');
-        if ($driver === 'redis') {
-            return new RedisTokenStore($redis ?: $this->redis(), $this->config['token_store']['prefix'] ?? 'mnb:token:');
+        $driver = StorageDriverResolver::driver($this->config, 'token_store', 'TOKEN_STORE_DRIVER');
+        $tokenConfig = is_array($this->config['token_store'] ?? null) ? $this->config['token_store'] : [];
+
+        if ($driver === StorageDriverResolver::REDIS) {
+            $client = $redis ?: $this->redis();
+            StorageDriverResolver::assertRedisClient($client, ['get', 'set', 'sAdd', 'sMembers'], 'token store');
+            return new RedisTokenStore($client, StorageDriverResolver::prefix($tokenConfig['prefix'] ?? null, 'mnb:token:', 'token store'));
         }
-        if ($driver === 'database') {
-            return new DatabaseTokenStore($pdo ?: $this->pdo(), $this->config['token_store']['table'] ?? 'mnb_api_tokens');
+
+        if ($driver === StorageDriverResolver::DATABASE) {
+            $connection = $pdo ?: $this->pdo();
+            StorageDriverResolver::assertDatabaseStoreDriver($connection, 'token store');
+            return new DatabaseTokenStore($connection, $tokenConfig['table'] ?? 'mnb_api_tokens');
         }
-        return new FileTokenStore($this->config['paths']['tokens'] ?? ($this->config['paths']['cache'] . '/tokens.json'));
+
+        $defaultTokenFile = StorageDriverResolver::directoryPath($this->config['paths']['cache'] ?? '', 'cache') . '/tokens.json';
+        return new FileTokenStore(StorageDriverResolver::filePath($this->config['paths']['tokens'] ?? $defaultTokenFile, 'token store'));
     }
 
     public function secureFileManager(?MalwareScannerInterface $scanner = null): SecureFileManager
@@ -131,18 +157,42 @@ class SecurityKernel
 
     private function redis(): object
     {
-        if (!class_exists('Redis')) {
-            throw new \RuntimeException('Redis extension is not installed. Use file/database driver or install ext-redis.');
+        StorageDriverResolver::assertRedisExtension();
+
+        $config = is_array($this->config['redis'] ?? null) ? $this->config['redis'] : [];
+        $host = $config['host'] ?? '127.0.0.1';
+        if (!is_scalar($host) || trim((string)$host) === '') {
+            throw new \InvalidArgumentException('Redis host must be a non-empty string.');
         }
+
+        $port = (int)($config['port'] ?? 6379);
+        if ($port < 1 || $port > 65535) {
+            throw new \InvalidArgumentException('Redis port must be between 1 and 65535.');
+        }
+
+        $timeout = (float)($config['timeout'] ?? 1.5);
+        if ($timeout <= 0) {
+            throw new \InvalidArgumentException('Redis timeout must be greater than zero.');
+        }
+
         $redis = new \Redis();
-        $config = $this->config['redis'] ?? [];
-        $redis->connect($config['host'] ?? '127.0.0.1', (int)($config['port'] ?? 6379), (float)($config['timeout'] ?? 1.5));
-        if (!empty($config['password'])) {
-            $redis->auth($config['password']);
+        $connected = $redis->connect((string)$host, $port, $timeout);
+        if ($connected === false) {
+            throw new \RuntimeException('Unable to connect to Redis at ' . (string)$host . ':' . $port . '.');
         }
-        if (isset($config['database'])) {
-            $redis->select((int)$config['database']);
+
+        if (isset($config['password']) && (string)$config['password'] !== '') {
+            $redis->auth((string)$config['password']);
         }
+
+        if (isset($config['database']) && $config['database'] !== null && $config['database'] !== '') {
+            $database = (int)$config['database'];
+            if ($database < 0) {
+                throw new \InvalidArgumentException('Redis database index must be zero or greater.');
+            }
+            $redis->select($database);
+        }
+
         return $redis;
     }
 }

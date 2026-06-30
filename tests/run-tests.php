@@ -18,6 +18,8 @@ use Mnb\SecurityCore\Data\DataClassifier;
 use Mnb\SecurityCore\Data\DataMasker;
 use Mnb\SecurityCore\Data\Encryption;
 use Mnb\SecurityCore\Data\FieldFilter;
+use Mnb\SecurityCore\Core\SecurityKernel;
+use Mnb\SecurityCore\Core\StorageDriverResolver;
 use Mnb\SecurityCore\Authz\Policies\DatabaseResourcePolicy;
 use Mnb\SecurityCore\Database\DatabaseConfig;
 use Mnb\SecurityCore\Database\DryRunDatabaseConnection;
@@ -246,6 +248,113 @@ ok(
     && in_array('unsafe_sql_identifier_cache_table', $invalidKeys, true),
     'security config validator catches unsafe types, proxy trust, uploads and table identifiers'
 );
+
+$normalizedDriver = StorageDriverResolver::driver(['cache' => ['driver' => ' Redis ']], 'cache', 'CACHE_DRIVER');
+$invalidDriverBlocked = false;
+try {
+    StorageDriverResolver::driver(['cache' => ['driver' => 'memory']], 'cache', 'CACHE_DRIVER');
+} catch (InvalidArgumentException $e) {
+    $invalidDriverBlocked = true;
+}
+$invalidRedisClientBlocked = false;
+try {
+    StorageDriverResolver::assertRedisClient(new class { public function get(string $key): mixed { return false; } }, ['get', 'set'], 'cache');
+} catch (InvalidArgumentException $e) {
+    $invalidRedisClientBlocked = true;
+}
+ok($normalizedDriver === 'redis' && $invalidDriverBlocked && $invalidRedisClientBlocked, 'storage driver resolver normalizes drivers and blocks unsafe clients');
+
+$databaseStoreConfigReport = (new SecurityConfigValidator(array_replace_recursive($defaultConfig, [
+    'cache' => ['driver' => 'database', 'table' => 'mnb_cache'],
+    'database' => ['driver' => 'sqlite'],
+])))->validate();
+ok(in_array('unsupported_database_store_driver_for_cache', array_column($databaseStoreConfigReport['issues'], 'key'), true), 'security config validator flags unsupported database-backed store driver');
+
+$fakeRedis = new class {
+    public array $data = [];
+    public array $ttl = [];
+    public array $sets = [];
+
+    public function get(string $key): mixed
+    {
+        return $this->data[$key] ?? false;
+    }
+
+    public function set(string $key, mixed $value, mixed $ttl = null): bool
+    {
+        $this->data[$key] = $value;
+        if ($ttl !== null) {
+            $this->ttl[$key] = time() + (int)$ttl;
+        }
+        return true;
+    }
+
+    public function setex(string $key, int $ttl, mixed $value): bool
+    {
+        $this->data[$key] = $value;
+        $this->ttl[$key] = time() + $ttl;
+        return true;
+    }
+
+    public function del(string $key): int
+    {
+        unset($this->data[$key], $this->ttl[$key], $this->sets[$key]);
+        return 1;
+    }
+
+    public function incr(string $key): int
+    {
+        $this->data[$key] = (string)(((int)($this->data[$key] ?? 0)) + 1);
+        return (int)$this->data[$key];
+    }
+
+    public function expire(string $key, int $ttl): bool
+    {
+        $this->ttl[$key] = time() + $ttl;
+        return true;
+    }
+
+    public function ttl(string $key): int
+    {
+        return isset($this->ttl[$key]) ? max(0, $this->ttl[$key] - time()) : -1;
+    }
+
+    public function sAdd(string $key, string $member): int
+    {
+        $this->sets[$key][$member] = true;
+        return 1;
+    }
+
+    public function sMembers(string $key): array
+    {
+        return array_keys($this->sets[$key] ?? []);
+    }
+};
+
+$kernelConfig = $defaultConfig;
+$kernelConfig['paths']['cache'] = $base . '/kernel-cache';
+$kernelConfig['paths']['tokens'] = $base . '/kernel-tokens/tokens.json';
+$kernelConfig['cache']['driver'] = 'redis';
+$kernelConfig['rate_limiter']['driver'] = 'redis';
+$kernelConfig['token_store']['driver'] = 'redis';
+$kernel = new SecurityKernel($kernelConfig);
+$kernelCache = $kernel->cache(null, $fakeRedis);
+$kernelCache->put('driver-test', ['ok' => true], 60);
+$kernelRate = $kernel->rateLimiter(null, $fakeRedis)->attempt('driver-test', 1, 60);
+$kernelTokenService = new OpaqueTokenService($kernel->tokenStore(null, $fakeRedis));
+$kernelIssuedToken = $kernelTokenService->issue(123, ['driver.read'], ttlSeconds: 60);
+ok($kernelCache->get('driver-test')['ok'] === true && $kernelRate->allowed && $kernelTokenService->validate($kernelIssuedToken['plain_token']) !== null, 'security kernel builds injected Redis cache, rate limiter and token store drivers');
+
+$kernelInvalidDriverBlocked = false;
+try {
+    $badKernelConfig = $defaultConfig;
+    $badKernelConfig['paths']['cache'] = $base . '/bad-kernel-cache';
+    $badKernelConfig['cache']['driver'] = 'memory';
+    (new SecurityKernel($badKernelConfig))->cache();
+} catch (InvalidArgumentException $e) {
+    $kernelInvalidDriverBlocked = true;
+}
+ok($kernelInvalidDriverBlocked, 'security kernel rejects invalid storage driver instead of silently falling back to file');
 
 $audit = new TamperEvidentAuditLogger($base . '/audit/audit.log');
 $audit->record('fee.updated', ['user_id' => 1, 'token' => 'secret'], ['fee_id' => 5]);
