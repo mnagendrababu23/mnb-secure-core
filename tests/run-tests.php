@@ -136,6 +136,8 @@ use Mnb\SecurityCore\Security\CspNonceManager;
 use Mnb\SecurityCore\Security\SecurityConfigValidator;
 use Mnb\SecurityCore\Security\SecurityDoctor;
 use Mnb\SecurityCore\Security\VulnerabilityMatrix;
+use Mnb\SecurityCore\Vulnerability\VulnerabilityCoverageReport;
+use Mnb\SecurityCore\Vulnerability\VulnerabilityAdvisor;
 use Mnb\SecurityCore\Quickstart\FirstTokenBootstrapper;
 use Mnb\SecurityCore\Pentest\PentestChecklist;
 use Mnb\SecurityCore\Pentest\PayloadLibrary;
@@ -1746,6 +1748,34 @@ ok(!$i25InvalidReport['passed'], 'security config validator catches unsafe recov
 
 $i25Suggestions = (new AutoSuggestionEngine())->suggestFromCode('new BackupManager($path); restore backup incident response malware_upload_detected');
 ok(count(array_filter($i25Suggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_backup_incident_engine' || ($item['id'] ?? '') === 'backup_incident_engine')) >= 1, 'auto suggestion engine recommends backup recovery and incident response engine');
+
+
+
+$vulnMatrix = new \Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix($i25Config);
+$vulnRows = $vulnMatrix->rows();
+$vulnSql = $vulnMatrix->find('sql_injection');
+ok(count($vulnRows) >= 25 && $vulnSql !== null && $vulnSql->score() >= 75, 'vulnerability matrix builds OWASP/CWE control coverage rows');
+
+$vulnReport = (new VulnerabilityCoverageReport($vulnMatrix, 70))->toArray();
+ok(isset($vulnReport['overall_score'], $vulnReport['grade']) && $vulnReport['count'] >= 25, 'vulnerability coverage report scores and grades matrix');
+
+$vulnAdvice = (new VulnerabilityAdvisor($vulnMatrix))->recommend('ssrf');
+ok($vulnAdvice['passed'] && $vulnAdvice['id'] === 'ssrf' && !empty($vulnAdvice['recommended_controls']), 'vulnerability advisor recommends next controls for partial coverage');
+
+$i26Kernel = new SecurityKernel(array_replace_recursive($i25Config, [
+    'vulnerability_matrix' => [
+        'enabled' => true,
+        'reporting' => ['minimum_passing_score' => 70],
+        'vulnerabilities' => ['ssrf' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'partially_protected']],
+    ],
+]));
+ok($i26Kernel->vulnerabilityCoverageReport()->toArray()['count'] >= 25 && $i26Kernel->vulnerabilityAdvisor()->recommend('sql_injection')['passed'], 'security kernel exposes vulnerability matrix helpers');
+
+$i26InvalidReport = (new SecurityConfigValidator(['app' => ['env' => 'production'], 'vulnerability_matrix' => ['enabled' => false, 'reporting' => ['minimum_passing_score' => 0], 'vulnerabilities' => ['bad id!' => ['severity' => 'extreme', 'expected_status' => 'wrong']]]]))->validate();
+ok(!$i26InvalidReport['passed'], 'security config validator catches invalid vulnerability matrix configuration');
+
+$i26Suggestions = (new AutoSuggestionEngine())->suggestFromCode('OWASP CWE vulnerability SQL injection XSS SSRF coverage matrix');
+ok(count(array_filter($i26Suggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_vulnerability_matrix_engine' || ($item['id'] ?? '') === 'vulnerability_matrix_engine')) >= 1, 'auto suggestion engine recommends vulnerability blocking matrix engine');
 
 
 echo "\n{$passed} passed, {$failed} failed\n";

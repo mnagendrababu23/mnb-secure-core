@@ -30,6 +30,7 @@ class SecurityConfigValidator
         $this->validateAudit();
         $this->validateLoggingMonitoring();
         $this->validateRecoveryIncident();
+        $this->validateVulnerabilityMatrix();
         $this->validateLimits();
         $this->validateUploads();
         $this->validateStores();
@@ -434,6 +435,58 @@ class SecurityConfigValidator
             }
         } elseif ($this->isProduction($this->config['app'] ?? [])) {
             $this->issue('medium', 'incident_response_missing', 'incident_response', 'Define incident response playbooks for production detection and containment.', 'incident_response config', null);
+        }
+    }
+
+
+    private function validateVulnerabilityMatrix(): void
+    {
+        $matrix = $this->section('vulnerability_matrix', false);
+        if ($matrix === null) {
+            if ($this->isProduction(is_array($this->config['app'] ?? null) ? $this->config['app'] : [])) {
+                $this->issue('medium', 'vulnerability_matrix_missing', 'vulnerability_matrix', 'Define a vulnerability blocking matrix for production security coverage reporting.', 'vulnerability_matrix config', null);
+            }
+            return;
+        }
+
+        $this->bool($matrix, 'enabled', 'vulnerability_matrix.enabled', false);
+        if (array_key_exists('enabled', $matrix) && $matrix['enabled'] === false && $this->isProduction(is_array($this->config['app'] ?? null) ? $this->config['app'] : [])) {
+            $this->issue('medium', 'vulnerability_matrix_disabled', 'vulnerability_matrix.enabled', 'Vulnerability coverage reporting should stay enabled in production and CI.', 'true', false);
+        }
+
+        $frameworks = is_array($matrix['frameworks'] ?? null) ? $matrix['frameworks'] : [];
+        foreach (['owasp_top_10_2021', 'cwe'] as $key) {
+            $this->bool($frameworks, $key, 'vulnerability_matrix.frameworks.' . $key, false);
+        }
+
+        $reporting = is_array($matrix['reporting'] ?? null) ? $matrix['reporting'] : [];
+        foreach (['include_evidence', 'include_gaps', 'include_recommendations'] as $key) {
+            $this->bool($reporting, $key, 'vulnerability_matrix.reporting.' . $key, false);
+        }
+        $this->intRange($reporting, 'minimum_passing_score', 'vulnerability_matrix.reporting.minimum_passing_score', 1, 100, false);
+
+        $vulnerabilities = is_array($matrix['vulnerabilities'] ?? null) ? $matrix['vulnerabilities'] : [];
+        if ($vulnerabilities === [] && $this->isProduction(is_array($this->config['app'] ?? null) ? $this->config['app'] : [])) {
+            $this->issue('medium', 'vulnerability_entries_missing', 'vulnerability_matrix.vulnerabilities', 'Define vulnerability entries or overrides for production reporting.', 'non-empty map', null);
+        }
+        $allowedStatus = ['protected','partially_protected','detected_only','configuration_required','not_covered','not_applicable'];
+        $allowedSeverity = ['low','medium','high','critical'];
+        foreach ($vulnerabilities as $id => $entry) {
+            $path = 'vulnerability_matrix.vulnerabilities.' . (string)$id;
+            if (!$this->safeName((string)$id)) {
+                $this->issue('high', 'invalid_vulnerability_id', $path, 'Vulnerability ids must be safe identifiers.', 'safe name', $id);
+            }
+            if (!is_array($entry)) {
+                $this->issue('high', 'invalid_vulnerability_entry', $path, 'Vulnerability entry must be an array.', 'array', $entry);
+                continue;
+            }
+            $this->bool($entry, 'enabled', $path . '.enabled', false);
+            if (isset($entry['severity']) && (!is_string($entry['severity']) || !in_array($entry['severity'], $allowedSeverity, true))) {
+                $this->issue('medium', 'invalid_vulnerability_severity', $path . '.severity', 'Vulnerability severity must be low, medium, high, or critical.', $allowedSeverity, $entry['severity']);
+            }
+            if (isset($entry['expected_status']) && (!is_string($entry['expected_status']) || !in_array($entry['expected_status'], $allowedStatus, true))) {
+                $this->issue('medium', 'invalid_vulnerability_expected_status', $path . '.expected_status', 'Vulnerability expected_status is not supported.', $allowedStatus, $entry['expected_status']);
+            }
         }
     }
 

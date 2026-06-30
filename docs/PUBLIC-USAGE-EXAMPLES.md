@@ -484,3 +484,17 @@ $report = $kernel->incidentResponse()->runPlaybook('malware_upload_detected', [
 ```
 
 Use these helpers to protect backup archives with encryption/signatures, verify restore readiness, and create auditable incident response reports.
+
+## Vulnerability Blocking Matrix
+
+```php
+$kernel = new \Mnb\SecurityCore\Core\SecurityKernel($config);
+
+$coverage = $kernel->vulnerabilityCoverageReport()->toArray();
+$ssrf = $kernel->vulnerabilityAdvisor()->recommend('ssrf');
+```
+
+```bash
+php bin/mnb-secure vulnerabilities:report
+php bin/mnb-secure vulnerabilities:check ssrf
+```

@@ -184,3 +184,30 @@ Added a centralized logging, audit integrity, metrics, alerting, and retention l
 - Added `SecurityKernel` helpers for secure backup, restore, recovery status, incident response, playbooks, containment, and evidence collection.
 - Added config/env settings and validation for `recovery` and `incident_response`.
 - Added demo `29-backup-recovery-incident-response-engine.php` and tests for encrypted/signed backups, restore dry-run, retention, incidents, playbooks, evidence, and kernel helpers.
+
+## v1.0.1 - Improvement 26: Vulnerability Blocking Matrix Engine
+
+Added a vulnerability coverage layer that maps common vulnerability classes to built-in security controls, OWASP Top 10 2021 entries, CWE IDs, status, scores, evidence, gaps, config dependencies, and recommendations.
+
+Added:
+- `src/Vulnerability/VulnerabilityDefinition.php`
+- `src/Vulnerability/VulnerabilityStatus.php`
+- `src/Vulnerability/VulnerabilityMatrix.php`
+- `src/Vulnerability/VulnerabilityCoverageReport.php`
+- `src/Vulnerability/VulnerabilityControlMapper.php`
+- `src/Vulnerability/VulnerabilityEvidence.php`
+- `src/Vulnerability/VulnerabilityScore.php`
+- `src/Vulnerability/VulnerabilityAdvisor.php`
+- `src/Vulnerability/OwaspMapper.php`
+- `src/Vulnerability/CweMapper.php`
+- `src/Vulnerability/VulnerabilityReportExporter.php`
+- `demos/30-vulnerability-blocking-matrix-engine.php`
+
+Added CLI commands:
+- `php bin/mnb-secure vulnerabilities:matrix`
+- `php bin/mnb-secure vulnerabilities:report`
+- `php bin/mnb-secure vulnerabilities:check <id>`
+- `php bin/mnb-secure vulnerabilities:owasp`
+- `php bin/mnb-secure vulnerabilities:export`
+
+The legacy `matrix:export` command and `Security\VulnerabilityMatrix` class remain compatible.

@@ -145,6 +145,10 @@ use Mnb\SecurityCore\Incident\ContainmentActionRunner;
 use Mnb\SecurityCore\Incident\IncidentEvidenceCollector;
 use Mnb\SecurityCore\Incident\IncidentPlaybook;
 use Mnb\SecurityCore\Incident\IncidentResponseManager;
+use Mnb\SecurityCore\Vulnerability\VulnerabilityAdvisor;
+use Mnb\SecurityCore\Vulnerability\VulnerabilityCoverageReport;
+use Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix;
+use Mnb\SecurityCore\Vulnerability\VulnerabilityReportExporter;
 use PDO;
 
 class SecurityKernel
@@ -1048,6 +1052,30 @@ class SecurityKernel
     {
         $trail = $audit ?: $this->auditTrail();
         return IncidentResponseManager::fromConfig($this->config, $this->containmentActionRunner($trail), $this->incidentEvidenceCollector(), $trail);
+    }
+
+
+
+    public function vulnerabilityMatrix(): VulnerabilityMatrix
+    {
+        return new VulnerabilityMatrix($this->config);
+    }
+
+    public function vulnerabilityCoverageReport(): VulnerabilityCoverageReport
+    {
+        $matrix = is_array($this->config['vulnerability_matrix'] ?? null) ? $this->config['vulnerability_matrix'] : [];
+        $reporting = is_array($matrix['reporting'] ?? null) ? $matrix['reporting'] : [];
+        return new VulnerabilityCoverageReport($this->vulnerabilityMatrix(), (int)($reporting['minimum_passing_score'] ?? 80));
+    }
+
+    public function vulnerabilityAdvisor(): VulnerabilityAdvisor
+    {
+        return new VulnerabilityAdvisor($this->vulnerabilityMatrix());
+    }
+
+    public function vulnerabilityReportExporter(): VulnerabilityReportExporter
+    {
+        return new VulnerabilityReportExporter($this->vulnerabilityCoverageReport());
     }
 
     public function pdo(): PDO

@@ -215,3 +215,9 @@ This release adds centralized logging and monitoring helpers around existing aud
 ### Backup, Recovery, and Incident Response Engine
 
 Added secure backup creation, manifests, HMAC signatures, restore dry-runs, recovery status reports, backup retention cleanup, incident cases, playbooks, containment actions, evidence collection, and CLI commands for backup/recovery/incident workflows.
+
+### Improvement 26 — Vulnerability Blocking Matrix Engine
+
+Adds a coverage matrix for SQL injection, XSS, CSRF, broken access control, IDOR, authentication failures, authorization failures, sensitive data exposure, secrets exposure, file upload/download risks, path traversal, open redirects, CORS misconfiguration, weak security headers, cache data leakage, audit/backup tampering, SSRF, command injection, CSV injection, webhook spoofing, and tenant boundary bypass.
+
+This engine makes protection coverage visible through PHP helpers and CLI commands while preserving the legacy `matrix:export` command.

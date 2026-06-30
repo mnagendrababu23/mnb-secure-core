@@ -34,7 +34,29 @@ class ProductionSecurityChecker
         $monitoring = $this->config['monitoring'] ?? [];
         $recovery = $this->config['recovery'] ?? [];
         $incidentResponse = $this->config['incident_response'] ?? [];
+        $vulnerabilityMatrix = $this->config['vulnerability_matrix'] ?? [];
 
+
+
+        if (($app['env'] ?? 'local') === 'production') {
+            if (!is_array($vulnerabilityMatrix) || $vulnerabilityMatrix === []) {
+                $issues[] = ['level' => 'medium', 'key' => 'vulnerability_matrix_missing', 'message' => 'Enable the Vulnerability Blocking Matrix so production readiness can map controls to OWASP/CWE risks.'];
+            } else {
+                if (array_key_exists('enabled', $vulnerabilityMatrix) && empty($vulnerabilityMatrix['enabled'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'vulnerability_matrix_disabled', 'message' => 'Vulnerability coverage reporting should stay enabled in production and CI.'];
+                }
+                $reporting = is_array($vulnerabilityMatrix['reporting'] ?? null) ? $vulnerabilityMatrix['reporting'] : [];
+                if ((int)($reporting['minimum_passing_score'] ?? 0) < 80) {
+                    $issues[] = ['level' => 'medium', 'key' => 'vulnerability_min_score_low', 'message' => 'Vulnerability coverage minimum passing score should be at least 80 for production.'];
+                }
+                $entries = is_array($vulnerabilityMatrix['vulnerabilities'] ?? null) ? $vulnerabilityMatrix['vulnerabilities'] : [];
+                foreach (['sql_injection', 'xss', 'broken_access_control', 'sensitive_data_exposure', 'insecure_file_upload', 'secrets_exposure'] as $required) {
+                    if (!array_key_exists($required, $entries)) {
+                        $issues[] = ['level' => 'low', 'key' => 'vulnerability_entry_missing', 'message' => 'Vulnerability matrix should include ' . $required . ' coverage entry.'];
+                    }
+                }
+            }
+        }
 
 
         if (($app['env'] ?? 'local') === 'production') {

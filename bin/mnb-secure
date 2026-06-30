@@ -182,9 +182,38 @@ switch ($command) {
         $report = $kernel->incidentResponse()->summary();
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit(!empty($report['passed']) ? 0 : 1);
+    case 'vulnerabilities:matrix':
     case 'matrix:export':
-        echo json_encode((new VulnerabilityMatrix())->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
-        break;
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->vulnerabilityMatrix()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'vulnerabilities:report':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->vulnerabilityCoverageReport()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'vulnerabilities:check':
+        $kernel = new SecurityKernel($config);
+        $id = $argv[2] ?? '';
+        $report = $id !== '' ? $kernel->vulnerabilityAdvisor()->recommend($id) : ['passed' => false, 'error' => 'vulnerability_id_required'];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'vulnerabilities:owasp':
+        $kernel = new SecurityKernel($config);
+        $rows = [];
+        foreach ($kernel->vulnerabilityMatrix()->rows() as $row) {
+            foreach ((array)($row['owasp'] ?? []) as $owasp) {
+                $rows[(string)$owasp][] = ['id' => $row['id'], 'name' => $row['name'], 'status' => $row['status'], 'score' => $row['score']];
+            }
+        }
+        ksort($rows);
+        echo json_encode(['passed' => true, 'framework' => 'OWASP Top 10 2021', 'groups' => $rows], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'vulnerabilities:export':
+        $kernel = new SecurityKernel($config);
+        echo $kernel->vulnerabilityReportExporter()->markdown();
+        exit(0);
     case 'pentest:checklist':
         echo json_encode((new PentestChecklist())->grouped(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
@@ -286,7 +315,12 @@ switch ($command) {
 ";
         echo "  incident:report         Summarize incident cases and playbooks
 ";
-        echo "  matrix:export            Export vulnerability blocking matrix\n";
+        echo "  vulnerabilities:matrix   Export detailed vulnerability blocking matrix\n";
+        echo "  vulnerabilities:report   Export vulnerability coverage score/report\n";
+        echo "  vulnerabilities:check    Show controls, gaps, and advice for one vulnerability id\n";
+        echo "  vulnerabilities:owasp    Group matrix rows by OWASP Top 10 mapping\n";
+        echo "  vulnerabilities:export   Export vulnerability report as Markdown\n";
+        echo "  matrix:export            Legacy alias for vulnerabilities:matrix\n";
         echo "  pentest:checklist        Export pentest checklist\n";
         echo "  pentest:payloads         Export safe pentest payload library\n";
         echo "  pentest:matrix           Export verification matrix\n";

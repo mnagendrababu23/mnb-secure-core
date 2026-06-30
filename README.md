@@ -1521,3 +1521,27 @@ php bin/mnb-secure recovery:drill
 php bin/mnb-secure incident:run-playbook secret_leak_detected
 php bin/mnb-secure incident:report
 ```
+
+### Improvement 26: Vulnerability Blocking Matrix Engine
+
+The Vulnerability Blocking Matrix maps common vulnerability classes to the controls provided by `mnb-secure-core`.
+
+```php
+$kernel = new \Mnb\SecurityCore\Core\SecurityKernel($config);
+
+$matrix = $kernel->vulnerabilityMatrix()->toArray();
+$report = $kernel->vulnerabilityCoverageReport()->toArray();
+$advice = $kernel->vulnerabilityAdvisor()->recommend('ssrf');
+```
+
+CLI:
+
+```bash
+php bin/mnb-secure vulnerabilities:matrix
+php bin/mnb-secure vulnerabilities:report
+php bin/mnb-secure vulnerabilities:check sql_injection
+php bin/mnb-secure vulnerabilities:owasp
+php bin/mnb-secure vulnerabilities:export
+```
+
+The report includes vulnerability status, score, OWASP/CWE mappings, blocking controls, detecting controls, config dependencies, evidence, gaps, and recommendations.

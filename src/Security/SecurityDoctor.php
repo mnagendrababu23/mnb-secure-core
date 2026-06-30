@@ -35,6 +35,7 @@ class SecurityDoctor
         $this->checkUploadScanner();
         $this->checkPublicPackage();
         $this->checkSecrets();
+        $this->checkVulnerabilityCoverage();
 
         $counts = $this->countByLevel($this->issues);
         $blocking = ($counts['critical'] ?? 0) + ($counts['high'] ?? 0);
@@ -374,6 +375,29 @@ class SecurityDoctor
             $this->issue('medium', 'secret_scan_failed', 'secret_scan', 'Secret scanner failed: ' . $e->getMessage());
         }
         $this->section('secret_scan', 'Secret Scan and Inventory', $checks, $issuesBefore);
+    }
+
+
+    private function checkVulnerabilityCoverage(): void
+    {
+        $checks = [];
+        $issuesBefore = count($this->issues);
+        try {
+            $kernel = new SecurityKernel($this->config);
+            $report = $kernel->vulnerabilityCoverageReport()->toArray();
+            $score = (float)($report['overall_score'] ?? 0);
+            $checks[] = $this->checkItem('vulnerability_coverage_score', !empty($report['passed']), 'Vulnerability coverage score', $score . ' / 100, grade ' . (string)($report['grade'] ?? 'n/a'));
+            $checks[] = $this->checkItem('vulnerability_matrix_rows', (int)($report['count'] ?? 0) >= 20, 'Vulnerability matrix rows', (int)($report['count'] ?? 0));
+            foreach ((array)($report['needs_attention'] ?? []) as $row) {
+                $severity = (string)($row['severity'] ?? 'medium');
+                $level = in_array($severity, ['critical','high'], true) ? 'medium' : 'low';
+                $this->issue($level, 'vulnerability_attention_' . (string)($row['id'] ?? 'unknown'), 'vulnerability_matrix', (string)($row['name'] ?? 'Vulnerability') . ' is ' . (string)($row['status'] ?? 'unknown') . '.', $row);
+            }
+        } catch (Throwable $e) {
+            $checks[] = $this->checkItem('vulnerability_coverage_score', false, 'Vulnerability coverage score', $e->getMessage());
+            $this->issue('medium', 'vulnerability_matrix_failed', 'vulnerability_matrix', 'Vulnerability matrix check failed: ' . $e->getMessage());
+        }
+        $this->section('vulnerability_matrix', 'Vulnerability Blocking Matrix', $checks, $issuesBefore);
     }
 
     /** @param array<int,array<string,mixed>> $checks */

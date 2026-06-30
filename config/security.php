@@ -1132,6 +1132,33 @@ return [
         ],
     ],
 
+    'vulnerability_matrix' => [
+        'enabled' => filter_var($_ENV['VULNERABILITY_MATRIX_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'frameworks' => [
+            'owasp_top_10_2021' => true,
+            'cwe' => true,
+        ],
+        'reporting' => [
+            'include_evidence' => true,
+            'include_gaps' => true,
+            'include_recommendations' => true,
+            'minimum_passing_score' => (int)($_ENV['VULNERABILITY_MATRIX_MIN_SCORE'] ?? 80),
+        ],
+        'vulnerabilities' => [
+            'sql_injection' => ['enabled' => true, 'severity' => 'critical'],
+            'xss' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'partially_protected'],
+            'csrf' => ['enabled' => true, 'severity' => 'high'],
+            'broken_access_control' => ['enabled' => true, 'severity' => 'critical'],
+            'sensitive_data_exposure' => ['enabled' => true, 'severity' => 'critical'],
+            'secrets_exposure' => ['enabled' => true, 'severity' => 'critical'],
+            'insecure_file_upload' => ['enabled' => true, 'severity' => 'critical'],
+            'unsafe_file_download' => ['enabled' => true, 'severity' => 'high'],
+            'ssrf' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'partially_protected'],
+            'command_injection' => ['enabled' => true, 'severity' => 'critical', 'expected_status' => 'partially_protected'],
+        ],
+    ],
+
+
     'suggestions' => [
         'enabled' => filter_var($_ENV['SUGGESTIONS_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
         'max_results' => (int)($_ENV['SUGGESTIONS_MAX_RESULTS'] ?? 8),
