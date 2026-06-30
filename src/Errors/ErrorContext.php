@@ -10,26 +10,22 @@ class ErrorContext
         public readonly string $requestId,
         public readonly string $environment = 'production',
         public readonly bool $debug = false,
-        public readonly string $responseFormat = 'json'
+        public readonly string $responseFormat = 'json',
+        public readonly ?ErrorPolicy $policy = null
     ) {}
 
     public static function fromRequest(Request $request, array $config = []): self
     {
-        $errorConfig = $config['errors'] ?? [];
-        $appConfig = $config['app'] ?? [];
+        $policy = ErrorPolicy::fromConfig($config);
         $requestId = (string)($request->header('x-request-id') ?: self::generateRequestId());
-        $accept = strtolower((string)$request->header('accept', ''));
-        $format = $errorConfig['response_format'] ?? 'auto';
-
-        if ($format === 'auto') {
-            $format = str_contains($accept, 'text/html') ? 'html' : 'json';
-        }
+        $format = $policy->responseFormat((string)$request->header('accept', ''));
 
         return new self(
             requestId: $requestId,
-            environment: (string)($appConfig['env'] ?? 'production'),
-            debug: (bool)($appConfig['debug'] ?? false),
-            responseFormat: in_array($format, ['json', 'html', 'text'], true) ? $format : 'json'
+            environment: $policy->environment(),
+            debug: $policy->debug(),
+            responseFormat: in_array($format, ['json', 'html', 'text', 'problem_json'], true) ? $format : 'json',
+            policy: $policy
         );
     }
 
@@ -40,9 +36,10 @@ class ErrorContext
 
     public function shouldExposeDebug(): bool
     {
-        return $this->debug && $this->environment !== 'production';
+        return $this->policy ? $this->policy->shouldExposeDebug() : ($this->debug && $this->environment !== 'production');
     }
 
+    /** @return array<string,mixed> */
     public function logContext(Throwable $throwable, array $extra = []): array
     {
         return array_merge([

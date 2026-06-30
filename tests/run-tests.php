@@ -174,8 +174,19 @@ use Mnb\SecurityCore\Pentest\VerificationRun;
 use Mnb\SecurityCore\Pentest\VerificationTarget;
 use Mnb\SecurityCore\Pentest\ReleaseGatePolicy;
 use Mnb\SecurityCore\Errors\SafeErrorHandler;
+use Mnb\SecurityCore\Errors\ErrorPolicy;
+use Mnb\SecurityCore\Errors\ErrorCatalog;
+use Mnb\SecurityCore\Errors\ErrorContext;
+use Mnb\SecurityCore\Errors\ErrorDeduplicator;
+use Mnb\SecurityCore\Errors\ErrorEscalationPolicy;
+use Mnb\SecurityCore\Errors\ErrorFingerprint;
+use Mnb\SecurityCore\Errors\ErrorLogSanitizer;
+use Mnb\SecurityCore\Errors\ExceptionMapper;
+use Mnb\SecurityCore\Errors\StackTraceSanitizer;
+use Mnb\SecurityCore\Errors\ValidationErrorNormalizer;
 use Mnb\SecurityCore\Exceptions\AppException;
 use Mnb\SecurityCore\Exceptions\AuthorizationException;
+use Mnb\SecurityCore\Exceptions\ValidationException;
 use Mnb\SecurityCore\Http\Middleware\ErrorHandlingMiddleware;
 use Mnb\SecurityCore\Logging\FileLogger;
 use Mnb\SecurityCore\Memory\MemoryConfig;
@@ -1417,6 +1428,63 @@ ok($handled->status() === 403 && str_contains($handled->body(), 'not allowed'), 
 $debugHandler = new SafeErrorHandler(new FileLogger($errorLog), ['app' => ['env' => 'local', 'debug' => true], 'errors' => ['response_format' => 'json']]);
 $debugResponse = $debugHandler->renderThrowable(new RuntimeException('Visible only in local debug'), $errorRequest);
 ok(str_contains($debugResponse->body(), 'debug') && str_contains($debugResponse->body(), 'Visible only in local debug'), 'debug error details only appear in non-production debug mode');
+
+
+$problemErrorHandler = new SafeErrorHandler(new FileLogger($errorLog), ['app' => ['env' => 'production', 'debug' => false], 'errors' => ['response_format' => 'problem_json']]);
+$problemResponse = $problemErrorHandler->renderThrowable(new RuntimeException('Hidden SQLSTATE password=secret /var/www/app.php'), $errorRequest);
+$problemPayload = json_decode($problemResponse->body(), true);
+ok(($problemResponse->headers()['Content-Type'] ?? '') === 'application/problem+json; charset=UTF-8' && ($problemPayload['code'] ?? '') === 'INTERNAL_ERROR' && !str_contains($problemResponse->body(), 'SQLSTATE'), 'problem_json error response hides technical details');
+
+$validationHandler = new SafeErrorHandler(new FileLogger($errorLog), [
+    'app' => ['env' => 'production', 'debug' => false],
+    'errors' => [
+        'response_format' => 'json',
+        'validation' => ['normalize_field_names' => true, 'hide_internal_fields' => true, 'public_field_map' => ['db_school_id' => 'school']],
+    ],
+]);
+$validationResponse = $validationHandler->renderThrowable(new ValidationException(['password_hash' => ['users.password_hash column invalid'], 'db_school_id' => ['database field missing'], 'email' => ['Email is required']]), $errorRequest);
+ok(str_contains($validationResponse->body(), 'email') && str_contains($validationResponse->body(), 'school') && !str_contains($validationResponse->body(), 'password_hash') && !str_contains($validationResponse->body(), 'database'), 'validation error normalizer hides internal fields and maps public names');
+
+$errorPolicy = ErrorPolicy::fromConfig(array_replace_recursive($errorConfig, ['errors' => ['response_format' => 'problem_json', 'redaction' => ['enabled' => true, 'redact_paths' => true, 'redact_pii' => true]]]));
+ok($errorPolicy->responseFormat('application/problem+json') === 'problem_json' && !$errorPolicy->shouldExposeDebug(), 'error policy supports problem_json and blocks production debug exposure');
+
+$errorCatalog = new ErrorCatalog();
+ok($errorCatalog->get('FORBIDDEN')->status() === 403 && isset($errorCatalog->all()['INTERNAL_ERROR']), 'error catalog exposes standard safe error definitions');
+
+$logSanitizer = new ErrorLogSanitizer($errorPolicy);
+$sanitizedErrorText = $logSanitizer->sanitizeString('Authorization: Bearer abc123 password=secret /var/www/private.php admin@example.com');
+ok(!str_contains($sanitizedErrorText, 'abc123') && !str_contains($sanitizedErrorText, 'password=secret') && !str_contains($sanitizedErrorText, '/var/www') && !str_contains($sanitizedErrorText, 'admin@example.com'), 'error log sanitizer redacts secrets paths and pii');
+
+$stackSanitizer = new StackTraceSanitizer($errorPolicy, $logSanitizer);
+$sanitizedPath = $stackSanitizer->sanitizePath('/var/www/app/src/Secret/File.php');
+ok($sanitizedPath === 'src/Secret/File.php' || $sanitizedPath === 'File.php', 'stack trace sanitizer removes absolute root path');
+
+$errorContext = ErrorContext::fromRequest($errorRequest, array_replace_recursive($errorConfig, ['errors' => ['response_format' => 'json']]));
+$mapper = new ExceptionMapper($errorCatalog, new ValidationErrorNormalizer($errorPolicy));
+$mappedInternal = $mapper->map($internalError);
+$fingerprinter = new ErrorFingerprint($errorPolicy, $logSanitizer);
+$fp1 = $fingerprinter->create($internalError, $errorContext, $mappedInternal, ['path' => '/fees/private']);
+$fp2 = $fingerprinter->create(new RuntimeException('SQLSTATE[HY000] database password=different /var/www/private.php'), $errorContext, $mappedInternal, ['path' => '/fees/private']);
+$fp3 = $fingerprinter->create($internalError, $errorContext, $mappedInternal, ['path' => '/another']);
+ok($fp1 === $fp2 && $fp1 !== $fp3, 'error fingerprint groups same sanitized error and separates different routes');
+
+$deduplicator = new ErrorDeduplicator();
+ok($deduplicator->record($fp1) === 1 && $deduplicator->record($fp1) === 2, 'error deduplicator counts repeated fingerprints');
+
+$escalation = ErrorEscalationPolicy::fromConfig(['errors' => ['escalation' => ['enabled' => true, 'critical_error_threshold' => 2, 'alert_on_security_exception' => true, 'alert_on_repeated_500' => true]]]);
+ok($escalation->shouldEscalate(['mapped_error_code' => 'SECURITY_BLOCKED', 'public_status' => 403], 1) && $escalation->shouldEscalate(['mapped_error_code' => 'INTERNAL_ERROR', 'public_status' => 500], 2) && !$escalation->shouldEscalate(['mapped_error_code' => 'VALIDATION_FAILED', 'public_status' => 422], 10), 'error escalation policy flags security exceptions and repeated 500s only');
+
+$errorKernel = new SecurityKernel(array_replace_recursive($defaultConfig, ['errors' => ['response_format' => 'json']]));
+ok($errorKernel->errorCatalog()->has('INTERNAL_ERROR') && $errorKernel->errorPolicy()->includeRequestId() && !array_key_exists('password_hash', $errorKernel->validationErrorNormalizer()->normalize(['password_hash' => ['bad'], 'email' => ['required']])) && array_key_exists('email', $errorKernel->validationErrorNormalizer()->normalize(['password_hash' => ['bad'], 'email' => ['required']])), 'security kernel exposes safe error response and log isolation helpers');
+
+$errorConfigReport = (new SecurityConfigValidator(array_replace_recursive($defaultConfig, ['errors' => ['response_format' => 'problem_json']])))->validate();
+ok($errorConfigReport['passed'], 'security config validator accepts safe error response engine config');
+$badErrorConfigReport = (new SecurityConfigValidator(array_replace_recursive($defaultConfig, ['app' => ['env' => 'production'], 'errors' => ['response_format' => 'xml', 'debug' => ['allow_in_production' => true, 'include_stack_trace' => true], 'redaction' => ['enabled' => false]]])))->validate();
+ok(in_array('invalid_error_response_format', array_column($badErrorConfigReport['errors'], 'key'), true) || in_array('production_debug_error_exposure', array_column($badErrorConfigReport['errors'], 'key'), true), 'security config validator blocks unsafe production error settings');
+
+$errorDisclosure = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix(array_replace_recursive($defaultConfig, ['errors' => ['enabled' => true, 'hide_frontend_errors' => true, 'include_request_id' => true, 'redaction' => ['enabled' => true, 'redact_paths' => true, 'redact_pii' => true], 'validation' => ['normalize_field_names' => true, 'hide_internal_fields' => true], 'escalation' => ['enabled' => true]]])))->find('error_disclosure');
+$sensitiveLogExposure = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix(array_replace_recursive($defaultConfig, ['errors' => ['redaction' => ['enabled' => true]], 'logging' => ['enabled' => true]])))->find('sensitive_log_exposure');
+ok($errorDisclosure !== null && $errorDisclosure->status() === 'protected' && $sensitiveLogExposure !== null, 'vulnerability matrix includes safe error and sensitive log exposure coverage');
 
 
 

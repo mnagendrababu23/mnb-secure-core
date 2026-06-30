@@ -2,6 +2,31 @@
 
 All notable changes to `mnb-secure-core` are documented here.
 
+## v1.0.1 — Safe Error Response and Technical Log Isolation Engine
+
+MNB Secure Core v1.0.1 adds the Safe Error Response and Technical Log Isolation Engine, strengthening exception governance with policy-driven safe responses, structured error catalogs, request correlation IDs, technical log isolation, secret and path redaction, stack trace sanitization, validation error normalization, problem+JSON support, error fingerprinting, escalation rules, and vulnerability matrix coverage for error disclosure and sensitive log exposure risks.
+
+### Added
+- Added `ErrorPolicy`, `ErrorCatalog`, `ErrorDefinition`, and `ErrorCodeRegistry` for consistent public error codes and response rules.
+- Added `SafeErrorEvent`, `ErrorEventFactory`, `ErrorFingerprint`, and `ErrorDeduplicator` for structured internal diagnostics and repeated-error grouping.
+- Added `ErrorLogSanitizer`, `StackTraceSanitizer`, and `ValidationErrorNormalizer` for hidden technical logs, secret/path/PII redaction, safe stack traces, and public validation field names.
+- Added `ProblemDetailsResponseFactory` and `SafeErrorPageRenderer` for `application/problem+json` API errors and safe HTML error pages.
+- Added `ErrorEscalationPolicy`, `ErrorAlertDispatcher`, and `ErrorAuditEvents` for repeated 500/security-error escalation workflows.
+- Added demo `34-safe-error-response-technical-log-isolation-engine.php`.
+
+### Changed
+- Extended `SafeErrorHandler` to create structured sanitized error events while keeping frontend responses safe.
+- Extended `ExceptionMapper` and `ErrorResponseFactory` with catalog-backed mapping, validation normalization, problem+JSON, and safe rendering.
+- Extended `SecurityKernel`, config validation, CLI commands, and vulnerability matrix coverage for error disclosure, debug leakage, stack trace exposure, sensitive log exposure, unsafe validation errors, missing correlation IDs, and unmonitored critical errors.
+
+### New CLI commands
+- `errors:policy`
+- `errors:catalog`
+- `errors:simulate internal|validation|security`
+- `errors:fingerprint`
+- `errors:check-production`
+
+
 ## v1.0.1 — Secure Database Governance and Query Lifecycle Engine
 
 MNB Secure Core v1.0.1 adds the Secure Database Governance and Query Lifecycle Engine, strengthening secure database connection, retrieval, creation, update, deletion, search, transaction, and schema alteration workflows with policy-based access, tenant scoping, query complexity limits, field-level protection, safe schema plans, audit logging, and vulnerability matrix coverage for database security risks.

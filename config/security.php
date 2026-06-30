@@ -1220,11 +1220,47 @@ return [
 
 
     'errors' => [
+        'enabled' => true,
         'hide_frontend_errors' => true,
-        'response_format' => 'auto', // auto, json, html, text
+        'response_format' => getenv('ERROR_RESPONSE_FORMAT') ?: 'auto', // auto, json, html, text, problem_json
         'default_public_message' => 'Something went wrong. Please try again later.',
         'include_request_id' => true,
         'log_channel' => 'errors',
+        'debug' => [
+            'allow_in_production' => false,
+            'include_stack_trace' => false,
+            'include_file_line' => false,
+            'max_stack_frames' => 8,
+        ],
+        'redaction' => [
+            'enabled' => true,
+            'redact_secrets' => true,
+            'redact_paths' => true,
+            'redact_pii' => true,
+            'replacement' => '[redacted]',
+        ],
+        'validation' => [
+            'normalize_field_names' => true,
+            'hide_internal_fields' => true,
+            'public_field_map' => [
+                'password_hash' => 'password',
+                'tenant_internal_id' => 'organization',
+                'db_school_id' => 'school',
+            ],
+        ],
+        'fingerprinting' => [
+            'enabled' => true,
+            'include_route' => true,
+            'include_exception_class' => true,
+            'include_error_code' => true,
+        ],
+        'escalation' => [
+            'enabled' => true,
+            'critical_error_threshold' => 5,
+            'window_seconds' => 300,
+            'alert_on_security_exception' => true,
+            'alert_on_repeated_500' => true,
+        ],
     ],
 
 

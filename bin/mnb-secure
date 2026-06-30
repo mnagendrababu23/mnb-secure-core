@@ -18,7 +18,13 @@ use Mnb\SecurityCore\Pentest\RetestResult;
 use Mnb\SecurityCore\Pentest\VerificationResult;
 use Mnb\SecurityCore\Pentest\VerificationTarget;
 use Mnb\SecurityCore\Errors\SafeErrorHandler;
+use Mnb\SecurityCore\Errors\ErrorPolicy;
+use Mnb\SecurityCore\Errors\ErrorCatalog;
+use Mnb\SecurityCore\Errors\ErrorFingerprint;
+use Mnb\SecurityCore\Errors\ErrorLogSanitizer;
 use Mnb\SecurityCore\Exceptions\AppException;
+use Mnb\SecurityCore\Exceptions\ValidationException;
+use Mnb\SecurityCore\Exceptions\SecurityException;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Logging\FileLogger;
 use Mnb\SecurityCore\Memory\MemoryConfig;
@@ -405,6 +411,46 @@ switch ($command) {
         $averageJobMs = (float)($argv[6] ?? 1000);
         echo json_encode(ThroughputPlanner::plan($targetRps, $averageLatencyMs, $maxConcurrency, $queueDepth, $averageJobMs), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
+    case 'errors:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->errorPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'errors:catalog':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->errorCatalog()->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'errors:simulate':
+        $type = $argv[2] ?? 'internal';
+        $config['app']['env'] = $config['app']['env'] ?? 'production';
+        $config['app']['debug'] = false;
+        $config['errors']['response_format'] = $config['errors']['response_format'] ?? 'json';
+        $logPath = ($config['paths']['logs'] ?? ($root . '/storage/logs')) . '/cli-error-simulate.log';
+        $handler = new SafeErrorHandler(new FileLogger($logPath), $config);
+        $throwable = match ($type) {
+            'validation' => new ValidationException(['password_hash' => ['users.password_hash column invalid'], 'email' => ['Email is required']]),
+            'security' => new SecurityException('Blocked SSRF attempt token=secret http://127.0.0.1/admin'),
+            default => new RuntimeException('SQLSTATE[HY000] database password=secret /var/www/private.php'),
+        };
+        $response = $handler->renderThrowable($throwable, new Request('GET', '/cli/errors/' . $type, [], [], ['accept' => 'application/json']));
+        echo $response->body() . PHP_EOL;
+        break;
+    case 'errors:fingerprint':
+        $policy = ErrorPolicy::fromConfig($config);
+        $catalog = ErrorCatalog::fromConfig($config);
+        $mapper = new Mnb\SecurityCore\Errors\ExceptionMapper($catalog, new Mnb\SecurityCore\Errors\ValidationErrorNormalizer($policy));
+        $context = Mnb\SecurityCore\Errors\ErrorContext::fromRequest(new Request('GET', '/cli/errors/fingerprint'), $config);
+        $throwable = new RuntimeException($argv[2] ?? 'Sample exception token=secret');
+        $mapped = $mapper->map($throwable);
+        $fingerprint = (new ErrorFingerprint($policy, new ErrorLogSanitizer($policy)))->create($throwable, $context, $mapped, ['path' => '/cli/errors/fingerprint']);
+        echo json_encode(['fingerprint' => $fingerprint, 'code' => $mapped['error_code'], 'request_id' => $context->requestId], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'errors:check-production':
+        $productionConfig = array_replace_recursive($config, ['app' => ['env' => 'production', 'debug' => false]]);
+        $report = (new SecurityConfigValidator($productionConfig))->validate();
+        $errorIssues = array_values(array_filter($report['issues'], fn(array $issue): bool => str_starts_with((string)$issue['path'], 'errors')));
+        echo json_encode(['passed' => count(array_filter($errorIssues, fn(array $issue): bool => in_array($issue['level'], ['critical','high'], true))) === 0, 'issues' => $errorIssues], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+
     case 'errors:sample-response':
         $config['app']['env'] = $config['app']['env'] ?? 'production';
         $config['app']['debug'] = false;
@@ -470,6 +516,11 @@ switch ($command) {
         echo "  pentest:remediation-plan Build remediation SLA plan for a finding\n";
         echo "  pentest:retest           Show retest gate behavior\n";
         echo "  security:release-gate    Evaluate security release gate\n";
+        echo "  errors:policy            Show safe error response/log isolation policy\n";
+        echo "  errors:catalog           Show safe public error catalog\n";
+        echo "  errors:simulate          Simulate safe error response: internal|validation|security\n";
+        echo "  errors:fingerprint       Generate sanitized error fingerprint\n";
+        echo "  errors:check-production  Validate production-safe error disclosure settings\n";
         echo "  errors:sample-response   Show safe error response and write private error log\n";
         echo "  memory:check             Show PHP memory limit, thresholds, and current snapshot\n";
         echo "  memory:sample-plan       Show recommended chunk size for an item byte estimate\n";

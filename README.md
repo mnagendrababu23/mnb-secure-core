@@ -1642,3 +1642,30 @@ php bin/mnb-secure pentest:remediation-plan
 php bin/mnb-secure pentest:retest
 php bin/mnb-secure security:release-gate production_release
 ```
+
+### Safe Error Response and Technical Log Isolation Engine
+
+MNB Secure Core v1.0.1 includes the Safe Error Response and Technical Log Isolation Engine for policy-driven exception handling, safe public responses, hidden technical logs, request correlation IDs, secret/path/PII redaction, stack trace sanitization, validation error normalization, problem+JSON responses, error fingerprinting, and escalation rules.
+
+New error-governance helpers include:
+
+```php
+$policy = $kernel->errorPolicy();
+$catalog = $kernel->errorCatalog();
+$sanitizer = $kernel->errorLogSanitizer();
+$fingerprint = $kernel->errorFingerprint();
+```
+
+New CLI commands:
+
+```bash
+php bin/mnb-secure errors:policy
+php bin/mnb-secure errors:catalog
+php bin/mnb-secure errors:simulate internal
+php bin/mnb-secure errors:simulate validation
+php bin/mnb-secure errors:simulate security
+php bin/mnb-secure errors:fingerprint
+php bin/mnb-secure errors:check-production
+```
+
+The vulnerability matrix now includes coverage for error disclosure, debug leakage, stack trace exposure, sensitive log exposure, PII log exposure, unsafe validation errors, missing error correlation IDs, and unmonitored critical errors.

@@ -9,11 +9,33 @@ use Throwable;
 
 class SafeErrorHandler
 {
+    private ErrorPolicy $policy;
+    private ErrorLogSanitizer $logSanitizer;
+    private StackTraceSanitizer $stackTraceSanitizer;
+    private ErrorFingerprint $fingerprint;
+    private ErrorDeduplicator $deduplicator;
+    private ErrorEscalationPolicy $escalationPolicy;
+    private ErrorAlertDispatcher $alertDispatcher;
+    private ErrorEventFactory $eventFactory;
+
     public function __construct(
         private LoggerInterface $logger,
         private array $config = [],
-        private ErrorResponseFactory $responseFactory = new ErrorResponseFactory()
-    ) {}
+        private ?ErrorResponseFactory $responseFactory = null
+    ) {
+        $this->policy = ErrorPolicy::fromConfig($config);
+        $catalog = ErrorCatalog::fromConfig($config);
+        $normalizer = new ValidationErrorNormalizer($this->policy);
+        $mapper = new ExceptionMapper($catalog, $normalizer);
+        $this->responseFactory ??= new ErrorResponseFactory($mapper, new ProblemDetailsResponseFactory($catalog), new SafeErrorPageRenderer());
+        $this->logSanitizer = new ErrorLogSanitizer($this->policy);
+        $this->stackTraceSanitizer = new StackTraceSanitizer($this->policy, $this->logSanitizer);
+        $this->fingerprint = new ErrorFingerprint($this->policy, $this->logSanitizer);
+        $this->deduplicator = new ErrorDeduplicator();
+        $this->escalationPolicy = ErrorEscalationPolicy::fromConfig($config);
+        $this->alertDispatcher = new ErrorAlertDispatcher($logger);
+        $this->eventFactory = new ErrorEventFactory($this->policy, $mapper, $this->fingerprint, $this->logSanitizer, $this->stackTraceSanitizer);
+    }
 
     public function register(): void
     {
@@ -55,9 +77,7 @@ class SafeErrorHandler
 
     public function configurePhpErrorVisibility(): void
     {
-        $debug = (bool)($this->config['app']['debug'] ?? false);
-        $env = (string)($this->config['app']['env'] ?? 'production');
-        $show = $debug && $env !== 'production';
+        $show = $this->policy->shouldExposeDebug();
         ini_set('display_errors', $show ? '1' : '0');
         ini_set('display_startup_errors', $show ? '1' : '0');
         ini_set('log_errors', '1');
@@ -65,12 +85,19 @@ class SafeErrorHandler
 
     private function log(Throwable $throwable, ErrorContext $context, array $extra = []): void
     {
-        $level = $this->responseFactory->logLevel($throwable);
-        $payload = $context->logContext($throwable, $extra);
-        match ($level) {
+        $event = $this->eventFactory->create($throwable, $context, $extra);
+        $payload = $event->toArray();
+        $count = $this->deduplicator->record($event->fingerprint());
+        $payload['occurrence_count'] = $count;
+
+        match ($event->severity()) {
             'info' => $this->logger->info('Application exception handled', $payload),
             'warning' => $this->logger->warning('Application exception handled', $payload),
             default => $this->logger->error('Application exception handled', $payload),
         };
+
+        if ($this->escalationPolicy->shouldEscalate($payload, $count)) {
+            $this->alertDispatcher->dispatch($payload);
+        }
     }
 }

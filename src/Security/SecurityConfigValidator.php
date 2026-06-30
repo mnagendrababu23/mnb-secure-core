@@ -2038,10 +2038,103 @@ class SecurityConfigValidator
         if ($errors === null) {
             return;
         }
-        $this->bool($errors, 'hide_frontend_errors', 'errors.hide_frontend_errors', required: false);
+        foreach (['enabled', 'hide_frontend_errors', 'include_request_id'] as $key) {
+            $this->bool($errors, $key, 'errors.' . $key, required: false);
+        }
         $format = $errors['response_format'] ?? 'auto';
-        if (!$this->isStringLike($format) || !in_array((string)$format, ['auto', 'json', 'html', 'text'], true)) {
-            $this->issue('high', 'invalid_error_response_format', 'errors.response_format', 'Error response format must be auto, json, html, or text.', 'auto|json|html|text', $format);
+        if (!$this->isStringLike($format) || !in_array((string)$format, ['auto', 'json', 'html', 'text', 'problem_json'], true)) {
+            $this->issue('high', 'invalid_error_response_format', 'errors.response_format', 'Error response format must be auto, json, html, text, or problem_json.', 'auto|json|html|text|problem_json', $format);
+        }
+        if (isset($errors['default_public_message']) && !$this->isStringLike($errors['default_public_message'])) {
+            $this->issue('medium', 'invalid_error_public_message', 'errors.default_public_message', 'Default public error message should be a string.', 'string', $errors['default_public_message']);
+        }
+        if (isset($errors['log_channel']) && (!$this->isStringLike($errors['log_channel']) || !$this->safeName((string)$errors['log_channel']))) {
+            $this->issue('medium', 'invalid_error_log_channel', 'errors.log_channel', 'Error log channel should use safe identifier characters.', 'safe channel name', $errors['log_channel']);
+        }
+
+        $app = is_array($this->config['app'] ?? null) ? $this->config['app'] : [];
+        $debug = is_array($errors['debug'] ?? null) ? $errors['debug'] : [];
+        if ($debug !== []) {
+            foreach (['allow_in_production', 'include_stack_trace', 'include_file_line'] as $key) {
+                $this->bool($debug, $key, 'errors.debug.' . $key, required: false);
+            }
+            $this->intRange($debug, 'max_stack_frames', 'errors.debug.max_stack_frames', 1, 50, required: false);
+            if ($this->isProduction($app) && !empty($debug['allow_in_production'])) {
+                $this->issue('critical', 'production_debug_error_exposure', 'errors.debug.allow_in_production', 'Debug error exposure must remain disabled in production.', false, true);
+            }
+            if ($this->isProduction($app) && !empty($debug['include_stack_trace'])) {
+                $this->issue('high', 'production_stack_trace_exposure', 'errors.debug.include_stack_trace', 'Stack traces must not be exposed in production error responses.', false, true);
+            }
+        }
+
+        $redaction = is_array($errors['redaction'] ?? null) ? $errors['redaction'] : [];
+        if ($redaction !== []) {
+            foreach (['enabled', 'redact_secrets', 'redact_paths', 'redact_pii'] as $key) {
+                $this->bool($redaction, $key, 'errors.redaction.' . $key, required: false);
+            }
+            if (isset($redaction['replacement']) && !$this->isStringLike($redaction['replacement'])) {
+                $this->issue('medium', 'invalid_error_redaction_replacement', 'errors.redaction.replacement', 'Redaction replacement should be a string.', 'string', $redaction['replacement']);
+            }
+            if ($this->isProduction($app) && (($redaction['enabled'] ?? true) === false)) {
+                $this->issue('high', 'error_redaction_disabled', 'errors.redaction.enabled', 'Error log/response redaction should remain enabled in production.', true, false);
+            }
+        }
+
+        $validation = is_array($errors['validation'] ?? null) ? $errors['validation'] : [];
+        if ($validation !== []) {
+            foreach (['normalize_field_names', 'hide_internal_fields'] as $key) {
+                $this->bool($validation, $key, 'errors.validation.' . $key, required: false);
+            }
+            if (isset($validation['public_field_map'])) {
+                if (!is_array($validation['public_field_map'])) {
+                    $this->issue('medium', 'invalid_error_validation_field_map', 'errors.validation.public_field_map', 'Validation public_field_map must be an associative array.', 'array<string,string>', $validation['public_field_map']);
+                } else {
+                    foreach ($validation['public_field_map'] as $internal => $public) {
+                        if (!is_string($internal) || !$this->isStringLike($public)) {
+                            $this->issue('medium', 'invalid_error_validation_field_map_entry', 'errors.validation.public_field_map', 'Validation field map keys and values should be strings.', 'string => string', [$internal => $public]);
+                        }
+                    }
+                }
+            }
+        }
+
+        $fingerprinting = is_array($errors['fingerprinting'] ?? null) ? $errors['fingerprinting'] : [];
+        if ($fingerprinting !== []) {
+            foreach (['enabled', 'include_route', 'include_exception_class', 'include_error_code'] as $key) {
+                $this->bool($fingerprinting, $key, 'errors.fingerprinting.' . $key, required: false);
+            }
+        }
+
+        $escalation = is_array($errors['escalation'] ?? null) ? $errors['escalation'] : [];
+        if ($escalation !== []) {
+            foreach (['enabled', 'alert_on_security_exception', 'alert_on_repeated_500'] as $key) {
+                $this->bool($escalation, $key, 'errors.escalation.' . $key, required: false);
+            }
+            $this->intRange($escalation, 'critical_error_threshold', 'errors.escalation.critical_error_threshold', 1, 1000, required: false);
+            $this->intRange($escalation, 'window_seconds', 'errors.escalation.window_seconds', 1, 86400, required: false);
+        }
+
+        if (isset($errors['catalog'])) {
+            if (!is_array($errors['catalog'])) {
+                $this->issue('medium', 'invalid_error_catalog', 'errors.catalog', 'Error catalog must be an associative array.', 'array', $errors['catalog']);
+            } else {
+                foreach ($errors['catalog'] as $code => $definition) {
+                    $path = 'errors.catalog.' . (string)$code;
+                    if (!is_string($code) || !preg_match('/^[A-Z0-9_]{2,80}$/', strtoupper($code))) {
+                        $this->issue('medium', 'invalid_error_catalog_code', $path, 'Error catalog codes should use uppercase letters, numbers, and underscores.', 'ERROR_CODE', $code);
+                    }
+                    if (!is_array($definition)) {
+                        $this->issue('medium', 'invalid_error_catalog_definition', $path, 'Error catalog definition must be an array.', 'array', $definition);
+                        continue;
+                    }
+                    $this->intRange($definition, 'status', $path . '.status', 400, 599, required: false);
+                    foreach (['title', 'message', 'public_message', 'log_level', 'type'] as $key) {
+                        if (isset($definition[$key]) && !$this->isStringLike($definition[$key])) {
+                            $this->issue('medium', 'invalid_error_catalog_' . $key, $path . '.' . $key, 'Error catalog value should be a string.', 'string', $definition[$key]);
+                        }
+                    }
+                }
+            }
         }
     }
 

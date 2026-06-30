@@ -293,3 +293,28 @@ php bin/mnb-secure security:release-gate production_release
 ### Release-gate behavior
 
 The release gate can block release when Critical/High findings are open, required retest evidence is missing, or verification coverage is below the configured threshold. Evidence is redacted before storage so secrets, tokens, cookies, credentials, private paths, and sensitive headers are not copied into verification reports.
+
+## Improvement 30 — Safe Error Response and Technical Log Isolation Engine
+
+MNB Secure Core v1.0.1 adds the Safe Error Response and Technical Log Isolation Engine, strengthening exception governance with policy-driven safe responses, structured error catalogs, request correlation IDs, technical log isolation, secret and path redaction, stack trace sanitization, validation error normalization, problem+JSON support, error fingerprinting, escalation rules, and vulnerability matrix coverage for error disclosure and sensitive log exposure risks.
+
+### Highlights
+
+- Safe frontend JSON, HTML, text, and `application/problem+json` error responses.
+- Hidden internal technical diagnostics with request IDs and error fingerprints.
+- Secret, token, cookie, credential, path, and PII redaction for error logs.
+- Stack trace sanitization with frame limits and root-path hiding.
+- Validation error normalization to avoid internal field/column leakage.
+- Error deduplication and escalation rules for security exceptions and repeated 500s.
+
+### New CLI commands
+
+```bash
+php bin/mnb-secure errors:policy
+php bin/mnb-secure errors:catalog
+php bin/mnb-secure errors:simulate internal
+php bin/mnb-secure errors:simulate validation
+php bin/mnb-secure errors:simulate security
+php bin/mnb-secure errors:fingerprint
+php bin/mnb-secure errors:check-production
+```

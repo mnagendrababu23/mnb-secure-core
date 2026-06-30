@@ -178,6 +178,17 @@ use Mnb\SecurityCore\Pentest\SecurityVerificationRegistry;
 use Mnb\SecurityCore\Pentest\SecurityVerificationRunner;
 use Mnb\SecurityCore\Pentest\VerificationMatrix as PentestVerificationMatrix;
 use Mnb\SecurityCore\Pentest\VerificationProfile;
+use Mnb\SecurityCore\Errors\ErrorAlertDispatcher;
+use Mnb\SecurityCore\Errors\ErrorCatalog;
+use Mnb\SecurityCore\Errors\ErrorCodeRegistry;
+use Mnb\SecurityCore\Errors\ErrorDeduplicator;
+use Mnb\SecurityCore\Errors\ErrorEscalationPolicy;
+use Mnb\SecurityCore\Errors\ErrorFingerprint;
+use Mnb\SecurityCore\Errors\ErrorLogSanitizer;
+use Mnb\SecurityCore\Errors\ErrorPolicy;
+use Mnb\SecurityCore\Errors\SafeErrorPageRenderer;
+use Mnb\SecurityCore\Errors\StackTraceSanitizer;
+use Mnb\SecurityCore\Errors\ValidationErrorNormalizer;
 use PDO;
 
 class SecurityKernel
@@ -1128,6 +1139,62 @@ class SecurityKernel
     public function vulnerabilityReportExporter(): VulnerabilityReportExporter
     {
         return new VulnerabilityReportExporter($this->vulnerabilityCoverageReport());
+    }
+
+
+    public function errorPolicy(): ErrorPolicy
+    {
+        return ErrorPolicy::fromConfig($this->config);
+    }
+
+    public function errorCatalog(): ErrorCatalog
+    {
+        return ErrorCatalog::fromConfig($this->config);
+    }
+
+    public function errorCodeRegistry(): ErrorCodeRegistry
+    {
+        return new ErrorCodeRegistry($this->errorCatalog());
+    }
+
+    public function errorLogSanitizer(): ErrorLogSanitizer
+    {
+        return new ErrorLogSanitizer($this->errorPolicy());
+    }
+
+    public function stackTraceSanitizer(): StackTraceSanitizer
+    {
+        return new StackTraceSanitizer($this->errorPolicy(), $this->errorLogSanitizer());
+    }
+
+    public function validationErrorNormalizer(): ValidationErrorNormalizer
+    {
+        return new ValidationErrorNormalizer($this->errorPolicy());
+    }
+
+    public function safeErrorPageRenderer(): SafeErrorPageRenderer
+    {
+        return new SafeErrorPageRenderer();
+    }
+
+    public function errorFingerprint(): ErrorFingerprint
+    {
+        return new ErrorFingerprint($this->errorPolicy(), $this->errorLogSanitizer());
+    }
+
+    public function errorDeduplicator(): ErrorDeduplicator
+    {
+        return new ErrorDeduplicator();
+    }
+
+    public function errorEscalationPolicy(): ErrorEscalationPolicy
+    {
+        return ErrorEscalationPolicy::fromConfig($this->config);
+    }
+
+    public function errorAlertDispatcher(?LoggerInterface $logger = null): ErrorAlertDispatcher
+    {
+        return new ErrorAlertDispatcher($logger ?: $this->logger());
     }
 
     public function securityVerificationRegistry(): SecurityVerificationRegistry
