@@ -270,3 +270,29 @@ Added CLI commands:
 Validation:
 - Expanded the test suite to cover runtime command allow-listing, unsafe arguments, working directory/env blocking, timeouts, max output handling, outbound SSRF blocking, guarded webhooks, ClamAV runner delegation, kernel helpers, and vulnerability matrix status.
 
+
+## v1.0.1 - Improvement 29: Security Verification, Remediation, and Evidence Automation Engine
+
+MNB Secure Core v1.0.1 adds the Security Verification, Remediation, and Evidence Automation Engine, expanding penetration testing support with verification profiles, safe test execution records, redacted evidence bundles, remediation SLA planning, retest gates, release gates, coverage analysis, and vulnerability matrix linkage for provable security readiness.
+
+Added:
+- Verification profiles, targets, runs, results, registry, and safe verification runner.
+- Evidence items, redaction, bundles, collection, and optional evidence storage.
+- Remediation policy, SLA calculator, remediation plans, retest requests/results, and retest gate.
+- Security release gate policy/report and control coverage analyzer.
+- New checklist cases for runtime command execution, SSRF, database governance, release gates, and retest evidence.
+- Demo `33-security-verification-remediation-evidence-automation-engine.php`.
+
+Added CLI commands:
+- `php bin/mnb-secure pentest:run-checklist [profile]`
+- `php bin/mnb-secure pentest:verify <test-id>`
+- `php bin/mnb-secure pentest:evidence`
+- `php bin/mnb-secure pentest:coverage [profile]`
+- `php bin/mnb-secure pentest:remediation-plan`
+- `php bin/mnb-secure pentest:retest`
+- `php bin/mnb-secure security:release-gate [profile]`
+
+Changed:
+- Expanded `pentest` configuration with safe mode, evidence redaction/storage, SLA policy, verification profiles, and release gate policy.
+- Added `SecurityKernel` helpers for verification, evidence, remediation, retest, release gate, and coverage analysis.
+- Updated the vulnerability matrix with security verification gaps, missing retest evidence, release-with-known-vulnerability, and weak evidence handling coverage.

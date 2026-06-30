@@ -273,3 +273,23 @@ php bin/mnb-secure db:query-limits
 php bin/mnb-secure db:schema-plan add_column students admission_number 'VARCHAR(100)'
 php bin/mnb-secure db:privileges
 ```
+
+## Improvement 29 — Security Verification, Remediation, and Evidence Automation Engine
+
+MNB Secure Core v1.0.1 adds a verification lifecycle layer for proving security readiness. It extends the existing pentest checklist/reporting toolkit with verification profiles, safe verification run records, redacted evidence bundles, remediation SLA planning, retest gates, release gates, and coverage analysis.
+
+### New CLI commands
+
+```bash
+php bin/mnb-secure pentest:run-checklist production_release
+php bin/mnb-secure pentest:verify PT-INJ-001
+php bin/mnb-secure pentest:evidence
+php bin/mnb-secure pentest:coverage production_release
+php bin/mnb-secure pentest:remediation-plan
+php bin/mnb-secure pentest:retest
+php bin/mnb-secure security:release-gate production_release
+```
+
+### Release-gate behavior
+
+The release gate can block release when Critical/High findings are open, required retest evidence is missing, or verification coverage is below the configured threshold. Evidence is redacted before storage so secrets, tokens, cookies, credentials, private paths, and sensitive headers are not copied into verification reports.

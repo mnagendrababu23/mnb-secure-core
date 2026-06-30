@@ -12,6 +12,11 @@ use Mnb\SecurityCore\Pentest\PentestChecklist;
 use Mnb\SecurityCore\Pentest\PayloadLibrary;
 use Mnb\SecurityCore\Pentest\PentestReportBuilder;
 use Mnb\SecurityCore\Pentest\VerificationMatrix;
+use Mnb\SecurityCore\Pentest\PentestFinding;
+use Mnb\SecurityCore\Pentest\RiskRating;
+use Mnb\SecurityCore\Pentest\RetestResult;
+use Mnb\SecurityCore\Pentest\VerificationResult;
+use Mnb\SecurityCore\Pentest\VerificationTarget;
 use Mnb\SecurityCore\Errors\SafeErrorHandler;
 use Mnb\SecurityCore\Exceptions\AppException;
 use Mnb\SecurityCore\Http\Request;
@@ -297,6 +302,68 @@ switch ($command) {
     case 'pentest:report-template':
         echo (new PentestReportBuilder())->buildMarkdown('Application Name', ['Web admin', 'API', 'Database', 'Files'], []);
         break;
+    case 'pentest:run-checklist':
+        $kernel = new SecurityKernel($config);
+        $profile = $kernel->verificationProfile($argv[2] ?? 'production_release');
+        $target = VerificationTarget::application('Application', $config['app']['url'] ?? null);
+        $run = $kernel->securityVerificationRunner()->runProfile($profile, $target);
+        echo json_encode(['passed' => true, 'verification_run' => $run->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'pentest:verify':
+        $kernel = new SecurityKernel($config);
+        $testId = $argv[2] ?? '';
+        if ($testId === '') {
+            echo json_encode(['passed' => false, 'error' => 'test_id_required'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+            exit(1);
+        }
+        try {
+            $result = $kernel->securityVerificationRunner()->verify($testId, VerificationTarget::application('Application', $config['app']['url'] ?? null));
+            echo json_encode(['passed' => true, 'result' => $result->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+            exit(0);
+        } catch (Throwable $e) {
+            echo json_encode(['passed' => false, 'error' => 'verification_failed', 'message' => $e->getMessage()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+            exit(1);
+        }
+    case 'pentest:evidence':
+        $kernel = new SecurityKernel($config);
+        $collector = $kernel->evidenceCollector();
+        $collector->collect('http_response', 'sample redaction', [
+            'headers' => ['Authorization' => 'Bearer demo-secret-token', 'Cookie' => 'sid=secret'],
+            'body' => 'password=secret token=abc123 /var/www/private/app.php',
+        ]);
+        $bundle = $collector->bundle(['source' => 'cli']);
+        $stored = $kernel->evidenceStore()->store($bundle);
+        echo json_encode(['passed' => true, 'evidence_bundle' => $bundle->toArray(), 'store' => $stored], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'pentest:coverage':
+        $kernel = new SecurityKernel($config);
+        $profile = $kernel->verificationProfile($argv[2] ?? 'production_release');
+        $target = VerificationTarget::application('Application', $config['app']['url'] ?? null);
+        $run = $kernel->securityVerificationRunner()->runProfile($profile, $target);
+        $report = $kernel->securityCoverageAnalyzer()->analyze($run->results(), $profile)->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'pentest:remediation-plan':
+        $kernel = new SecurityKernel($config);
+        $finding = new PentestFinding('FIND-PT-REL-001', 'Sample open Critical finding', RiskRating::CRITICAL, 'release', 'Application', ['Run release gate'], [], 'Release could ship with known vulnerability.', 'Critical finding remains open.', 'Fix finding and attach retest evidence.');
+        $plan = \Mnb\SecurityCore\Pentest\RemediationPlan::fromFinding($finding, $kernel->remediationPolicy(), ['PT-REL-001']);
+        echo json_encode(['passed' => true, 'remediation_plan' => $plan->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'pentest:retest':
+        $kernel = new SecurityKernel($config);
+        $finding = new PentestFinding('FIND-PT-REL-002', 'Sample High finding fixed without retest', RiskRating::HIGH, 'release', 'Application', ['Fix finding'], [], 'Risk remains until verified.', 'Fix has not been retested.', 'Run retest and attach evidence.', 'Fixed');
+        $blocked = $kernel->retestGate()->canClose($finding);
+        $passed = $kernel->retestGate()->canClose($finding, RetestResult::pass($finding->id, [], [], 'Retest evidence attached.'));
+        echo json_encode(['passed' => true, 'without_retest' => $blocked, 'with_retest' => $passed], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'security:release-gate':
+        $kernel = new SecurityKernel($config);
+        $profile = $kernel->verificationProfile($argv[2] ?? 'production_release');
+        $target = VerificationTarget::application('Application', $config['app']['url'] ?? null);
+        $run = $kernel->securityVerificationRunner()->runProfile($profile, $target, VerificationResult::PASSED);
+        $report = $kernel->securityReleaseGate()->evaluate([], $run)->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
     case 'memory:check':
         $memoryConfig = MemoryConfig::fromArray($config['memory'] ?? []);
         $guard = new MemoryGuard($memoryConfig);
@@ -396,6 +463,13 @@ switch ($command) {
         echo "  pentest:payloads         Export safe pentest payload library\n";
         echo "  pentest:matrix           Export verification matrix\n";
         echo "  pentest:report-template  Print pentest report template\n";
+        echo "  pentest:run-checklist    Create safe verification run records for a profile\n";
+        echo "  pentest:verify           Create a safe verification record for test id\n";
+        echo "  pentest:evidence         Show redacted evidence bundle sample\n";
+        echo "  pentest:coverage         Calculate verification/control coverage\n";
+        echo "  pentest:remediation-plan Build remediation SLA plan for a finding\n";
+        echo "  pentest:retest           Show retest gate behavior\n";
+        echo "  security:release-gate    Evaluate security release gate\n";
         echo "  errors:sample-response   Show safe error response and write private error log\n";
         echo "  memory:check             Show PHP memory limit, thresholds, and current snapshot\n";
         echo "  memory:sample-plan       Show recommended chunk size for an item byte estimate\n";

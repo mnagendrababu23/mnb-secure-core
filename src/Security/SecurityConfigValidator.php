@@ -2177,14 +2177,56 @@ class SecurityConfigValidator
         if ($pentest === null) {
             return;
         }
-        foreach (['block_release_on_open_critical', 'block_release_on_open_high'] as $key) {
+        foreach (['enabled', 'safe_mode', 'redact_evidence', 'block_release_on_open_critical', 'block_release_on_open_high', 'accepted_risk_requires_approval'] as $key) {
             $this->bool($pentest, $key, 'pentest.' . $key, required: false);
         }
         if (isset($pentest['default_scope'])) {
             $this->stringList($pentest['default_scope'], 'pentest.default_scope', false);
         }
-        if (isset($pentest['report_storage']) && (!$this->isStringLike($pentest['report_storage']) || trim((string)$pentest['report_storage']) === '')) {
-            $this->issue('medium', 'invalid_pentest_report_storage', 'pentest.report_storage', 'Pentest report storage path should be a non-empty string.', 'non-empty path string', $pentest['report_storage']);
+        if (isset($pentest['required_profiles'])) {
+            $this->stringList($pentest['required_profiles'], 'pentest.required_profiles', false);
+        }
+        foreach (['report_storage', 'evidence_storage', 'default_owner'] as $key) {
+            if (isset($pentest[$key]) && (!$this->isStringLike($pentest[$key]) || trim((string)$pentest[$key]) === '')) {
+                $this->issue('medium', 'invalid_pentest_' . $key, 'pentest.' . $key, 'Pentest ' . $key . ' should be a non-empty string.', 'non-empty string', $pentest[$key]);
+            }
+        }
+
+        $gate = is_array($pentest['release_gate'] ?? null) ? $pentest['release_gate'] : [];
+        if ($gate !== []) {
+            foreach (['enabled', 'block_on_open_critical', 'block_on_open_high', 'allow_accepted_risk', 'require_retest_for_critical', 'require_retest_for_high'] as $key) {
+                $this->bool($gate, $key, 'pentest.release_gate.' . $key, required: false);
+            }
+            $this->intRange($gate, 'minimum_coverage_percent', 'pentest.release_gate.minimum_coverage_percent', 0, 100, required: false);
+        }
+
+        $sla = is_array($pentest['sla'] ?? null) ? $pentest['sla'] : [];
+        foreach ($sla as $severity => $interval) {
+            if (!in_array((string)$severity, ['Critical', 'High', 'Medium', 'Low', 'Info'], true)) {
+                $this->issue('high', 'invalid_pentest_sla_severity', 'pentest.sla.' . (string)$severity, 'Pentest SLA severity must be Critical, High, Medium, Low, or Info.', 'known severity', $severity);
+            }
+            if ($interval !== null && (!$this->isStringLike($interval) || !preg_match('/^P(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/', (string)$interval))) {
+                $this->issue('high', 'invalid_pentest_sla_interval', 'pentest.sla.' . (string)$severity, 'Pentest SLA must be an ISO-8601 DateInterval string such as P3D.', 'ISO-8601 interval', $interval);
+            }
+        }
+
+        $profiles = is_array($pentest['profiles'] ?? null) ? $pentest['profiles'] : [];
+        foreach ($profiles as $name => $profile) {
+            $path = 'pentest.profiles.' . (string)$name;
+            if (!$this->safeName((string)$name)) {
+                $this->issue('high', 'invalid_pentest_profile_name', $path, 'Pentest profile name must be a safe identifier.', 'safe name', $name);
+            }
+            if (!is_array($profile)) {
+                $this->issue('high', 'invalid_pentest_profile', $path, 'Pentest profile must be an array.', 'array', $profile);
+                continue;
+            }
+            if (isset($profile['required_tests']) && $this->stringList($profile['required_tests'], $path . '.required_tests', false)) {
+                foreach ((array)$profile['required_tests'] as $testId) {
+                    if (!preg_match('/^PT-[A-Z0-9-]+$/', (string)$testId)) {
+                        $this->issue('high', 'invalid_pentest_required_test', $path . '.required_tests', 'Pentest required tests must use PT-* identifiers.', 'PT-XXX-000', $testId);
+                    }
+                }
+            }
         }
     }
 

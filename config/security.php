@@ -1296,9 +1296,47 @@ return [
     ],
 
     'pentest' => [
+        'enabled' => filter_var(getenv('PENTEST_ENABLED') ?: true, FILTER_VALIDATE_BOOL),
+        'safe_mode' => true,
         'report_storage' => getenv('PENTEST_REPORT_PATH') ?: __DIR__ . '/../storage/logs',
+        'evidence_storage' => getenv('PENTEST_EVIDENCE_PATH') ?: __DIR__ . '/../storage/audit/pentest',
+        'redact_evidence' => true,
         'block_release_on_open_critical' => true,
         'block_release_on_open_high' => true,
+        'accepted_risk_requires_approval' => true,
+        'default_owner' => getenv('PENTEST_DEFAULT_OWNER') ?: 'security-owner',
         'default_scope' => ['web', 'api', 'database', 'files'],
+        'required_profiles' => ['production_release', 'api_security', 'database_security'],
+        'release_gate' => [
+            'enabled' => true,
+            'block_on_open_critical' => true,
+            'block_on_open_high' => true,
+            'allow_accepted_risk' => false,
+            'require_retest_for_critical' => true,
+            'require_retest_for_high' => true,
+            'minimum_coverage_percent' => (int)(getenv('PENTEST_MIN_COVERAGE') ?: 90),
+        ],
+        'sla' => [
+            'Critical' => 'P3D',
+            'High' => 'P7D',
+            'Medium' => 'P30D',
+            'Low' => 'P90D',
+            'Info' => null,
+        ],
+        'profiles' => [
+            'production_release' => [
+                'required_tests' => [
+                    'PT-AUTH-001', 'PT-AUTHZ-001', 'PT-TENANT-001', 'PT-INJ-001',
+                    'PT-XSS-001', 'PT-CSRF-001', 'PT-UPLOAD-001', 'PT-API-001',
+                    'PT-DB-001', 'PT-RUNTIME-001', 'PT-SSRF-001', 'PT-ERR-001',
+                ],
+            ],
+            'api_security' => [
+                'required_tests' => ['PT-AUTH-001', 'PT-AUTHZ-001', 'PT-API-001', 'PT-SSRF-001', 'PT-ERR-001'],
+            ],
+            'database_security' => [
+                'required_tests' => ['PT-INJ-001', 'PT-DB-001', 'PT-DB-002', 'PT-DB-003', 'PT-DB-004', 'PT-DB-005'],
+            ],
+        ],
     ],
 ];

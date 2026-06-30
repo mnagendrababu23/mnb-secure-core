@@ -156,6 +156,23 @@ use Mnb\SecurityCore\Pentest\PentestReportBuilder;
 use Mnb\SecurityCore\Pentest\RemediationTracker;
 use Mnb\SecurityCore\Pentest\RiskRating;
 use Mnb\SecurityCore\Pentest\VerificationMatrix;
+use Mnb\SecurityCore\Pentest\EvidenceCollector;
+use Mnb\SecurityCore\Pentest\EvidenceRedactor;
+use Mnb\SecurityCore\Pentest\EvidenceStore;
+use Mnb\SecurityCore\Pentest\RemediationPolicy;
+use Mnb\SecurityCore\Pentest\RemediationPlan;
+use Mnb\SecurityCore\Pentest\RemediationSlaCalculator;
+use Mnb\SecurityCore\Pentest\RetestResult;
+use Mnb\SecurityCore\Pentest\RetestGate;
+use Mnb\SecurityCore\Pentest\SecurityCoverageAnalyzer;
+use Mnb\SecurityCore\Pentest\SecurityReleaseGate;
+use Mnb\SecurityCore\Pentest\SecurityVerificationRegistry;
+use Mnb\SecurityCore\Pentest\SecurityVerificationRunner;
+use Mnb\SecurityCore\Pentest\VerificationProfile;
+use Mnb\SecurityCore\Pentest\VerificationResult;
+use Mnb\SecurityCore\Pentest\VerificationRun;
+use Mnb\SecurityCore\Pentest\VerificationTarget;
+use Mnb\SecurityCore\Pentest\ReleaseGatePolicy;
 use Mnb\SecurityCore\Errors\SafeErrorHandler;
 use Mnb\SecurityCore\Exceptions\AppException;
 use Mnb\SecurityCore\Exceptions\AuthorizationException;
@@ -1293,6 +1310,86 @@ ok(($tracker->summary()['Fixed'] ?? 0) === 1, 'remediation tracker updates findi
 
 $reportText = (new PentestReportBuilder())->buildMarkdown('Test App', ['Web', 'API'], [$finding]);
 ok(str_contains($reportText, 'TEST-001') && str_contains($reportText, 'Critical'), 'pentest report builder creates Markdown report');
+
+$ptCategories = $payloadLibrary->categories();
+ok(in_array('runtime', $ptCategories, true) && in_array('ssrf', $ptCategories, true) && in_array('release_gate', $ptCategories, true), 'payload library includes runtime, SSRF, and release gate payload categories');
+
+$extendedCases = (new PentestChecklist())->toArray();
+$extendedIds = array_column($extendedCases, 'id');
+ok(in_array('PT-RUNTIME-001', $extendedIds, true) && in_array('PT-SSRF-001', $extendedIds, true) && in_array('PT-REL-001', $extendedIds, true), 'pentest checklist includes upgrade 29 verification cases');
+
+$registry = new SecurityVerificationRegistry();
+ok($registry->has('PT-INJ-001') && $registry->get('PT-REL-001')->severity === RiskRating::CRITICAL, 'security verification registry resolves test cases');
+$unknownTestBlocked = false;
+try { $registry->get('PT-UNKNOWN-999'); } catch (InvalidArgumentException $e) { $unknownTestBlocked = true; }
+ok($unknownTestBlocked, 'security verification registry rejects unknown test ids');
+
+$profile = VerificationProfile::fromConfig($defaultConfig, 'production_release');
+ok(in_array('PT-SSRF-001', $profile->requiredTests, true) && in_array('PT-RUNTIME-001', $profile->requiredTests, true), 'verification profile loads required production tests');
+$target = VerificationTarget::application('Unit Test App', 'https://app.example.test');
+ok($target->toArray()['type'] === 'application', 'verification target serializes target metadata');
+
+$redactor = new EvidenceRedactor();
+$redacted = $redactor->redact(['Authorization' => 'Bearer secret-token', 'Cookie' => 'sid=secret', 'body' => 'password=secret token=abc123 /var/www/private/app.php']);
+ok($redacted['Authorization'] === '[REDACTED]' && $redacted['Cookie'] === '[REDACTED]' && str_contains($redacted['body'], '[REDACTED]') && str_contains($redacted['body'], '[REDACTED_PATH]'), 'evidence redactor removes authorization, cookie, token, password, and private path values');
+
+$collector = new EvidenceCollector($redactor);
+$item = $collector->collect('http_response', 'sample', ['Authorization' => 'Bearer hidden', 'body' => 'token=hidden']);
+$bundle = $collector->bundle(['test_id' => 'PT-INJ-001']);
+ok($item->redacted && $bundle->count() === 1, 'evidence collector creates redacted evidence bundles');
+$evidencePath = $base . '/audit/pentest-evidence';
+$storedEvidence = (new EvidenceStore($evidencePath))->store($bundle);
+ok($storedEvidence['passed'] && is_file($storedEvidence['path']), 'evidence store writes evidence bundle JSON');
+
+$runner = new SecurityVerificationRunner($registry, new EvidenceCollector());
+$passedResult = $runner->verify('PT-INJ-001', $target, VerificationResult::PASSED, [['query_plan' => 'prepared statement']]);
+ok($passedResult->passed() && $passedResult->toArray()['test_id'] === 'PT-INJ-001', 'security verification runner records passed result with evidence');
+$failedResult = $runner->verify('PT-REL-001', $target, VerificationResult::FAILED, [['release_gate' => 'blocked']]);
+$failedFinding = $runner->findingFromResult($failedResult);
+ok($failedResult->failed() && $failedFinding instanceof PentestFinding && $failedFinding->severity === RiskRating::CRITICAL, 'failed verification result creates pentest finding');
+$run = $runner->runProfile($profile, $target, VerificationResult::MANUAL_REQUIRED);
+ok($run->coveragePercent() === 100 && ($run->summary()[VerificationResult::MANUAL_REQUIRED] ?? 0) >= 1, 'verification runner creates safe profile run records');
+
+$remediationPolicy = RemediationPolicy::fromConfig($defaultConfig);
+$due = (new RemediationSlaCalculator($remediationPolicy))->dueDate(RiskRating::CRITICAL, new DateTimeImmutable('2026-06-30'));
+ok($due === '2026-07-03', 'remediation SLA calculator creates due date for Critical findings');
+$plan = RemediationPlan::fromFinding($failedFinding, $remediationPolicy, ['PT-REL-001']);
+ok($plan->owner === 'security-owner' && $plan->dueDate !== null && in_array('PT-REL-001', $plan->requiredRetests, true), 'remediation plan assigns owner, due date, and retest cases');
+
+$fixedFinding = new PentestFinding('FIND-PT-REL-001', 'Fixed high issue', RiskRating::HIGH, 'release', 'Application', ['Fix'], [], 'Business risk', 'Technical risk', 'Fix and retest', 'Fixed');
+$retestGate = new RetestGate($remediationPolicy);
+$cannotClose = $retestGate->canClose($fixedFinding);
+$canClose = $retestGate->canClose($fixedFinding, RetestResult::pass($fixedFinding->id, [$passedResult], [$item], 'Retest passed'));
+ok(!$cannotClose['passed'] && $cannotClose['reason'] === 'retest_required' && $canClose['passed'], 'retest gate requires evidence for High/Critical closure');
+$acceptedRiskFinding = new PentestFinding('FIND-RISK', 'Accepted risk', RiskRating::HIGH, 'release', 'Application', [], [], 'Business', 'Technical', 'Approved exception', 'Accepted Risk');
+$acceptedRiskBlocked = $retestGate->canClose($acceptedRiskFinding);
+$acceptedRiskAllowed = $retestGate->canClose($acceptedRiskFinding, null, ['approved_by' => 'CISO', 'approved_at' => date('c')]);
+ok(!$acceptedRiskBlocked['passed'] && $acceptedRiskAllowed['passed'], 'accepted risk requires approval metadata');
+
+$releaseGate = new SecurityReleaseGate(ReleaseGatePolicy::fromConfig($defaultConfig));
+$blockedRelease = $releaseGate->evaluate([$failedFinding], $run)->toArray();
+$passedRelease = $releaseGate->evaluate([], $run)->toArray();
+ok(!$blockedRelease['passed'] && $blockedRelease['blockers'][0]['reason'] === 'open_critical_finding' && $passedRelease['passed'], 'security release gate blocks open Critical findings and passes clean runs');
+$lowCoverageRun = VerificationRun::start(new VerificationProfile('small', ['PT-INJ-001', 'PT-XSS-001']), $target);
+$lowCoverageRun->addResult($passedResult);
+$lowCoverageReport = $releaseGate->evaluate([], $lowCoverageRun)->toArray();
+ok(!$lowCoverageReport['passed'] && $lowCoverageReport['blockers'][0]['reason'] === 'coverage_below_minimum', 'security release gate enforces minimum coverage');
+
+$coverageReport = (new SecurityCoverageAnalyzer(new VerificationMatrix()))->analyze($run->results(), $profile)->toArray();
+ok(isset($coverageReport['overall_coverage']) && $coverageReport['overall_coverage'] >= 90 && isset($coverageReport['controls']['Runtime Execution Security']), 'security coverage analyzer calculates engine/control coverage');
+
+$ptKernel = new SecurityKernel($defaultConfig);
+ok($ptKernel->securityVerificationRegistry()->has('PT-SSRF-001') && $ptKernel->securityReleaseGate()->evaluate([], $run)->toArray()['passed'], 'security kernel exposes pentest verification and release gate helpers');
+
+$ptConfigReport = (new SecurityConfigValidator($defaultConfig))->validate();
+ok($ptConfigReport['passed'], 'security config validator accepts upgrade 29 pentest config');
+$badPtReport = (new SecurityConfigValidator(array_replace_recursive($defaultConfig, ['pentest' => ['release_gate' => ['minimum_coverage_percent' => 101], 'profiles' => ['bad profile!' => ['required_tests' => ['bad-test']]], 'sla' => ['Critical' => 'three days']]])))->validate();
+ok(in_array('invalid_pentest_required_test', array_column($badPtReport['errors'], 'key'), true) || in_array('invalid_pentest_sla_interval', array_column($badPtReport['errors'], 'key'), true), 'security config validator catches invalid pentest automation config');
+
+$verificationRows = (new VerificationMatrix())->all();
+ok(isset($verificationRows['Runtime Execution Security'], $verificationRows['Outbound Network Security'], $verificationRows['Security Verification, Remediation, and Evidence Automation']), 'verification matrix maps runtime, outbound, and remediation coverage');
+$verificationGap = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix($defaultConfig))->find('security_verification_gaps');
+ok($verificationGap !== null && $verificationGap->status() === 'protected', 'vulnerability matrix includes security verification gap coverage');
 
 
 $errorLog = $base . '/logs/errors.log';

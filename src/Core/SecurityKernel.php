@@ -166,6 +166,18 @@ use Mnb\SecurityCore\Vulnerability\VulnerabilityAdvisor;
 use Mnb\SecurityCore\Vulnerability\VulnerabilityCoverageReport;
 use Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix;
 use Mnb\SecurityCore\Vulnerability\VulnerabilityReportExporter;
+use Mnb\SecurityCore\Pentest\EvidenceCollector;
+use Mnb\SecurityCore\Pentest\EvidenceRedactor;
+use Mnb\SecurityCore\Pentest\EvidenceStore;
+use Mnb\SecurityCore\Pentest\ReleaseGatePolicy;
+use Mnb\SecurityCore\Pentest\RemediationPolicy;
+use Mnb\SecurityCore\Pentest\RetestGate;
+use Mnb\SecurityCore\Pentest\SecurityCoverageAnalyzer;
+use Mnb\SecurityCore\Pentest\SecurityReleaseGate;
+use Mnb\SecurityCore\Pentest\SecurityVerificationRegistry;
+use Mnb\SecurityCore\Pentest\SecurityVerificationRunner;
+use Mnb\SecurityCore\Pentest\VerificationMatrix as PentestVerificationMatrix;
+use Mnb\SecurityCore\Pentest\VerificationProfile;
 use PDO;
 
 class SecurityKernel
@@ -1116,6 +1128,62 @@ class SecurityKernel
     public function vulnerabilityReportExporter(): VulnerabilityReportExporter
     {
         return new VulnerabilityReportExporter($this->vulnerabilityCoverageReport());
+    }
+
+    public function securityVerificationRegistry(): SecurityVerificationRegistry
+    {
+        return new SecurityVerificationRegistry();
+    }
+
+    public function verificationProfile(string $name = 'production_release'): VerificationProfile
+    {
+        return VerificationProfile::fromConfig($this->config, $name);
+    }
+
+    public function evidenceRedactor(): EvidenceRedactor
+    {
+        return new EvidenceRedactor();
+    }
+
+    public function evidenceCollector(): EvidenceCollector
+    {
+        return new EvidenceCollector($this->evidenceRedactor());
+    }
+
+    public function evidenceStore(): EvidenceStore
+    {
+        $pentest = is_array($this->config['pentest'] ?? null) ? $this->config['pentest'] : [];
+        return new EvidenceStore((string)($pentest['evidence_storage'] ?? ''));
+    }
+
+    public function securityVerificationRunner(): SecurityVerificationRunner
+    {
+        return new SecurityVerificationRunner($this->securityVerificationRegistry(), $this->evidenceCollector());
+    }
+
+    public function remediationPolicy(): RemediationPolicy
+    {
+        return RemediationPolicy::fromConfig($this->config);
+    }
+
+    public function retestGate(): RetestGate
+    {
+        return new RetestGate($this->remediationPolicy());
+    }
+
+    public function releaseGatePolicy(): ReleaseGatePolicy
+    {
+        return ReleaseGatePolicy::fromConfig($this->config);
+    }
+
+    public function securityReleaseGate(): SecurityReleaseGate
+    {
+        return new SecurityReleaseGate($this->releaseGatePolicy());
+    }
+
+    public function securityCoverageAnalyzer(): SecurityCoverageAnalyzer
+    {
+        return new SecurityCoverageAnalyzer(new PentestVerificationMatrix());
     }
 
     public function databaseOperationPolicy(): DatabaseOperationPolicy
