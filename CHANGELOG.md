@@ -2,6 +2,13 @@
 
 All notable changes to `mnb-secure-core` are documented here.
 
+## v1.0.1 — Upgrade 33: Origin Identity Protection and Exposure Hardening Engine
+
+- Added the Origin Identity Protection and Exposure Hardening Engine.
+- Added policy-driven origin request decisions, direct IP Host blocking, canonical host enforcement, proxy/CDN trust profiles, proxy allow-list freshness reports, response fingerprint analysis, origin leak detection, firewall rule guidance, origin log redaction, and exposure scanning.
+- Added origin CLI diagnostics: `origin:policy`, `origin:check`, `origin:fingerprint`, `origin:firewall-plan`, `origin:proxy-profile`, `origin:proxy-allowlist`, `origin:leak-scan`, and `origin:production-gate`.
+- Expanded pentest checklist, verification matrix, and vulnerability matrix coverage for origin IP exposure, host header poisoning, forwarded header spoofing, CDN bypass, private origin leakage, and server fingerprint exposure.
+
 ## v1.0.1 — Safe Error Response and Technical Log Isolation Engine
 
 MNB Secure Core v1.0.1 adds the Safe Error Response and Technical Log Isolation Engine, strengthening exception governance with policy-driven safe responses, structured error catalogs, request correlation IDs, technical log isolation, secret and path redaction, stack trace sanitization, validation error normalization, problem+JSON support, error fingerprinting, escalation rules, and vulnerability matrix coverage for error disclosure and sensitive log exposure risks.

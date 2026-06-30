@@ -791,12 +791,54 @@ return array_replace_recursive($base, [
         'rules' => [],
     ],
     'origin_protection' => [
-        'enabled' => true,
-        'block_direct_ip_host' => true,
-        'cdn_or_proxy_enabled' => filter_var($_ENV['CDN_OR_PROXY_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
-        'require_cdn_or_proxy_in_production' => true,
-        'block_untrusted_forwarded_headers' => true,
+        // This helps hide server/application identity. To truly hide the origin IP,
+        // also use a CDN/reverse proxy and firewall the origin server.
+        'enabled' => filter_var($_ENV['ORIGIN_PROTECTION_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'block_direct_ip_host' => filter_var($_ENV['BLOCK_DIRECT_IP_HOST'] ?? true, FILTER_VALIDATE_BOOL),
+        'block_untrusted_forwarded_headers' => filter_var($_ENV['BLOCK_UNTRUSTED_FORWARDED_HEADERS'] ?? true, FILTER_VALIDATE_BOOL),
         'require_trusted_proxy' => filter_var($_ENV['REQUIRE_TRUSTED_PROXY'] ?? false, FILTER_VALIDATE_BOOL),
+        'require_cdn_or_proxy_in_production' => filter_var($_ENV['REQUIRE_CDN_OR_PROXY_IN_PRODUCTION'] ?? true, FILTER_VALIDATE_BOOL),
+        'cdn_or_proxy_enabled' => filter_var($_ENV['CDN_OR_PROXY_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+
+        'canonical_host' => $_ENV['APP_CANONICAL_HOST'] ?? '',
+        'allowed_public_hosts' => array_filter(array_map('trim', explode(',', $_ENV['TRUSTED_HOSTS'] ?? ''))),
+        'redirect_to_canonical_host' => filter_var($_ENV['REDIRECT_TO_CANONICAL_HOST'] ?? false, FILTER_VALIDATE_BOOL),
+        'block_unknown_hosts' => filter_var($_ENV['BLOCK_UNKNOWN_HOSTS'] ?? true, FILTER_VALIDATE_BOOL),
+        'block_internal_hosts' => filter_var($_ENV['BLOCK_INTERNAL_HOSTS'] ?? true, FILTER_VALIDATE_BOOL),
+
+        'proxy_provider' => $_ENV['ORIGIN_PROXY_PROVIDER'] ?? 'custom',
+        'trusted_proxy_headers' => ['forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip', 'cf-connecting-ip'],
+        'trusted_proxy_ranges' => array_filter(array_map('trim', explode(',', $_ENV['TRUSTED_PROXIES'] ?? ''))),
+        'proxy_ip_allowlist_max_age_days' => (int)($_ENV['PROXY_IP_ALLOWLIST_MAX_AGE_DAYS'] ?? 30),
+        'proxy_ip_allowlist_updated_at' => $_ENV['PROXY_IP_ALLOWLIST_UPDATED_AT'] ?? null,
+
+        'strip_headers' => ['Server', 'X-Powered-By', 'X-AspNet-Version', 'X-AspNetMvc-Version', 'X-Generator', 'X-Runtime', 'X-Version', 'X-Backend-Server', 'X-Origin-Server', 'X-Served-By'],
+        'hide_php_session_cookie_name' => filter_var($_ENV['HIDE_PHP_SESSION_COOKIE_NAME'] ?? false, FILTER_VALIDATE_BOOL),
+
+        'leak_detection' => [
+            'enabled' => true,
+            'scan_config' => true,
+            'scan_public_files' => false,
+            'block_private_ips_in_public_urls' => true,
+            'known_origin_hosts' => [],
+            'known_origin_ips' => [],
+        ],
+
+        'firewall' => [
+            'enabled' => true,
+            'provider' => 'generic',
+            'generate_nginx_allow_deny' => true,
+            'generate_apache_require_ip' => true,
+            'generate_ufw_plan' => true,
+        ],
+
+        'production_gate' => [
+            'enabled' => true,
+            'block_if_direct_ip_allowed' => true,
+            'block_if_no_trusted_hosts' => true,
+            'block_if_proxy_required_but_missing' => true,
+            'block_if_identity_headers_present' => true,
+        ],
     ],
     'errors' => [
         'enabled' => true,

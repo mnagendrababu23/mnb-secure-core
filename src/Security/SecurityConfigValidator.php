@@ -2015,6 +2015,31 @@ class SecurityConfigValidator
         if (isset($origin['strip_headers'])) {
             $this->stringList($origin['strip_headers'], 'origin_protection.strip_headers', false);
         }
+        if (isset($origin['trusted_proxy_headers'])) {
+            $this->stringList($origin['trusted_proxy_headers'], 'origin_protection.trusted_proxy_headers', false);
+        }
+        if (isset($origin['trusted_proxy_ranges'])) {
+            $this->stringList($origin['trusted_proxy_ranges'], 'origin_protection.trusted_proxy_ranges', false);
+        }
+        if (isset($origin['allowed_public_hosts'])) {
+            $this->stringList($origin['allowed_public_hosts'], 'origin_protection.allowed_public_hosts', false);
+        }
+        foreach (['canonical_host', 'proxy_provider', 'proxy_ip_allowlist_updated_at'] as $stringKey) {
+            if (isset($origin[$stringKey]) && !$this->isStringLike($origin[$stringKey]) && $origin[$stringKey] !== null) {
+                $this->issue('medium', 'invalid_origin_string', 'origin_protection.' . $stringKey, 'Origin protection value must be a string.', 'string', $origin[$stringKey]);
+            }
+        }
+        foreach (['redirect_to_canonical_host', 'block_unknown_hosts', 'block_internal_hosts'] as $key) {
+            $this->bool($origin, $key, 'origin_protection.' . $key, required: false);
+        }
+        if (isset($origin['proxy_ip_allowlist_max_age_days'])) {
+            $this->intRange($origin, 'proxy_ip_allowlist_max_age_days', 'origin_protection.proxy_ip_allowlist_max_age_days', 1, 365, required: false);
+        }
+        foreach (['leak_detection', 'firewall', 'production_gate'] as $nestedKey) {
+            if (isset($origin[$nestedKey]) && !is_array($origin[$nestedKey])) {
+                $this->issue('medium', 'invalid_origin_nested_config', 'origin_protection.' . $nestedKey, 'Origin protection nested config must be an array.', 'array', $origin[$nestedKey]);
+            }
+        }
 
         $app = is_array($this->config['app'] ?? null) ? $this->config['app'] : [];
         $trustedProxies = is_array($app['trusted_proxies'] ?? null) ? array_filter($app['trusted_proxies']) : [];
@@ -2029,6 +2054,16 @@ class SecurityConfigValidator
 
         if ($this->isProduction($app) && array_key_exists('block_untrusted_forwarded_headers', $origin) && empty($origin['block_untrusted_forwarded_headers'])) {
             $this->issue('medium', 'untrusted_forwarded_headers_allowed', 'origin_protection.block_untrusted_forwarded_headers', 'Production apps should reject spoofed Forwarded/X-Forwarded-* headers from untrusted clients.', 'true', false);
+        }
+
+        if ($this->isProduction($app) && !empty($origin['production_gate']['block_if_no_trusted_hosts'] ?? false) && empty($app['trusted_hosts']) && empty($origin['allowed_public_hosts'])) {
+            $this->issue('high', 'origin_trusted_hosts_missing', 'origin_protection.allowed_public_hosts', 'Production origin protection should define public trusted hosts.', 'trusted public host list', []);
+        }
+        foreach ((array)($origin['trusted_proxy_ranges'] ?? []) as $range) {
+            $range = (string)$range;
+            if ($range !== '' && $range !== '*' && filter_var(str_contains($range, '/') ? strtok($range, '/') : $range, FILTER_VALIDATE_IP) === false) {
+                $this->issue('medium', 'invalid_origin_trusted_proxy_range', 'origin_protection.trusted_proxy_ranges', 'Trusted proxy ranges should be valid IP/CIDR values.', 'valid IP/CIDR', $range);
+            }
         }
     }
 

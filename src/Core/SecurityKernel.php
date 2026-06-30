@@ -172,6 +172,15 @@ use Mnb\SecurityCore\Trust\TrustZoneResolver;
 use Mnb\SecurityCore\Validation\InputSanitizer;
 use Mnb\SecurityCore\Validation\InputValidator;
 use Mnb\SecurityCore\Security\ServerIdentityHider;
+use Mnb\SecurityCore\Origin\OriginProtectionPolicy;
+use Mnb\SecurityCore\Origin\OriginExposureScanner;
+use Mnb\SecurityCore\Origin\ResponseFingerprintAnalyzer;
+use Mnb\SecurityCore\Origin\FirewallRuleAdvisor;
+use Mnb\SecurityCore\Origin\ProxyProviderProfile;
+use Mnb\SecurityCore\Origin\ProxyIpAllowlist;
+use Mnb\SecurityCore\Origin\OriginLeakDetector;
+use Mnb\SecurityCore\Origin\CanonicalHostPolicy;
+use Mnb\SecurityCore\Origin\OriginLogRedactor;
 use Mnb\SecurityCore\Http\Middleware\CacheControlMiddleware;
 use Mnb\SecurityCore\Web\CacheControlPolicy;
 use Mnb\SecurityCore\Web\HtmlSanitizer;
@@ -1337,6 +1346,52 @@ class SecurityKernel
     }
 
 
+
+    public function originProtectionPolicy(): OriginProtectionPolicy
+    {
+        return OriginProtectionPolicy::fromConfig($this->config);
+    }
+
+    public function originExposureScanner(): OriginExposureScanner
+    {
+        return OriginExposureScanner::fromConfig($this->config);
+    }
+
+    public function responseFingerprintAnalyzer(): ResponseFingerprintAnalyzer
+    {
+        return ResponseFingerprintAnalyzer::fromConfig($this->config);
+    }
+
+    public function firewallRuleAdvisor(): FirewallRuleAdvisor
+    {
+        return FirewallRuleAdvisor::fromConfig($this->config);
+    }
+
+    public function proxyProviderProfile(?string $provider = null): ProxyProviderProfile
+    {
+        $origin = is_array($this->config['origin_protection'] ?? null) ? $this->config['origin_protection'] : [];
+        return ProxyProviderProfile::named($provider ?: (string)($origin['proxy_provider'] ?? 'custom'));
+    }
+
+    public function proxyIpAllowlist(): ProxyIpAllowlist
+    {
+        return ProxyIpAllowlist::fromConfig($this->config);
+    }
+
+    public function originLeakDetector(): OriginLeakDetector
+    {
+        return OriginLeakDetector::fromConfig($this->config);
+    }
+
+    public function canonicalHostPolicy(): CanonicalHostPolicy
+    {
+        return CanonicalHostPolicy::fromConfig($this->config);
+    }
+
+    public function originLogRedactor(): OriginLogRedactor
+    {
+        return new OriginLogRedactor();
+    }
     public function errorPolicy(): ErrorPolicy
     {
         return ErrorPolicy::fromConfig($this->config);

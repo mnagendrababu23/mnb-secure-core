@@ -1749,3 +1749,31 @@ php bin/mnb-secure performance:release-gate
 ```
 
 The vulnerability matrix now maps performance/capacity risks including `performance_dos`, `capacity_exhaustion`, `concurrency_exhaustion`, `queue_overload`, `slowloris_capacity_abuse`, `worker_saturation`, `database_export_overload`, `expensive_operation_abuse`, `missing_capacity_gate`, and `failed_slo_release`.
+
+## 33. Origin Identity Protection and Exposure Hardening Engine
+
+MNB Secure Core v1.0.1 includes an Origin Identity Protection and Exposure Hardening Engine for reducing origin/server exposure risk. It adds policy-driven trusted proxy validation, direct IP Host blocking, canonical host decisions, response fingerprint analysis, origin leak detection, firewall guidance, origin log redaction, and production exposure reports.
+
+New helpers are available from `SecurityKernel`:
+
+```php
+$policy = $kernel->originProtectionPolicy();
+$report = $kernel->originExposureScanner()->scan()->toArray();
+$fingerprint = $kernel->responseFingerprintAnalyzer()->analyze($headers)->toArray();
+$firewall = $kernel->firewallRuleAdvisor()->plan()->toArray();
+```
+
+New CLI diagnostics:
+
+```bash
+php bin/mnb-secure origin:policy
+php bin/mnb-secure origin:check
+php bin/mnb-secure origin:fingerprint
+php bin/mnb-secure origin:firewall-plan
+php bin/mnb-secure origin:proxy-profile cloudflare
+php bin/mnb-secure origin:proxy-allowlist
+php bin/mnb-secure origin:leak-scan
+php bin/mnb-secure origin:production-gate
+```
+
+Note: a PHP package cannot fully hide an origin IP by itself. Use a CDN/reverse proxy, configure trusted proxy ranges, and firewall the origin so only trusted proxy/CDN ranges can reach HTTP/HTTPS ports.

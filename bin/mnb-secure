@@ -546,6 +546,47 @@ switch ($command) {
         $report = $kernel->performanceReleaseGate()->evaluate($slo, $capacity);
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit(!empty($report['passed']) ? 0 : 1);
+    case 'origin:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->originProtectionPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:check':
+    case 'origin:exposure-report':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->originExposureScanner()->scan()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'origin:fingerprint':
+        $kernel = new SecurityKernel($config);
+        $headers = [
+            'Server' => $argv[2] ?? 'Apache/2.4.58 Ubuntu',
+            'X-Powered-By' => $argv[3] ?? 'PHP/8.2',
+            'Content-Type' => 'application/json',
+        ];
+        echo json_encode($kernel->responseFingerprintAnalyzer()->analyze($headers)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:firewall-plan':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->firewallRuleAdvisor()->plan()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:proxy-profile':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->proxyProviderProfile($argv[2] ?? null)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:proxy-allowlist':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->proxyIpAllowlist()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:leak-scan':
+        $kernel = new SecurityKernel($config);
+        $content = $argv[2] ?? 'http://192.168.1.10/internal http://origin.internal';
+        echo json_encode($kernel->originLeakDetector()->reportForString($content, 'cli'), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:production-gate':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->originExposureScanner()->scan()->toArray();
+        echo json_encode(['passed' => !empty($report['passed']), 'gate' => 'origin_protection', 'report' => $report], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
     case 'errors:policy':
         $kernel = new SecurityKernel($config);
         echo json_encode($kernel->errorPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;

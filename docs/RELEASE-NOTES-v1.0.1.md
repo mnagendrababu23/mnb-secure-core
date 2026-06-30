@@ -354,3 +354,7 @@ php bin/mnb-secure throughput:capacity-risk
 php bin/mnb-secure throughput:simulate api_request 100 750
 php bin/mnb-secure performance:release-gate
 ```
+
+### Upgrade 33 — Origin Identity Protection and Exposure Hardening Engine
+
+MNB Secure Core v1.0.1 adds the Origin Identity Protection and Exposure Hardening Engine, strengthening server IP and origin identity protection with policy-driven trusted proxy validation, direct IP Host blocking, canonical host enforcement, response fingerprint reduction, origin leak detection, firewall rule guidance, production exposure scanning, origin log redaction, audit events, CLI diagnostics, and vulnerability matrix coverage for origin IP exposure, host header poisoning, forwarded header spoofing, and server fingerprint leakage risks.

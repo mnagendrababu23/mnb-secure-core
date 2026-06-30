@@ -228,6 +228,15 @@ use Mnb\SecurityCore\Throughput\CapacityRiskAnalyzer;
 use Mnb\SecurityCore\Throughput\LoadTestProfile;
 use Mnb\SecurityCore\Throughput\SafeLoadSimulator;
 use Mnb\SecurityCore\Throughput\PerformanceReleaseGate;
+use Mnb\SecurityCore\Origin\OriginProtectionPolicy;
+use Mnb\SecurityCore\Origin\ResponseFingerprintAnalyzer;
+use Mnb\SecurityCore\Origin\OriginLeakDetector;
+use Mnb\SecurityCore\Origin\FirewallRuleAdvisor;
+use Mnb\SecurityCore\Origin\ProxyProviderProfile;
+use Mnb\SecurityCore\Origin\ProxyIpAllowlist;
+use Mnb\SecurityCore\Origin\OriginExposureScanner;
+use Mnb\SecurityCore\Origin\CanonicalHostPolicy;
+use Mnb\SecurityCore\Origin\InfrastructureIdentifierRedactor;
 use Mnb\SecurityCore\Http\Middleware\ThroughputMiddleware;
 use Mnb\SecurityCore\Suggestions\AutoSuggestionEngine;
 use Mnb\SecurityCore\Validation\InputSanitizer;
@@ -2305,6 +2314,74 @@ ok($i27Ssrf['status'] === 'protected' && $i27Command['status'] === 'protected', 
 $i27Invalid = (new SecurityConfigValidator(['app' => ['env' => 'production'], 'runtime' => ['enabled' => true, 'commands' => ['bad shell' => ['binary' => 'bash -c whoami']]], 'network' => ['outbound' => ['enabled' => true, 'https_only' => true, 'allowed_schemes' => ['http'], 'block_private_ips' => false]]]))->validate();
 ok(!$i27Invalid['passed'], 'security config validator catches unsafe runtime and outbound network configuration');
 
+
+
+$originConfig = [
+    'app' => [
+        'env' => 'local',
+        'trusted_hosts' => ['app.example.com'],
+        'trusted_proxies' => ['203.0.113.0/24'],
+    ],
+    'origin_protection' => [
+        'enabled' => true,
+        'block_direct_ip_host' => true,
+        'block_untrusted_forwarded_headers' => true,
+        'require_trusted_proxy' => false,
+        'cdn_or_proxy_enabled' => true,
+        'require_cdn_or_proxy_in_production' => true,
+        'canonical_host' => 'app.example.com',
+        'allowed_public_hosts' => ['app.example.com', 'www.app.example.com'],
+        'redirect_to_canonical_host' => true,
+        'block_unknown_hosts' => true,
+        'block_internal_hosts' => true,
+        'proxy_provider' => 'cloudflare',
+        'trusted_proxy_headers' => ['cf-connecting-ip','x-forwarded-for','x-forwarded-host','x-forwarded-proto'],
+        'trusted_proxy_ranges' => ['203.0.113.0/24'],
+        'proxy_ip_allowlist_updated_at' => date('Y-m-d'),
+        'strip_headers' => ['Server','X-Powered-By','X-Backend-Server','X-Origin-Server','X-Served-By'],
+        'leak_detection' => ['enabled' => true, 'known_origin_hosts' => ['origin.internal'], 'known_origin_ips' => ['192.168.1.10']],
+        'firewall' => ['enabled' => true, 'generate_nginx_allow_deny' => true, 'generate_apache_require_ip' => true, 'generate_ufw_plan' => true],
+        'production_gate' => ['enabled' => true, 'block_if_direct_ip_allowed' => true, 'block_if_no_trusted_hosts' => true, 'block_if_proxy_required_but_missing' => true, 'block_if_identity_headers_present' => true],
+    ],
+    'errors' => ['hide_frontend_errors' => true, 'include_request_id' => true],
+];
+$originPolicy = OriginProtectionPolicy::fromConfig($originConfig);
+$ipHostRequest = new Request('GET', '/', [], [], ['host' => '203.0.113.10'], ['HTTP_HOST' => '203.0.113.10', 'REMOTE_ADDR' => '198.51.100.1']);
+ok(!$originPolicy->evaluateRequest($ipHostRequest)->allowed() && $originPolicy->evaluateRequest($ipHostRequest)->reason() === 'direct_ip_host', 'origin policy blocks direct IP Host requests');
+$publicHostRequest = new Request('GET', '/', [], [], ['host' => 'app.example.com'], ['HTTP_HOST' => 'app.example.com', 'REMOTE_ADDR' => '198.51.100.1']);
+ok($originPolicy->evaluateRequest($publicHostRequest)->allowed(), 'origin policy allows configured public host');
+$unknownHostRequest = new Request('GET', '/', [], [], ['host' => 'evil.example.net'], ['HTTP_HOST' => 'evil.example.net', 'REMOTE_ADDR' => '198.51.100.1']);
+ok(!$originPolicy->evaluateRequest($unknownHostRequest)->allowed() && $originPolicy->evaluateRequest($unknownHostRequest)->reason() === 'unknown_host', 'canonical host policy blocks unknown host');
+$canonicalRedirect = CanonicalHostPolicy::fromConfig($originConfig)->evaluate('www.app.example.com');
+ok($canonicalRedirect->action() === 'redirect' && $canonicalRedirect->targetHost() === 'app.example.com', 'canonical host policy creates redirect decision');
+$spoofedForwardedRequest = new Request('GET', '/', [], [], ['host' => 'app.example.com', 'x-forwarded-host' => 'admin.example.com'], ['HTTP_HOST' => 'app.example.com', 'REMOTE_ADDR' => '198.51.100.1']);
+ok(!$originPolicy->evaluateRequest($spoofedForwardedRequest)->allowed() && $originPolicy->evaluateRequest($spoofedForwardedRequest)->reason() === 'untrusted_forwarded_headers', 'origin policy rejects spoofed forwarded headers from untrusted clients');
+$trustedProxyRequest = (new Request('GET', '/', [], [], ['host' => 'origin.internal', 'x-forwarded-host' => 'app.example.com'], ['HTTP_HOST' => 'origin.internal', 'REMOTE_ADDR' => '203.0.113.5'], ['203.0.113.0/24']));
+ok($originPolicy->evaluateRequest($trustedProxyRequest)->allowed(), 'origin policy accepts trusted proxy forwarded public host');
+$fingerprint = ResponseFingerprintAnalyzer::fromConfig($originConfig)->analyze(['Server' => 'Apache/2.4.58 Ubuntu', 'X-Powered-By' => 'PHP/8.2', 'Content-Type' => 'text/html'])->toArray();
+ok(!$fingerprint['passed'] && count($fingerprint['findings']) >= 2, 'response fingerprint analyzer reports server identity headers');
+$originLeakReport = OriginLeakDetector::fromConfig($originConfig)->reportForString('asset=http://192.168.1.10/app callback=http://origin.internal/hook', 'unit');
+ok(!$originLeakReport['passed'] && $originLeakReport['count'] >= 2, 'origin leak detector finds private IP and internal host leaks');
+$firewallPlan = FirewallRuleAdvisor::fromConfig($originConfig)->plan()->toArray();
+ok(count($firewallPlan['rules']) >= 4 && str_contains(implode(' ', $firewallPlan['rules']), '203.0.113.0/24'), 'firewall rule advisor generates trusted proxy allow/deny guidance');
+$profile = ProxyProviderProfile::named('cloudflare')->toArray();
+ok(in_array('cf-connecting-ip', $profile['trusted_headers'], true), 'proxy provider profile exposes CDN-specific trusted headers');
+$allowlist = ProxyIpAllowlist::fromConfig($originConfig)->toArray();
+ok($allowlist['freshness']['passed'] && $allowlist['ranges'][0] === '203.0.113.0/24', 'proxy IP allow-list validates freshness and ranges');
+$exposureReport = OriginExposureScanner::fromConfig($originConfig)->scan()->toArray();
+ok($exposureReport['passed'], 'origin exposure scanner passes safe proxy/host configuration');
+$redactedOriginLog = (new InfrastructureIdentifierRedactor())->redact('callback http://10.0.0.5/private via api.internal');
+ok(str_contains($redactedOriginLog, '[origin-redacted]') && !str_contains($redactedOriginLog, '10.0.0.5'), 'origin log redactor removes infrastructure identifiers');
+$originKernel = new SecurityKernel($originConfig);
+ok($originKernel->originProtectionPolicy()->evaluateRequest($publicHostRequest)->allowed() && !$originKernel->responseFingerprintAnalyzer()->analyze(['Server'=>'nginx'])->passed(), 'security kernel exposes origin protection helpers');
+$originFullConfig = array_replace_recursive(require __DIR__ . '/../config/security.php', $originConfig);
+$originConfigReport = (new SecurityConfigValidator($originFullConfig))->validate();
+ok($originConfigReport['passed'], 'security config validator accepts origin identity protection config');
+$unsafeOriginConfigReport = (new SecurityConfigValidator(['app' => ['env' => 'production'], 'origin_protection' => ['enabled' => true, 'block_direct_ip_host' => false, 'block_untrusted_forwarded_headers' => false, 'production_gate' => ['block_if_no_trusted_hosts' => true]]]))->validate();
+ok(!$unsafeOriginConfigReport['passed'], 'security config validator flags unsafe origin protection config');
+$originMatrix = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityControlMapper($originConfig))->definitions();
+ok(isset($originMatrix['origin_ip_exposure']) && isset($originMatrix['forwarded_header_spoofing']) && $originMatrix['origin_ip_exposure']->status() === 'protected', 'vulnerability matrix maps origin exposure and forwarded header spoofing');
+ok(in_array('PT-ORIGIN-001', array_column((new PentestChecklist())->toArray(), 'id'), true) && isset((new PayloadLibrary())->all()['origin']), 'pentest checklist and payload library include origin identity cases');
 
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);
