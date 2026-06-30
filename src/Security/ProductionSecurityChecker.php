@@ -17,6 +17,7 @@ class ProductionSecurityChecker
         $errors = $this->config['errors'] ?? [];
         $originProtection = $this->config['origin_protection'] ?? [];
         $uploads = $this->config['uploads'] ?? [];
+        $audit = $this->config['audit'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -32,6 +33,9 @@ class ProductionSecurityChecker
         }
         if (($app['env'] ?? 'local') === 'production' && empty($cookies['secure'])) {
             $issues[] = ['level' => 'high', 'key' => 'insecure_cookie', 'message' => 'Secure cookie flag should be enabled in production.'];
+        }
+        if (($app['env'] ?? 'local') === 'production' && array_key_exists('enabled', $audit) && empty($audit['enabled'])) {
+            $issues[] = ['level' => 'high', 'key' => 'audit_logging_disabled', 'message' => 'Structured audit logging should stay enabled in production for auth, token, upload, admin, database, and sensitive actions.'];
         }
         if (empty($cookies['http_only'])) {
             $issues[] = ['level' => 'high', 'key' => 'httponly_disabled', 'message' => 'HttpOnly cookie flag should be enabled.'];

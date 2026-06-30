@@ -47,6 +47,8 @@ use Mnb\SecurityCore\Http\MiddlewarePipeline;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Http\Response;
 use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
+use Mnb\SecurityCore\Logging\SecurityAuditEvent;
+use Mnb\SecurityCore\Logging\SecurityAuditTrail;
 use Mnb\SecurityCore\RateLimit\DatabaseRateLimiter;
 use Mnb\SecurityCore\RateLimit\FileRateLimiter;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicy;
@@ -162,6 +164,15 @@ $tokenStore = new FileTokenStore($base . '/tokens/tokens.json');
 $tokenService = new OpaqueTokenService($tokenStore);
 $issued = $tokenService->issue(99, ['profile.read'], 'device1', 'Phone', 60);
 ok($tokenService->validate($issued['plain_token']) !== null, 'opaque token validates');
+
+$tokenAudit = new SecurityAuditTrail(new TamperEvidentAuditLogger($base . '/audit/token-audit.log'));
+$auditedTokenService = new OpaqueTokenService(new FileTokenStore($base . '/tokens/audited-tokens.json'), $tokenAudit);
+$auditedIssued = $auditedTokenService->issue(123, ['admin:*'], 'device-audit', 'Audit Phone', 60);
+$auditedTokenService->validate($auditedIssued['plain_token'], '127.0.0.9', 'Audit Test UA');
+$auditedTokenService->validate('bad-token-value', '127.0.0.9', 'Audit Test UA');
+$auditedTokenService->revoke($auditedIssued['plain_token']);
+$tokenEntries = (new TamperEvidentAuditLogger($base . '/audit/token-audit.log'))->read(null, 'token');
+ok(count($tokenEntries) === 4 && !str_contains(json_encode($tokenEntries), $auditedIssued['plain_token']), 'opaque token service writes structured audit events without leaking plain token');
 $apiTokenRequest = new Request('GET', '/api/profile', [], [], ['authorization' => 'Bearer ' . $issued['plain_token']], ['REMOTE_ADDR' => '127.0.0.1']);
 $apiTokenPipeline = new MiddlewarePipeline([new ApiTokenMiddleware($tokenService)]);
 $apiTokenResponse = $apiTokenPipeline->handle($apiTokenRequest, function (Request $request): Response {
@@ -257,6 +268,15 @@ $png = $base . '/tiny.png';
 file_put_contents($png, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lRjF6wAAAABJRU5ErkJggg=='));
 $storedImage = $imageManager->storeFromPath($png, 'tiny.png', 'images');
 ok(($storedImage['profile'] ?? null) === 'images' && str_starts_with($storedImage['storage_path'], 'images/'), 'secure file manager stores uploads with selected profile metadata');
+
+$uploadAuditLogger = new TamperEvidentAuditLogger($base . '/audit/upload-audit.log');
+$uploadAudit = new SecurityAuditTrail($uploadAuditLogger);
+$auditedImageManager = new SecureFileManager(new LocalPrivateStorage($base . '/private-audited-images'), $imagePolicy, $base . '/quarantine-audited-images', new Mnb\SecurityCore\Files\NullMalwareScanner(), $uploadAudit);
+$auditedImageManager->storeFromPath($png, 'tiny.png', 'images', ['user_id' => 501], ['ip' => '127.0.0.1']);
+$auditedUploadRejected = false;
+try { $auditedImageManager->storeFromPath($safe, 'safe.txt', 'images', ['user_id' => 501]); } catch (SecurityException $e) { $auditedUploadRejected = true; }
+$uploadAuditEntries = $uploadAuditLogger->read(null, 'upload');
+ok($auditedUploadRejected && count($uploadAuditEntries) === 2 && $uploadAuditEntries[0]['outcome'] === 'success' && $uploadAuditEntries[1]['outcome'] === 'failure', 'secure file manager writes structured upload accept/reject audit events');
 
 $archivePolicy = FileUploadPolicy::forProfile(UploadSecurityProfile::ARCHIVES);
 ok($archivePolicy->allowsExtension('zip') && !$archivePolicy->allowsExtension('php'), 'archive upload profile allows archives but still blocks executable extensions');
@@ -472,6 +492,17 @@ $audit->record('marks.updated', ['user_id' => 2], ['student_id' => 6]);
 ok($audit->verify(), 'tamper-evident audit log verifies');
 file_put_contents($base . '/audit/audit.log', str_replace('fee.updated', 'fee.deleted', file_get_contents($base . '/audit/audit.log')));
 ok(!$audit->verify(), 'tamper-evident audit detects tampering');
+
+$structuredAudit = new TamperEvidentAuditLogger($base . '/audit/structured-audit.log');
+$trail = new SecurityAuditTrail($structuredAudit, new FileLogger($base . '/logs/structured-audit.log'));
+$trail->loginSuccess(['user_id' => 77], ['ip' => '127.0.0.1'], ['token' => 'plain-secret-should-redact']);
+$trail->adminAction('user.permission.changed', ['user_id' => 1, 'role' => 'admin'], ['user_id' => 77], ['permission' => 'reports.export']);
+$trail->sensitiveAction('backup.exported', ['user_id' => 1], ['backup_id' => 'b1'], ['api_key' => 'secret-key']);
+$structuredEntries = $structuredAudit->read(null);
+$structuredVerify = $structuredAudit->verifyDetailed();
+ok($structuredVerify['valid'] && count($structuredEntries) === 3 && $structuredEntries[0]['category'] === 'auth' && $structuredEntries[1]['category'] === 'admin', 'structured audit trail records categorized auth/admin/sensitive events');
+ok(!str_contains(json_encode($structuredEntries), 'plain-secret-should-redact') && !str_contains(json_encode($structuredEntries), 'secret-key'), 'structured audit trail redacts secrets recursively');
+ok(count($structuredAudit->read(null, 'admin')) === 1, 'structured audit reader filters by category');
 
 $secretFile = $base . '/source.php';
 file_put_contents($secretFile, "<?php\n\$api_key = 'abcdefghijklmnopqrstuvwxyz123456';\n");

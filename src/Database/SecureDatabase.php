@@ -5,6 +5,7 @@ use Mnb\SecurityCore\Authz\PolicyRegistry;
 use Mnb\SecurityCore\Authz\TenantContext;
 use Mnb\SecurityCore\Contracts\DatabaseConnectionInterface;
 use Mnb\SecurityCore\Exceptions\SecurityException;
+use Mnb\SecurityCore\Logging\SecurityAuditEvent;
 
 class SecureDatabase
 {
@@ -109,13 +110,25 @@ class SecureDatabase
 
     private function auditRaw(string $action, TenantContext $context, QueryPlan $plan, array $target = []): void
     {
-        if (!$this->audit || !method_exists($this->audit, 'record')) {
+        if (!$this->audit) {
             return;
         }
-        $this->audit->record($action, ['user_id' => $context->userId], $target + ['table' => $plan->table], [
+
+        $actor = ['user_id' => $context->userId];
+        $target = $target + ['table' => $plan->table];
+        $meta = [
             'operation' => $plan->operation,
             'sql_shape' => preg_replace('/\s+/', ' ', $plan->sql),
             'binding_count' => count($plan->bindings),
-        ]);
+        ];
+
+        if (method_exists($this->audit, 'recordEvent')) {
+            $this->audit->recordEvent(SecurityAuditEvent::database($action, SecurityAuditEvent::OUTCOME_SUCCESS, $actor, $target, [], $meta));
+            return;
+        }
+
+        if (method_exists($this->audit, 'record')) {
+            $this->audit->record($action, $actor, $target, $meta);
+        }
     }
 }

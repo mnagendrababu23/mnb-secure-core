@@ -31,6 +31,10 @@ use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
 use Mnb\SecurityCore\Logging\FileLogger;
+use Mnb\SecurityCore\Logging\SecurityAuditTrail;
+use Mnb\SecurityCore\Logging\NullSecurityAuditTrail;
+use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
+use Mnb\SecurityCore\Contracts\LoggerInterface;
 use Mnb\SecurityCore\Security\ServerIdentityHider;
 use PDO;
 
@@ -136,11 +140,31 @@ class SecurityKernel
         );
     }
 
-    public function secureFileManager(?MalwareScannerInterface $scanner = null, ?string $profile = null): SecureFileManager
+    public function secureFileManager(?MalwareScannerInterface $scanner = null, ?string $profile = null, ?SecurityAuditTrail $audit = null): SecureFileManager
     {
         $storage = new LocalPrivateStorage($this->config['paths']['private_storage']);
         $policy = $this->uploadPolicy($profile);
-        return new SecureFileManager($storage, $policy, $this->config['paths']['quarantine'], $scanner ?: $this->malwareScanner());
+        return new SecureFileManager($storage, $policy, $this->config['paths']['quarantine'], $scanner ?: $this->malwareScanner(), $audit);
+    }
+
+    public function auditLogger(): TamperEvidentAuditLogger
+    {
+        $auditConfig = is_array($this->config['audit'] ?? null) ? $this->config['audit'] : [];
+        $file = (string)($auditConfig['file'] ?? (rtrim((string)($this->config['paths']['audit'] ?? 'storage/audit'), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'security-audit.log'));
+        return new TamperEvidentAuditLogger($file);
+    }
+
+    public function auditTrail(?LoggerInterface $logger = null): SecurityAuditTrail
+    {
+        $auditConfig = is_array($this->config['audit'] ?? null) ? $this->config['audit'] : [];
+        if (array_key_exists('enabled', $auditConfig) && $auditConfig['enabled'] === false) {
+            return new NullSecurityAuditTrail();
+        }
+        if ($logger === null && !empty($auditConfig['mirror_to_log'])) {
+            $logFile = (string)($auditConfig['log_file'] ?? (rtrim((string)($this->config['paths']['logs'] ?? 'storage/logs'), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'security-audit.log'));
+            $logger = new FileLogger($logFile);
+        }
+        return new SecurityAuditTrail($this->auditLogger(), $logger);
     }
 
     public function malwareScanner(): MalwareScannerInterface

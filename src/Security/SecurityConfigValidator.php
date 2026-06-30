@@ -26,6 +26,7 @@ class SecurityConfigValidator
         $this->validateApp();
         $this->validateCookies();
         $this->validatePaths();
+        $this->validateAudit();
         $this->validateLimits();
         $this->validateUploads();
         $this->validateStores();
@@ -143,6 +144,34 @@ class SecurityConfigValidator
             if (!$this->isStringLike($paths[$key]) || trim((string)$paths[$key]) === '') {
                 $this->issue('high', 'invalid_path_' . $key, 'paths.' . $key, "Path '{$key}' must be a non-empty string.", 'non-empty path string', $paths[$key]);
             }
+        }
+    }
+
+    private function validateAudit(): void
+    {
+        $audit = $this->section('audit', false);
+        if ($audit === null) {
+            return;
+        }
+
+        $this->bool($audit, 'enabled', 'audit.enabled', required: false);
+        $this->bool($audit, 'mirror_to_log', 'audit.mirror_to_log', required: false);
+
+        foreach (['file', 'log_file'] as $key) {
+            if (!array_key_exists($key, $audit)) {
+                if ($key === 'file') {
+                    $this->issue('medium', 'missing_audit_file', 'audit.file', 'Audit file is not configured; the kernel will fall back to paths.audit/security-audit.log.', 'path string', null);
+                }
+                continue;
+            }
+            if (!$this->isStringLike($audit[$key]) || trim((string)$audit[$key]) === '') {
+                $this->issue('high', 'invalid_audit_' . $key, 'audit.' . $key, 'Audit file paths must be non-empty strings.', 'path string', $audit[$key]);
+            }
+        }
+
+        $paths = is_array($this->config['paths'] ?? null) ? $this->config['paths'] : [];
+        if (!empty($audit['file']) && !empty($paths['private_storage']) && str_starts_with((string)$audit['file'], (string)$paths['private_storage'])) {
+            $this->issue('medium', 'audit_file_inside_private_storage', 'audit.file', 'Audit logs should be stored in a dedicated audit/log path, not mixed with private uploaded files.', 'dedicated audit path', $audit['file']);
         }
     }
 

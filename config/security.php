@@ -24,6 +24,14 @@ return [
         'backups' => $_ENV['BACKUP_PATH'] ?? __DIR__ . '/../storage/backups',
         'tokens' => $_ENV['TOKEN_STORE_FILE'] ?? __DIR__ . '/../storage/tokens/tokens.json',
     ],
+
+    'audit' => [
+        'enabled' => filter_var($_ENV['AUDIT_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'file' => $_ENV['AUDIT_FILE'] ?? ((__DIR__ . '/../storage/audit/security-audit.log')),
+        'mirror_to_log' => filter_var($_ENV['AUDIT_MIRROR_TO_LOG'] ?? false, FILTER_VALIDATE_BOOL),
+        'log_file' => $_ENV['AUDIT_LOG_FILE'] ?? ((__DIR__ . '/../storage/logs/security-audit.log')),
+    ],
+
     'limits' => [
         'request_max_bytes' => 5 * 1024 * 1024,
         'upload_max_bytes' => 10 * 1024 * 1024,
