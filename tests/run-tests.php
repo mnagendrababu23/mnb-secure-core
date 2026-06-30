@@ -1,9 +1,11 @@
 <?php
 require __DIR__ . '/../autoload.php';
 
+use Mnb\SecurityCore\Auth\AuthContext;
 use Mnb\SecurityCore\Auth\Csrf;
 use Mnb\SecurityCore\Auth\OpaqueTokenService;
 use Mnb\SecurityCore\Auth\PasswordHasher;
+use Mnb\SecurityCore\Auth\PermissionGuard as AuthPermissionGuard;
 use Mnb\SecurityCore\Auth\Stores\DatabaseTokenStore;
 use Mnb\SecurityCore\Auth\Stores\FileTokenStore;
 use Mnb\SecurityCore\Authz\Policies\StudentPolicy;
@@ -118,13 +120,47 @@ ok($tokenService->validate($issued['plain_token']) !== null, 'opaque token valid
 $apiTokenRequest = new Request('GET', '/api/profile', [], [], ['authorization' => 'Bearer ' . $issued['plain_token']], ['REMOTE_ADDR' => '127.0.0.1']);
 $apiTokenPipeline = new MiddlewarePipeline([new ApiTokenMiddleware($tokenService)]);
 $apiTokenResponse = $apiTokenPipeline->handle($apiTokenRequest, function (Request $request): Response {
+    $auth = $request->attribute(AuthContext::ATTRIBUTE);
     return Response::json([
         'user_id' => $request->attribute('auth_user_id'),
         'scopes' => $request->attribute('auth_scopes'),
+        'auth_context_id' => $auth instanceof AuthContext ? $auth->id() : null,
+        'auth_context_scope' => $auth instanceof AuthContext && $auth->hasScope('profile.read'),
+        'guard_scope' => AuthPermissionGuard::hasScope($request, 'profile.read'),
     ]);
 });
 $apiTokenPayload = json_decode($apiTokenResponse->body(), true);
-ok($apiTokenPayload['user_id'] === 99 && $apiTokenPayload['scopes'] === ['profile.read'], 'api token middleware exposes auth context attributes');
+ok(
+    $apiTokenPayload['user_id'] === 99
+    && $apiTokenPayload['scopes'] === ['profile.read']
+    && $apiTokenPayload['auth_context_id'] === 99
+    && $apiTokenPayload['auth_context_scope'] === true
+    && $apiTokenPayload['guard_scope'] === true,
+    'api token middleware exposes auth context object and legacy attributes'
+);
+
+$authContext = new AuthContext(true, 77, ['profile.read', 'admin:*'], ['users.delete'], ['owner']);
+ok(
+    $authContext->isAuthenticated()
+    && $authContext->id() === 77
+    && $authContext->hasScope('admin:update')
+    && $authContext->hasAllScopes(['profile.read', 'admin:delete'])
+    && $authContext->can('users.delete')
+    && $authContext->hasRole('owner'),
+    'auth context supports ids, scopes, wildcard scopes, permissions and roles'
+);
+
+$permissionGuardAllowed = AuthPermissionGuard::requireScope($authContext, 'admin:read');
+$permissionGuardBlocked = false;
+try {
+    AuthPermissionGuard::requireAllScopes($authContext, ['profile.read', 'billing.write']);
+} catch (AuthorizationException $e) {
+    $permissionGuardBlocked = true;
+}
+ok($permissionGuardAllowed->id() === 77 && $permissionGuardBlocked, 'auth permission guard requires scopes and throws authorization exceptions');
+
+$legacyAttributeRequest = (new Request('GET', '/legacy'))->withAttribute('auth_user_id', 55)->withAttribute('auth_scopes', ['legacy.read']);
+ok(AuthPermissionGuard::context($legacyAttributeRequest)->id() === 55 && AuthPermissionGuard::requireScope($legacyAttributeRequest, 'legacy.read')->id() === 55, 'auth permission guard supports legacy auth attributes');
 
 $tokenService->revoke($issued['plain_token']);
 ok($tokenService->validate($issued['plain_token']) === null, 'opaque token revokes');
