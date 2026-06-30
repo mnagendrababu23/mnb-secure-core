@@ -11,7 +11,7 @@ class TrustedHostMiddleware implements MiddlewareInterface
 
     public function process(Request $request, callable $next): Response
     {
-        if ($this->trustedHosts && !in_array($request->host(), array_map('strtolower', $this->trustedHosts), true)) {
+        if ($this->trustedHosts && !in_array($request->effectiveHost(), array_map('strtolower', $this->trustedHosts), true)) {
             return Response::json(['status' => false, 'message' => 'Untrusted host'], 400);
         }
         return $next($request);

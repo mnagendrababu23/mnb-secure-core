@@ -1,0 +1,57 @@
+name: Configuration question
+description: Ask about safe setup, production config, doctor output, or integration examples
+title: "[Config]: "
+labels: ["question", "configuration", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste real secrets. Replace sensitive values with `[redacted]`.
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Local development
+        - CI
+        - Staging
+        - Production
+        - Unsure
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Config area
+      options:
+        - APP_KEY / environment
+        - Trusted hosts / trusted proxies / CDN
+        - Storage drivers
+        - Upload scanner / ClamAV
+        - Security headers / CSP / HSTS
+        - Rate limit policies
+        - Audit logger
+        - Doctor output
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Explain what you are trying to configure.
+    validations:
+      required: true
+  - type: textarea
+    id: sanitized-config
+    attributes:
+      label: Sanitized config or doctor output
+      render: shell
+      description: Paste only sanitized snippets.
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed or redacted secrets, tokens, passwords, private keys, cookies, and production credentials.
+          required: true

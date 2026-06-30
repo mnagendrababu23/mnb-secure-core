@@ -5,6 +5,7 @@ use Mnb\SecurityCore\Contracts\MalwareScannerInterface;
 use Mnb\SecurityCore\Contracts\StorageInterface;
 use Mnb\SecurityCore\Exceptions\SecurityException;
 use Mnb\SecurityCore\Support\Str;
+use Mnb\SecurityCore\Logging\SecurityAuditTrail;
 
 class SecureFileManager
 {
@@ -12,51 +13,94 @@ class SecureFileManager
         private StorageInterface $storage,
         private FileUploadPolicy $policy,
         private string $quarantinePath,
-        private MalwareScannerInterface $scanner = new NullMalwareScanner()
+        private MalwareScannerInterface $scanner = new NullMalwareScanner(),
+        private ?SecurityAuditTrail $audit = null,
+        private ?DocumentInspectorInterface $inspector = null,
+        private ?DocumentSanitizerInterface $sanitizer = null
     ) {
         if (!is_dir($quarantinePath)) {
             mkdir($quarantinePath, 0775, true);
         }
     }
 
-    public function storeFromPath(string $sourcePath, string $originalName, string $module = 'documents'): array
+    public function storeFromPath(string $sourcePath, string $originalName, string $module = 'documents', array $actor = [], array $context = []): array
     {
-        if (!is_file($sourcePath)) {
-            throw new SecurityException('Upload source file does not exist');
-        }
-        $this->validateName($originalName);
-        $size = filesize($sourcePath) ?: 0;
-        if ($size <= 0 || $size > $this->policy->maxBytes) {
-            throw new SecurityException('Invalid upload size');
-        }
-        $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-        if (!in_array($extension, $this->policy->allowedExtensions, true)) {
-            throw new SecurityException('File extension is not allowed');
-        }
-        $mime = $this->detectMime($sourcePath);
-        if (!$this->mimeAllowed($mime)) {
-            throw new SecurityException('File MIME type is not allowed: ' . $mime);
-        }
-        $this->validateMimeExtensionPair($extension, $mime);
-        $this->validateFileContent($sourcePath, $extension, $mime);
-
-        $quarantine = rtrim($this->quarantinePath, '/') . '/' . Str::random(12) . '.' . $extension;
-        copy($sourcePath, $quarantine);
-        if (!$this->scanner->scan($quarantine)) {
-            @unlink($quarantine);
-            throw new SecurityException('Malware scan failed: ' . $this->scanner->lastMessage());
-        }
-        $safeName = $this->policy->randomizeNames ? Str::random(16) . '.' . $extension : basename($originalName);
-        $storagePath = trim($module, '/') . '/' . date('Y/m') . '/' . $safeName;
-        $this->storage->put($storagePath, file_get_contents($quarantine));
-        @unlink($quarantine);
-        return [
-            'original_name' => $originalName,
-            'storage_path' => $storagePath,
-            'mime' => $mime,
-            'size' => $size,
-            'extension' => $extension,
+        $target = [
+            'original_name' => basename(str_replace('\\', '/', $originalName)),
+            'module' => $module,
+            'profile' => $this->policy->profile,
         ];
+
+        try {
+            if (!is_file($sourcePath)) {
+                throw new SecurityException('Upload source file does not exist');
+            }
+            $this->validateName($originalName);
+            $size = filesize($sourcePath) ?: 0;
+            if ($size <= 0 || $size > $this->policy->maxBytes) {
+                throw new SecurityException('Invalid upload size');
+            }
+            $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+            if (!$this->policy->allowsExtension($extension)) {
+                throw new SecurityException('File extension is not allowed');
+            }
+            $mime = $this->detectMime($sourcePath);
+            if (!$this->policy->allowsMime($mime)) {
+                throw new SecurityException('File MIME type is not allowed: ' . $mime);
+            }
+            $this->validateMimeExtensionPair($extension, $mime);
+            $this->validateFileContent($sourcePath, $extension, $mime);
+            $inspection = $this->inspector?->inspect($sourcePath, $mime, $extension);
+            if ($inspection && $inspection->failed()) {
+                throw new SecurityException('Document inspection failed: ' . $inspection->message());
+            }
+            $sanitization = $this->sanitizer?->sanitize($sourcePath, $mime, $extension);
+            if ($sanitization && $sanitization->failed()) {
+                throw new SecurityException('Document sanitization failed: ' . $sanitization->message());
+            }
+
+            $quarantine = rtrim($this->quarantinePath, '/') . '/' . Str::random(12) . '.' . $extension;
+            copy($sourcePath, $quarantine);
+            if (!$this->scanner->scan($quarantine)) {
+                @unlink($quarantine);
+                throw new SecurityException('Malware scan failed: ' . $this->scanner->lastMessage());
+            }
+            $safeName = $this->policy->randomizeNames ? Str::random(16) . '.' . $extension : basename($originalName);
+            $storagePath = trim($module, '/') . '/' . date('Y/m') . '/' . $safeName;
+            $contents = file_get_contents($quarantine) ?: '';
+            $checksum = FileChecksum::contentsSha256($contents);
+            $this->storage->put($storagePath, $contents);
+            @unlink($quarantine);
+            $record = [
+                'file_id' => 'file_' . substr($checksum, 0, 16),
+                'original_name' => $originalName,
+                'storage_path' => $storagePath,
+                'mime' => $mime,
+                'size' => $size,
+                'extension' => $extension,
+                'profile' => $this->policy->profile,
+                'scan_status' => 'passed',
+                'scan_driver' => get_debug_type($this->scanner),
+                'scan_message' => $this->scanner->lastMessage(),
+                'checksum_sha256' => $checksum,
+                'data_class' => (string)($context['data_class'] ?? 'internal'),
+                'owner_user_id' => $actor['user_id'] ?? $context['owner_user_id'] ?? null,
+                'school_id' => $context['school_id'] ?? null,
+                'branch_id' => $context['branch_id'] ?? null,
+                'academic_year_id' => $context['academic_year_id'] ?? null,
+                'created_at' => gmdate('c'),
+            ];
+            $this->audit?->uploadAccepted($actor, $target + ['storage_path' => $storagePath], $context, [
+                'mime' => $mime,
+                'size' => $size,
+                'extension' => $extension,
+                'randomized_name' => $this->policy->randomizeNames,
+            ]);
+            return $record;
+        } catch (SecurityException $e) {
+            $this->audit?->uploadRejected($actor, $target, $context, ['reason' => $e->getMessage()]);
+            throw $e;
+        }
     }
 
     public function readForDownload(array $fileRecord): string
@@ -140,6 +184,56 @@ class SecureFileManager
         }
         if (in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true) && @getimagesize($path) === false) {
             throw new SecurityException('Image signature is invalid');
+        }
+        if (in_array($extension, ['zip'], true)) {
+            $this->validateZipArchive($path);
+        }
+    }
+
+    private function validateZipArchive(string $path): void
+    {
+        if (!class_exists('ZipArchive')) {
+            if ($this->policy->strictMode) {
+                throw new SecurityException('ZIP archive validation requires the zip extension in strict mode');
+            }
+            return;
+        }
+
+        $zip = new \ZipArchive();
+        if ($zip->open($path) !== true) {
+            throw new SecurityException('ZIP archive could not be opened for validation');
+        }
+
+        try {
+            if ($zip->numFiles > $this->policy->maxArchiveEntries) {
+                throw new SecurityException('ZIP archive contains too many entries');
+            }
+
+            $totalUncompressedBytes = 0;
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $stat = $zip->statIndex($i);
+                if (!is_array($stat)) {
+                    throw new SecurityException('ZIP archive entry metadata could not be read');
+                }
+
+                $name = (string)($stat['name'] ?? '');
+                $normalized = str_replace('\\', '/', $name);
+                if ($normalized === '' || str_contains($normalized, '../') || str_starts_with($normalized, '/') || preg_match('/^[A-Za-z]:\\//', $normalized)) {
+                    throw new SecurityException('ZIP archive contains an unsafe file path');
+                }
+
+                $entryExtension = strtolower(pathinfo($normalized, PATHINFO_EXTENSION));
+                if ($entryExtension !== '' && in_array($entryExtension, $this->policy->blockedExtensions, true)) {
+                    throw new SecurityException('ZIP archive contains a blocked executable entry');
+                }
+
+                $totalUncompressedBytes += (int)($stat['size'] ?? 0);
+                if ($totalUncompressedBytes > $this->policy->maxArchiveUncompressedBytes) {
+                    throw new SecurityException('ZIP archive uncompressed size is too large');
+                }
+            }
+        } finally {
+            $zip->close();
         }
     }
 

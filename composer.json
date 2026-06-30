@@ -1,9 +1,8 @@
 {
   "name": "mnb/mnb-secure-core",
-  "description": "mnb-secure-core v1.0 reusable no-framework PHP security core for custom applications.",
-  "version": "1.0.0",
+  "description": "mnb-secure-core reusable no-framework PHP security core for custom applications.",
   "type": "library",
-  "license": "proprietary",
+  "license": "MIT",
   "authors": [
     {
       "name": "Nagendra babu Macharla"
@@ -19,7 +18,11 @@
     "audit-logging"
   ],
   "require": {
-    "php": ">=8.1"
+    "php": ">=8.1",
+    "ext-openssl": "*",
+    "ext-fileinfo": "*",
+    "ext-json": "*",
+    "ext-pdo": "*"
   },
   "autoload": {
     "psr-4": {
@@ -34,6 +37,12 @@
     "demo": "php demos/run-all-demos.php"
   },
   "extra": {
-    "library-name": "mnb-secure-core"
+    "library-name": "mnb-secure-core",
+    "release-line": "v1.0.1 Public Package Hardening"
+  },
+  "suggest": {
+    "ext-redis": "Required for Redis cache, rate limiter, and token store drivers.",
+    "ext-zip": "Recommended for ZIP backup support.",
+    "clamav/clamav": "Recommended for production upload malware scanning."
   }
 }

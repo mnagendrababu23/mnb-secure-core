@@ -3,7 +3,7 @@ require_once __DIR__ . '/../autoload.php';
 
 function demo_storage_path(string $name = ''): string
 {
-    $base = sys_get_temp_dir() . '/mnb_secure_core_v1_0_demos';
+    $base = sys_get_temp_dir() . '/mnb_secure_core_v1_0_1_demos';
     if (!is_dir($base)) {
         mkdir($base, 0777, true);
     }

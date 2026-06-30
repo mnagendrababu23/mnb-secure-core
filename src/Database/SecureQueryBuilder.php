@@ -5,6 +5,8 @@ use InvalidArgumentException;
 
 class SecureQueryBuilder
 {
+    public function __construct(private ?QueryComplexityGuard $queryGuard = null) {}
+
     public function select(
         TableSecurityPolicy $policy,
         array $columns,
@@ -17,12 +19,17 @@ class SecureQueryBuilder
         int $limit = 50,
         int $offset = 0
     ): QueryPlan {
+        $this->guard()->assertSearch($searchTerm, $filters, $limit, $offset);
+
         $table = SqlIdentifier::assert($policy->table, 'table');
         $allowedSelect = $policy->selectableColumns;
         $columns = $columns ?: $allowedSelect;
         $columns = $this->allowedColumns($columns, $allowedSelect, 'select');
 
-        [$whereSql, $bindings] = $this->where($filters + $tenantScopes, array_merge($allowedSelect, array_keys($tenantScopes), [$policy->primaryKey]));
+        [$whereSql, $bindings] = $this->where($filters, array_merge($allowedSelect, array_keys($tenantScopes), [$policy->primaryKey]));
+        [$tenantSql, $tenantBindings] = $this->where($tenantScopes, array_merge(array_keys($tenantScopes), [$policy->primaryKey]));
+        $whereSql = array_merge($whereSql, $tenantSql);
+        $bindings = array_merge($bindings, $tenantBindings);
 
         if ($searchTerm !== null && trim($searchTerm) !== '') {
             $searchColumns = $this->allowedColumns($searchColumns ?: $policy->searchableColumns, $policy->searchableColumns, 'search');
@@ -50,11 +57,12 @@ class SecureQueryBuilder
             $sql .= ' ORDER BY ' . SqlIdentifier::assert($orderBy, 'order column') . ' ' . $dir;
         }
 
-        $limit = max(1, min($limit, 500));
-        $offset = max(0, $offset);
+        $maxLimit = $this->guard()->policy()->maxLimit;
+        $limit = max(1, min($limit, $maxLimit));
+        $offset = max(0, min($offset, $this->guard()->policy()->maxOffset));
         $sql .= ' LIMIT ' . $limit . ' OFFSET ' . $offset;
 
-        return new QueryPlan('select', $table, $sql, $bindings);
+        return new QueryPlan('select', $table, $sql, $bindings, ['limit' => $limit, 'offset' => $offset]);
     }
 
     public function findById(TableSecurityPolicy $policy, int|string $id, array $tenantScopes = [], array $columns = []): QueryPlan
@@ -106,6 +114,18 @@ class SecureQueryBuilder
         return new QueryPlan('soft_delete', $table, $sql, array_merge([date('Y-m-d H:i:s')], $bindings));
     }
 
+    public function restoreById(TableSecurityPolicy $policy, int|string $id, array $tenantScopes = []): QueryPlan
+    {
+        if (!$policy->softDeletes) {
+            throw new InvalidArgumentException('Restore requires a soft-delete enabled table policy.');
+        }
+        $table = SqlIdentifier::assert($policy->table, 'table');
+        $deletedAt = SqlIdentifier::assert($policy->deletedAtColumn, 'deleted_at column');
+        [$whereSql, $bindings] = $this->where([$policy->primaryKey => $id] + $tenantScopes, [$policy->primaryKey, ...array_keys($tenantScopes)]);
+        $sql = 'UPDATE ' . $table . ' SET ' . $deletedAt . ' = NULL WHERE ' . implode(' AND ', $whereSql);
+        return new QueryPlan('restore', $table, $sql, $bindings);
+    }
+
     private function onlyAllowed(array $data, array $allowed, string $operation): array
     {
         $out = [];
@@ -135,12 +155,77 @@ class SecureQueryBuilder
     {
         $clauses = [];
         $bindings = [];
-        foreach ($filters as $col => $value) {
+        foreach (DatabaseSearchFilter::normalize($filters) as $filter) {
+            $col = $filter->column;
             if (!in_array($col, $allowedColumns, true)) {
                 throw new InvalidArgumentException("Filter column not allowed: {$col}");
             }
-            $clauses[] = SqlIdentifier::assert((string)$col, 'where column') . ' = ?';
-            $bindings[] = $value;
+            $columnSql = SqlIdentifier::assert($col, 'where column');
+            switch ($filter->operator) {
+                case DatabaseFilterOperator::EQ:
+                    $clauses[] = $columnSql . ' = ?';
+                    $bindings[] = $filter->value;
+                    break;
+                case DatabaseFilterOperator::NEQ:
+                    $clauses[] = $columnSql . ' <> ?';
+                    $bindings[] = $filter->value;
+                    break;
+                case DatabaseFilterOperator::IN:
+                case DatabaseFilterOperator::NOT_IN:
+                    $values = array_values((array)$filter->value);
+                    if ($values === []) {
+                        throw new InvalidArgumentException("{$filter->operator} filter requires at least one value.");
+                    }
+                    $placeholders = implode(', ', array_fill(0, count($values), '?'));
+                    $clauses[] = $columnSql . ($filter->operator === DatabaseFilterOperator::IN ? ' IN ' : ' NOT IN ') . '(' . $placeholders . ')';
+                    array_push($bindings, ...$values);
+                    break;
+                case DatabaseFilterOperator::BETWEEN:
+                    $values = array_values((array)$filter->value);
+                    if (count($values) !== 2) {
+                        throw new InvalidArgumentException('between filter requires exactly two values.');
+                    }
+                    $clauses[] = $columnSql . ' BETWEEN ? AND ?';
+                    $bindings[] = $values[0];
+                    $bindings[] = $values[1];
+                    break;
+                case DatabaseFilterOperator::GTE:
+                    $clauses[] = $columnSql . ' >= ?';
+                    $bindings[] = $filter->value;
+                    break;
+                case DatabaseFilterOperator::LTE:
+                    $clauses[] = $columnSql . ' <= ?';
+                    $bindings[] = $filter->value;
+                    break;
+                case DatabaseFilterOperator::GT:
+                    $clauses[] = $columnSql . ' > ?';
+                    $bindings[] = $filter->value;
+                    break;
+                case DatabaseFilterOperator::LT:
+                    $clauses[] = $columnSql . ' < ?';
+                    $bindings[] = $filter->value;
+                    break;
+                case DatabaseFilterOperator::LIKE:
+                    $clauses[] = $columnSql . " LIKE ? ESCAPE '\\\\'";
+                    $bindings[] = '%' . $this->escapeLike((string)$filter->value) . '%';
+                    break;
+                case DatabaseFilterOperator::STARTS_WITH:
+                    $clauses[] = $columnSql . " LIKE ? ESCAPE '\\\\'";
+                    $bindings[] = $this->escapeLike((string)$filter->value) . '%';
+                    break;
+                case DatabaseFilterOperator::ENDS_WITH:
+                    $clauses[] = $columnSql . " LIKE ? ESCAPE '\\\\'";
+                    $bindings[] = '%' . $this->escapeLike((string)$filter->value);
+                    break;
+                case DatabaseFilterOperator::IS_NULL:
+                    $clauses[] = $columnSql . ' IS NULL';
+                    break;
+                case DatabaseFilterOperator::IS_NOT_NULL:
+                    $clauses[] = $columnSql . ' IS NOT NULL';
+                    break;
+                default:
+                    throw new InvalidArgumentException("Unsupported database filter operator: {$filter->operator}");
+            }
         }
         return [$clauses, $bindings];
     }
@@ -148,5 +233,10 @@ class SecureQueryBuilder
     private function escapeLike(string $value): string
     {
         return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
+    }
+
+    private function guard(): QueryComplexityGuard
+    {
+        return $this->queryGuard ??= new QueryComplexityGuard();
     }
 }

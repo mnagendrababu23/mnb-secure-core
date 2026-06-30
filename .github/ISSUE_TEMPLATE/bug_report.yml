@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a reproducible issue in mnb-secure-core
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include secrets, real API tokens, passwords, private keys, or production logs with sensitive data.
+  - type: input
+    id: version
+    attributes:
+      label: Library version / branch
+      description: "Example: v1.0.1, v1.0.1-public-hardening branch, or commit SHA."
+      placeholder: v1.0.1
+    validations:
+      required: true
+  - type: input
+    id: php-version
+    attributes:
+      label: PHP version
+      placeholder: PHP 8.3.12
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Auth / tokens / permissions
+        - Request trust / proxy / origin protection
+        - Rate limiting
+        - Upload security
+        - Security headers / CSP / HSTS
+        - Audit logging
+        - Database security
+        - CLI / doctor / config validator
+        - Documentation / examples
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest safe example that reproduces the issue.
+      placeholder: |
+        1. Configure ...
+        2. Run ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Paste sanitized output only. Replace secrets with [redacted].
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste sanitized output from tests, demos, config validator, or doctor.
+      render: shell
+      placeholder: |
+        php tests/run-tests.php
+        php demos/run-all-demos.php
+        php bin/mnb-secure config:validate
+        php bin/mnb-secure doctor
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed or redacted secrets, tokens, passwords, private keys, cookies, and production credentials.
+          required: true

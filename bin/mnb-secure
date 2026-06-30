@@ -5,19 +5,39 @@ require __DIR__ . '/../autoload.php';
 use Mnb\SecurityCore\Env\EnvLoader;
 use Mnb\SecurityCore\Env\SecretScanner;
 use Mnb\SecurityCore\Security\ProductionSecurityChecker;
+use Mnb\SecurityCore\Security\SecurityConfigValidator;
+use Mnb\SecurityCore\Security\SecurityDoctor;
 use Mnb\SecurityCore\Security\VulnerabilityMatrix;
 use Mnb\SecurityCore\Pentest\PentestChecklist;
 use Mnb\SecurityCore\Pentest\PayloadLibrary;
 use Mnb\SecurityCore\Pentest\PentestReportBuilder;
 use Mnb\SecurityCore\Pentest\VerificationMatrix;
+use Mnb\SecurityCore\Pentest\PentestFinding;
+use Mnb\SecurityCore\Pentest\RiskRating;
+use Mnb\SecurityCore\Pentest\RetestResult;
+use Mnb\SecurityCore\Pentest\VerificationResult;
+use Mnb\SecurityCore\Pentest\VerificationTarget;
 use Mnb\SecurityCore\Errors\SafeErrorHandler;
+use Mnb\SecurityCore\Errors\ErrorPolicy;
+use Mnb\SecurityCore\Errors\ErrorCatalog;
+use Mnb\SecurityCore\Errors\ErrorFingerprint;
+use Mnb\SecurityCore\Errors\ErrorLogSanitizer;
 use Mnb\SecurityCore\Exceptions\AppException;
+use Mnb\SecurityCore\Exceptions\ValidationException;
+use Mnb\SecurityCore\Exceptions\SecurityException;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Logging\FileLogger;
 use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
+use Mnb\SecurityCore\Memory\MemoryPolicy;
+use Mnb\SecurityCore\Memory\StreamGuard;
+use Mnb\SecurityCore\Memory\PayloadSizeGuard;
+use Mnb\SecurityCore\Memory\DecodedPayloadGuard;
 use Mnb\SecurityCore\Throughput\ThroughputConfig;
 use Mnb\SecurityCore\Throughput\ThroughputPlanner;
+use Mnb\SecurityCore\Throughput\LoadTestProfile;
+use Mnb\SecurityCore\Quickstart\FirstTokenBootstrapper;
+use Mnb\SecurityCore\Core\SecurityKernel;
 
 $command = $argv[1] ?? 'help';
 $root = getcwd();
@@ -32,17 +52,255 @@ switch ($command) {
     case 'key:generate':
         echo bin2hex(random_bytes(32)) . PHP_EOL;
         break;
+    case 'config:validate':
+        $report = (new SecurityConfigValidator($config))->validate();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
     case 'check:production':
         $report = (new ProductionSecurityChecker($config, $root))->check();
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit($report['passed'] ? 0 : 1);
-    case 'secrets:scan':
-        $findings = (new SecretScanner())->scanDirectory($root);
-        echo json_encode(['findings' => $findings], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
-        exit(count($findings) === 0 ? 0 : 1);
-    case 'matrix:export':
-        echo json_encode((new VulnerabilityMatrix())->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+    case 'doctor':
+        $report = (new SecurityDoctor($config, $root))->check();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
+    case 'bootstrap:first-token':
+        $userId = $argv[2] ?? 'demo-admin';
+        $scopes = isset($argv[3]) ? array_filter(array_map('trim', explode(',', (string)$argv[3]))) : ['admin:*', 'profile.read', 'uploads.write'];
+        $ttlSeconds = isset($argv[4]) ? (int)$argv[4] : 86400;
+        $writeDemoUser = in_array('--write-demo-user', $argv, true);
+        $report = (new FirstTokenBootstrapper($config, $root))->issue([
+            'user_id' => $userId,
+            'scopes' => $scopes,
+            'ttl_seconds' => $ttlSeconds,
+            'write_demo_user' => $writeDemoUser,
+        ]);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
+    case 'secrets:scan':
+        $scannerPolicy = is_array($config['secrets']['scanning'] ?? null) ? $config['secrets']['scanning'] : [];
+        $report = (new SecretScanner($scannerPolicy))->report($root);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
+    case 'secrets:inventory':
+    case 'secrets:audit':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->secretHealthReport()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
+    case 'secrets:rotate-plan':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->secretRotationReport()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
+    case 'secrets:env-check':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->environmentValidator()->validate();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
+
+    case 'audit:verify':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->auditIntegrityVerifier()->verify();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'audit:export':
+        $kernel = new SecurityKernel($config);
+        $category = $argv[2] ?? null;
+        $limit = isset($argv[3]) ? (int)$argv[3] : null;
+        $report = $kernel->auditExporter()->export($category !== '' ? $category : null, $limit);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'logs:purge':
+        $kernel = new SecurityKernel($config);
+        $channel = $argv[2] ?? null;
+        $report = $kernel->logRetentionManager()->purge($channel !== '' ? $channel : null);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'monitor:summary':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->monitoringSummary()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'monitor:alerts':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->alertManager()->summary();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+
+    case 'backup:create':
+        $kernel = new SecurityKernel($config);
+        $type = $argv[2] ?? 'manual';
+        $report = $kernel->secureBackupManager()->create($type);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'backup:verify':
+        $kernel = new SecurityKernel($config);
+        $backup = $argv[2] ?? '';
+        if ($backup === '') {
+            $status = $kernel->recoveryStatusReport()->toArray();
+            $backup = (string)($status['latest_backup']['path'] ?? '');
+        }
+        $report = $backup !== '' ? $kernel->backupIntegrityVerifier()->verify($backup) : ['passed' => false, 'error' => 'backup_path_required'];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'backup:list':
+        $kernel = new SecurityKernel($config);
+        $path = $kernel->backupPolicy()->path();
+        $items = [];
+        if (is_dir($path)) {
+            foreach (new DirectoryIterator($path) as $file) {
+                if ($file->isFile() && preg_match('/\.(zip|enc)$/', $file->getFilename())) {
+                    $items[] = ['name' => $file->getFilename(), 'path' => $file->getPathname(), 'bytes' => $file->getSize(), 'mtime' => date('c', $file->getMTime())];
+                }
+            }
+        }
+        echo json_encode(['passed' => true, 'path' => $path, 'count' => count($items), 'backups' => $items], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'backup:purge':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->backupRetentionManager()->purge();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'recovery:status':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->recoveryStatusReport()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'recovery:drill':
+        $kernel = new SecurityKernel($config);
+        $backup = $kernel->secureBackupManager()->create('drill');
+        $dryRun = $kernel->restoreManager()->dryRun((string)$backup['path'])->toArray();
+        $report = ['passed' => !empty($backup['passed']) && !empty($dryRun['passed']), 'backup' => $backup, 'restore_dry_run' => $dryRun];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'restore:dry-run':
+        $kernel = new SecurityKernel($config);
+        $backup = $argv[2] ?? '';
+        $report = $backup !== '' ? $kernel->restoreManager()->dryRun($backup)->toArray() : ['passed' => false, 'error' => 'backup_path_required'];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'incident:open':
+        $kernel = new SecurityKernel($config);
+        $type = $argv[2] ?? 'manual';
+        $severity = $argv[3] ?? 'medium';
+        $incident = $kernel->incidentResponse()->open($type, $severity, ['source' => 'cli']);
+        echo json_encode($incident->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'incident:run-playbook':
+        $kernel = new SecurityKernel($config);
+        $playbook = $argv[2] ?? 'manual';
+        $report = $kernel->incidentResponse()->runPlaybook($playbook, ['source' => 'cli'])->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'incident:report':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->incidentResponse()->summary();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'runtime:list-commands':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'runtime' => $kernel->processPolicy()->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'runtime:check-command':
+        $kernel = new SecurityKernel($config);
+        $name = $argv[2] ?? '';
+        $args = array_slice($argv, 3);
+        $report = $name !== '' ? $kernel->safeProcessRunner()->check($name, $args) : ['passed' => false, 'error' => 'command_name_required'];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'outbound:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'outbound' => $kernel->outboundRequestPolicy()->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'outbound:check-url':
+        $kernel = new SecurityKernel($config);
+        $url = $argv[2] ?? '';
+        $report = $url !== '' ? $kernel->outboundHttpClient()->checkUrl($url) : ['passed' => false, 'error' => 'url_required'];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'db:health':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->databaseHealthChecker()->check(false);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'db:check-connection':
+        $kernel = new SecurityKernel($config);
+        try {
+            $report = $kernel->databaseHealthChecker(new \Mnb\SecurityCore\Database\PdoDatabaseConnection($kernel->pdo()))->check(true);
+        } catch (Throwable $e) {
+            $report = ['passed' => false, 'error' => 'connection_failed', 'error_class' => get_class($e), 'message' => 'Database connection could not be established.'];
+        }
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'db:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'operation_policy' => $kernel->databaseOperationPolicy()->toArray(), 'schema_policy' => $kernel->schemaChangePolicy()->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'db:query-limits':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'query_limits' => $kernel->databaseQueryCostPolicy()->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'db:schema-plan':
+        $kernel = new SecurityKernel($config);
+        $operation = $argv[2] ?? 'add_column';
+        $table = $argv[3] ?? 'example_table';
+        $column = $argv[4] ?? 'example_column';
+        $type = $argv[5] ?? 'VARCHAR(100)';
+        $context = new \Mnb\SecurityCore\Authz\TenantContext(userId: 'cli', roles: ['super_admin'], permissions: ['schema.alter']);
+        try {
+            if ($operation === 'add_index') {
+                $columns = array_slice($argv, 5) ?: ['id'];
+                $plan = $kernel->schemaMigrationGuard()->planAddIndex($context, $table, $column, $columns, true);
+            } elseif ($operation === 'add_column') {
+                $plan = $kernel->schemaMigrationGuard()->planAddColumn($context, $table, $column, $type, true, null, true);
+            } else {
+                $plan = $kernel->schemaMigrationGuard()->planDestructive($context, $operation, $table);
+            }
+            $report = ['passed' => $plan->allowed, 'schema_plan' => $plan->toArray()];
+        } catch (Throwable $e) {
+            $report = ['passed' => false, 'error' => 'schema_plan_failed', 'error_class' => get_class($e), 'message' => $e->getMessage()];
+        }
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'db:privileges':
+        $kernel = new SecurityKernel($config);
+        $grants = array_slice($argv, 2);
+        $report = $kernel->databasePrivilegeInspector($grants)->inspect();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'vulnerabilities:matrix':
+    case 'matrix:export':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->vulnerabilityMatrix()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'vulnerabilities:report':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->vulnerabilityCoverageReport()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'vulnerabilities:check':
+        $kernel = new SecurityKernel($config);
+        $id = $argv[2] ?? '';
+        $report = $id !== '' ? $kernel->vulnerabilityAdvisor()->recommend($id) : ['passed' => false, 'error' => 'vulnerability_id_required'];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'vulnerabilities:owasp':
+        $kernel = new SecurityKernel($config);
+        $rows = [];
+        foreach ($kernel->vulnerabilityMatrix()->rows() as $row) {
+            foreach ((array)($row['owasp'] ?? []) as $owasp) {
+                $rows[(string)$owasp][] = ['id' => $row['id'], 'name' => $row['name'], 'status' => $row['status'], 'score' => $row['score']];
+            }
+        }
+        ksort($rows);
+        echo json_encode(['passed' => true, 'framework' => 'OWASP Top 10 2021', 'groups' => $rows], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'vulnerabilities:export':
+        $kernel = new SecurityKernel($config);
+        echo $kernel->vulnerabilityReportExporter()->markdown();
+        exit(0);
     case 'pentest:checklist':
         echo json_encode((new PentestChecklist())->grouped(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
@@ -55,6 +313,68 @@ switch ($command) {
     case 'pentest:report-template':
         echo (new PentestReportBuilder())->buildMarkdown('Application Name', ['Web admin', 'API', 'Database', 'Files'], []);
         break;
+    case 'pentest:run-checklist':
+        $kernel = new SecurityKernel($config);
+        $profile = $kernel->verificationProfile($argv[2] ?? 'production_release');
+        $target = VerificationTarget::application('Application', $config['app']['url'] ?? null);
+        $run = $kernel->securityVerificationRunner()->runProfile($profile, $target);
+        echo json_encode(['passed' => true, 'verification_run' => $run->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'pentest:verify':
+        $kernel = new SecurityKernel($config);
+        $testId = $argv[2] ?? '';
+        if ($testId === '') {
+            echo json_encode(['passed' => false, 'error' => 'test_id_required'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+            exit(1);
+        }
+        try {
+            $result = $kernel->securityVerificationRunner()->verify($testId, VerificationTarget::application('Application', $config['app']['url'] ?? null));
+            echo json_encode(['passed' => true, 'result' => $result->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+            exit(0);
+        } catch (Throwable $e) {
+            echo json_encode(['passed' => false, 'error' => 'verification_failed', 'message' => $e->getMessage()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+            exit(1);
+        }
+    case 'pentest:evidence':
+        $kernel = new SecurityKernel($config);
+        $collector = $kernel->evidenceCollector();
+        $collector->collect('http_response', 'sample redaction', [
+            'headers' => ['Authorization' => 'Bearer demo-secret-token', 'Cookie' => 'sid=secret'],
+            'body' => 'password=secret token=abc123 /var/www/private/app.php',
+        ]);
+        $bundle = $collector->bundle(['source' => 'cli']);
+        $stored = $kernel->evidenceStore()->store($bundle);
+        echo json_encode(['passed' => true, 'evidence_bundle' => $bundle->toArray(), 'store' => $stored], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'pentest:coverage':
+        $kernel = new SecurityKernel($config);
+        $profile = $kernel->verificationProfile($argv[2] ?? 'production_release');
+        $target = VerificationTarget::application('Application', $config['app']['url'] ?? null);
+        $run = $kernel->securityVerificationRunner()->runProfile($profile, $target);
+        $report = $kernel->securityCoverageAnalyzer()->analyze($run->results(), $profile)->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'pentest:remediation-plan':
+        $kernel = new SecurityKernel($config);
+        $finding = new PentestFinding('FIND-PT-REL-001', 'Sample open Critical finding', RiskRating::CRITICAL, 'release', 'Application', ['Run release gate'], [], 'Release could ship with known vulnerability.', 'Critical finding remains open.', 'Fix finding and attach retest evidence.');
+        $plan = \Mnb\SecurityCore\Pentest\RemediationPlan::fromFinding($finding, $kernel->remediationPolicy(), ['PT-REL-001']);
+        echo json_encode(['passed' => true, 'remediation_plan' => $plan->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'pentest:retest':
+        $kernel = new SecurityKernel($config);
+        $finding = new PentestFinding('FIND-PT-REL-002', 'Sample High finding fixed without retest', RiskRating::HIGH, 'release', 'Application', ['Fix finding'], [], 'Risk remains until verified.', 'Fix has not been retested.', 'Run retest and attach evidence.', 'Fixed');
+        $blocked = $kernel->retestGate()->canClose($finding);
+        $passed = $kernel->retestGate()->canClose($finding, RetestResult::pass($finding->id, [], [], 'Retest evidence attached.'));
+        echo json_encode(['passed' => true, 'without_retest' => $blocked, 'with_retest' => $passed], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'security:release-gate':
+        $kernel = new SecurityKernel($config);
+        $profile = $kernel->verificationProfile($argv[2] ?? 'production_release');
+        $target = VerificationTarget::application('Application', $config['app']['url'] ?? null);
+        $run = $kernel->securityVerificationRunner()->runProfile($profile, $target, VerificationResult::PASSED);
+        $report = $kernel->securityReleaseGate()->evaluate([], $run)->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
     case 'memory:check':
         $memoryConfig = MemoryConfig::fromArray($config['memory'] ?? []);
         $guard = new MemoryGuard($memoryConfig);
@@ -77,6 +397,54 @@ switch ($command) {
             'max_chunk_size' => $memoryConfig->maxChunkSize(),
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
+    case 'memory:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'memory' => $kernel->memoryPolicy()->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'memory:profile':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'request';
+        echo json_encode(['passed' => true, 'profile' => $kernel->memoryPolicy()->profile($profile)->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'memory:simulate-allocation':
+        $kernel = new SecurityKernel($config);
+        $bytes = (int)($argv[2] ?? 10485760);
+        $operation = $argv[3] ?? 'request';
+        $decision = $kernel->memoryPolicy()->decideAllocation($operation, $bytes);
+        echo json_encode($decision->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($decision->allowed() ? 0 : 1);
+    case 'memory:stream-plan':
+        $kernel = new SecurityKernel($config);
+        $bytes = (int)($argv[2] ?? 52428800);
+        $mode = $argv[3] ?? 'read';
+        echo json_encode($kernel->streamGuard()->plan($bytes, $mode), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'memory:payload-check':
+        $kernel = new SecurityKernel($config);
+        $sample = ['safe' => true, 'items' => range(1, 5)];
+        try {
+            $kernel->decodedPayloadGuard()->assertSafe($sample);
+            $report = ['passed' => true, 'payload' => 'safe_sample'];
+        } catch (Throwable $e) {
+            $report = ['passed' => false, 'error' => $e->getMessage()];
+        }
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'memory:worker-check':
+        $kernel = new SecurityKernel($config);
+        $jobs = (int)($argv[2] ?? 10);
+        $start = memory_get_usage(true);
+        $report = $kernel->workerMemorySupervisor()->check($jobs, $start, memory_get_usage(true));
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'resources:check':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->temporaryFileManager()->usage(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'resources:cleanup-plan':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->tempStorageSweeper()->plan(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
     case 'throughput:check':
         $throughputConfig = ThroughputConfig::fromArray($config['throughput'] ?? []);
         echo json_encode([
@@ -96,6 +464,348 @@ switch ($command) {
         $averageJobMs = (float)($argv[6] ?? 1000);
         echo json_encode(ThroughputPlanner::plan($targetRps, $averageLatencyMs, $maxConcurrency, $queueDepth, $averageJobMs), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
+    case 'throughput:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->throughputPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:profile':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'api_request';
+        echo json_encode($kernel->throughputPolicy()->profile($profile)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:budget':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'api_request';
+        $durationMs = (float)($argv[3] ?? 1200);
+        $queued = (bool)((int)($argv[4] ?? 0));
+        echo json_encode($kernel->throughputPolicy()->evaluate($profile, $durationMs, $queued)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:concurrency':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'api_request';
+        $result = $kernel->concurrencyLimiter()->tryAcquire($profile);
+        if (($result['token'] ?? null) instanceof \Mnb\SecurityCore\Throughput\ConcurrencyToken) {
+            $result['token'] = $result['token']->toArray();
+        }
+        echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($result['acquired']) ? 0 : 1);
+    case 'throughput:throttle':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'api_request';
+        $p95 = (float)($argv[3] ?? 0);
+        $active = (int)($argv[4] ?? 0);
+        echo json_encode($kernel->adaptiveThrottle()->decide($profile, ['p95_ms' => $p95, 'active_concurrency' => $active])->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:queue':
+        $kernel = new SecurityKernel($config);
+        $depth = (int)($argv[2] ?? 1200);
+        $workers = (int)($argv[3] ?? 10);
+        $avgJobMs = (float)($argv[4] ?? 250);
+        $oldest = (int)($argv[5] ?? 0);
+        echo json_encode($kernel->queuePressureMonitor()->report($depth, $workers, $avgJobMs, $oldest), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:slo':
+        $kernel = new SecurityKernel($config);
+        $metrics = [
+            'api_request' => ['p95_ms' => (float)($argv[2] ?? 500), 'p99_ms' => (float)($argv[3] ?? 1200), 'error_rate_percent' => (float)($argv[4] ?? 0.2)],
+            'database_export' => ['queue_drain_seconds' => (float)($argv[5] ?? 300), 'sync_execution_allowed' => false],
+        ];
+        echo json_encode($kernel->sloEvaluator()->evaluate($metrics)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:capacity-risk':
+        $kernel = new SecurityKernel($config);
+        $metrics = [
+            'p95_ms' => (float)($argv[2] ?? 700),
+            'critical_latency_ms' => (int)($config['throughput']['critical_latency_ms'] ?? 2000),
+            'active_concurrency' => (int)($argv[3] ?? 10),
+            'max_concurrency' => (int)($config['throughput']['max_concurrency'] ?? 25),
+            'queue_depth' => (int)($argv[4] ?? 0),
+            'queue_warning_depth' => (int)($config['throughput']['queue_warning_depth'] ?? 1000),
+        ];
+        echo json_encode($kernel->capacityRiskAnalyzer()->analyze($metrics)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:simulate':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'api_request';
+        $targetRps = (float)($argv[3] ?? 100);
+        $avgLatency = (float)($argv[4] ?? 750);
+        echo json_encode($kernel->safeLoadSimulator()->simulate(new LoadTestProfile($profile, $targetRps, $avgLatency))->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'performance:release-gate':
+        $kernel = new SecurityKernel($config);
+        $slo = $kernel->sloEvaluator()->evaluate([
+            'api_request' => ['p95_ms' => (float)($argv[2] ?? 500), 'p99_ms' => (float)($argv[3] ?? 1200), 'error_rate_percent' => 0.2],
+            'database_export' => ['queue_drain_seconds' => 300, 'sync_execution_allowed' => false],
+        ]);
+        $capacity = $kernel->capacityRiskAnalyzer()->analyze([
+            'p95_ms' => (float)($argv[2] ?? 500),
+            'critical_latency_ms' => (int)($config['throughput']['critical_latency_ms'] ?? 2000),
+            'active_concurrency' => 5,
+            'max_concurrency' => (int)($config['throughput']['max_concurrency'] ?? 25),
+        ]);
+        $report = $kernel->performanceReleaseGate()->evaluate($slo, $capacity);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+
+    case 'queue:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->queuePolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:dispatch':
+        $kernel = new SecurityKernel($config);
+        $name = $argv[2] ?? 'test_job';
+        $queueName = $argv[3] ?? 'default';
+        $store = $kernel->queueStore();
+        $dispatcher = $kernel->jobDispatcher($store, $kernel->jobHandlerRegistry());
+        $result = $dispatcher->dispatch($name, ['source' => 'cli', 'queued_at' => date('c')], $queueName, null, 'cli:' . $name . ':' . $queueName);
+        echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($result['accepted']) ? 0 : 1);
+    case 'queue:work':
+        $kernel = new SecurityKernel($config);
+        $queueName = $argv[2] ?? 'default';
+        $store = $kernel->queueStore();
+        $worker = $kernel->queueWorker($store, $kernel->jobHandlerRegistry());
+        $maxJobs = 1;
+        foreach ($argv as $arg) { if (str_starts_with($arg, '--max-jobs=')) { $maxJobs = max(1, (int)substr($arg, 11)); } }
+        $runs = [];
+        for ($i = 0; $i < $maxJobs; $i++) {
+            $runs[] = $worker->workOnce($queueName);
+            if (!empty($runs[$i]['reason']) && $runs[$i]['reason'] === 'no_job_available') { break; }
+            if (in_array('--once', $argv, true)) { break; }
+        }
+        echo json_encode(['passed' => true, 'queue' => $queueName, 'runs' => $runs], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:status':
+        $kernel = new SecurityKernel($config);
+        $jobId = $argv[2] ?? '';
+        $report = $kernel->jobStatusResponseFactory()->response($jobId !== '' ? $kernel->queueStore()->find($jobId) : null);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['status']) ? 0 : 1);
+    case 'queue:failed':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'failed' => array_map(fn($j) => $j->toArray(), $kernel->queueStore()->failed())], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:retry':
+        $kernel = new SecurityKernel($config);
+        $jobId = $argv[2] ?? '';
+        $store = $kernel->queueStore();
+        $job = $jobId !== '' ? $store->find($jobId) : null;
+        if ($job) { $store->save($job->withStatus(Mnb\SecurityCore\Queue\JobStatus::RETRYING)->withAvailableAt(time())); }
+        echo json_encode(['passed' => (bool)$job, 'job_id' => $jobId, 'status' => $job ? 'retrying' : 'not_found'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($job ? 0 : 1);
+    case 'queue:dead-letter':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'dead_letters' => $kernel->deadLetterQueue($kernel->queueStore())->all()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:metrics':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->queueStore()->metrics()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:pressure':
+        $kernel = new SecurityKernel($config);
+        $queueName = $argv[2] ?? 'default';
+        echo json_encode($kernel->queuePressureGuard()->check($queueName), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:handlers':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->jobHandlerRegistry()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:release-gate':
+        $kernel = new SecurityKernel($config);
+        $required = array_slice($argv, 2) ?: ['test_job'];
+        $report = $kernel->queueReleaseGate()->evaluate($kernel->queueStore()->metrics(), $kernel->jobHandlerRegistry(), $required);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'token:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->tokenPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'token:revoke':
+        $kernel = new SecurityKernel($config);
+        $jti = $argv[2] ?? ('cli_' . bin2hex(random_bytes(8)));
+        $reason = $argv[3] ?? Mnb\SecurityCore\Token\TokenRevocationReason::ADMIN_REVOKE;
+        $record = $kernel->tokenRevocationService()->revoke($jti, $reason, 'cli');
+        echo json_encode(['passed' => true, 'revoked' => $record->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'token:introspect':
+        $kernel = new SecurityKernel($config);
+        $jti = $argv[2] ?? '';
+        $record = $jti !== '' ? new Mnb\SecurityCore\Token\TokenRecord($jti, Mnb\SecurityCore\Token\TokenType::ACCESS, 'cli_user', null, Mnb\SecurityCore\Token\TokenStatus::ACTIVE, time() + 3600) : null;
+        echo json_encode($kernel->tokenIntrospectionService()->introspect($record), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'token:cleanup':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'cleaned' => $kernel->tokenRevocationService()->cleanup()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'token:family':
+        $kernel = new SecurityKernel($config);
+        $family = $argv[2] ?? '';
+        echo json_encode(['passed' => true, 'family_id' => $family, 'revocations' => array_map(fn($r) => $r->toArray(), $kernel->tokenRevocationStore()->forFamily($family))], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'token:revoke-family':
+        $kernel = new SecurityKernel($config);
+        $family = $argv[2] ?? ('fam_' . bin2hex(random_bytes(6)));
+        echo json_encode(['passed' => true, 'family_id' => $family, 'records' => $kernel->tokenRevocationService()->revokeFamily($family, Mnb\SecurityCore\Token\TokenRevocationReason::SECURITY_INCIDENT, 'cli')], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'session:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->sessionPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'session:list':
+        $kernel = new SecurityKernel($config);
+        $user = $argv[2] ?? null;
+        echo json_encode(['passed' => true, 'sessions' => $kernel->sessionManager()->list($user)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'session:revoke':
+        $kernel = new SecurityKernel($config);
+        $sid = $argv[2] ?? '';
+        $ok = $sid !== '' && $kernel->sessionRevocationService()->revoke($sid, 'admin_revoke');
+        echo json_encode(['passed' => $ok, 'session_id' => $sid, 'status' => $ok ? 'revoked' : 'not_found'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($ok ? 0 : 1);
+    case 'session:revoke-user':
+        $kernel = new SecurityKernel($config);
+        $user = $argv[2] ?? 'demo-user';
+        echo json_encode($kernel->forcedLogoutService()->forceUser($user, 'cli_forced_logout'), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'session:cleanup':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'cleaned' => $kernel->sessionRegistry()->cleanupExpired()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'session:check':
+        $kernel = new SecurityKernel($config);
+        $sid = $argv[2] ?? '';
+        $record = $sid !== '' ? $kernel->sessionRegistry()->find($sid) : null;
+        echo json_encode($kernel->sessionValidator()->validate($record)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($record ? 0 : 1);
+    case 'session:devices':
+        $kernel = new SecurityKernel($config);
+        $user = $argv[2] ?? 'demo-user';
+        echo json_encode(['passed' => true, 'devices' => $kernel->deviceSessionTracker()->devices($user)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->originProtectionPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:check':
+    case 'origin:exposure-report':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->originExposureScanner()->scan()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'origin:fingerprint':
+        $kernel = new SecurityKernel($config);
+        $headers = [
+            'Server' => $argv[2] ?? 'Apache/2.4.58 Ubuntu',
+            'X-Powered-By' => $argv[3] ?? 'PHP/8.2',
+            'Content-Type' => 'application/json',
+        ];
+        echo json_encode($kernel->responseFingerprintAnalyzer()->analyze($headers)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:firewall-plan':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->firewallRuleAdvisor()->plan()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:proxy-profile':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->proxyProviderProfile($argv[2] ?? null)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:proxy-allowlist':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->proxyIpAllowlist()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:leak-scan':
+        $kernel = new SecurityKernel($config);
+        $content = $argv[2] ?? 'http://192.168.1.10/internal http://origin.internal';
+        echo json_encode($kernel->originLeakDetector()->reportForString($content, 'cli'), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'origin:production-gate':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->originExposureScanner()->scan()->toArray();
+        echo json_encode(['passed' => !empty($report['passed']), 'gate' => 'origin_protection', 'report' => $report], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'xss:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->outputEncodingPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'xss:escape-sample':
+        $kernel = new SecurityKernel($config);
+        $input = $argv[2] ?? '<script>alert(1)</script>';
+        $renderer = $kernel->safeTemplateRenderer();
+        echo json_encode([
+            'input' => $input,
+            'html' => (string)$renderer->safeValue($input, 'html'),
+            'attr' => (string)$renderer->safeValue($input, 'attr'),
+            'js' => (string)$renderer->safeValue($input, 'js'),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'xss:scan':
+        $kernel = new SecurityKernel($config);
+        $content = $argv[2] ?? '<?= $userInput ?> <div id="x"></div><script>el.innerHTML = value</script>';
+        echo json_encode($kernel->unsafeOutputScanner()->scanString($content, 'cli'), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'production:readiness':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->finalProductionReadinessChecker($root)->check()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'production:env-checklist':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->envChecklistBuilder()->build(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'production:release-plan':
+    case 'release:build-plan':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->releaseArchivePlanner()->plan($argv[2] ?? 'mnb-secure-core-v1.0.1-final-merged.zip'), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'release:manifest':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->releaseConsolidationManifest()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'final:gate':
+        $kernel = new SecurityKernel($config);
+        $readiness = $kernel->finalProductionReadinessChecker($root)->check();
+        echo json_encode($kernel->finalReleaseGate()->evaluate($readiness), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+
+    case 'errors:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->errorPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'errors:catalog':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->errorCatalog()->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'errors:simulate':
+        $type = $argv[2] ?? 'internal';
+        $config['app']['env'] = $config['app']['env'] ?? 'production';
+        $config['app']['debug'] = false;
+        $config['errors']['response_format'] = $config['errors']['response_format'] ?? 'json';
+        $logPath = ($config['paths']['logs'] ?? ($root . '/storage/logs')) . '/cli-error-simulate.log';
+        $handler = new SafeErrorHandler(new FileLogger($logPath), $config);
+        $throwable = match ($type) {
+            'validation' => new ValidationException(['password_hash' => ['users.password_hash column invalid'], 'email' => ['Email is required']]),
+            'security' => new SecurityException('Blocked SSRF attempt token=secret http://127.0.0.1/admin'),
+            default => new RuntimeException('SQLSTATE[HY000] database password=secret /var/www/private.php'),
+        };
+        $response = $handler->renderThrowable($throwable, new Request('GET', '/cli/errors/' . $type, [], [], ['accept' => 'application/json']));
+        echo $response->body() . PHP_EOL;
+        break;
+    case 'errors:fingerprint':
+        $policy = ErrorPolicy::fromConfig($config);
+        $catalog = ErrorCatalog::fromConfig($config);
+        $mapper = new Mnb\SecurityCore\Errors\ExceptionMapper($catalog, new Mnb\SecurityCore\Errors\ValidationErrorNormalizer($policy));
+        $context = Mnb\SecurityCore\Errors\ErrorContext::fromRequest(new Request('GET', '/cli/errors/fingerprint'), $config);
+        $throwable = new RuntimeException($argv[2] ?? 'Sample exception token=secret');
+        $mapped = $mapper->map($throwable);
+        $fingerprint = (new ErrorFingerprint($policy, new ErrorLogSanitizer($policy)))->create($throwable, $context, $mapped, ['path' => '/cli/errors/fingerprint']);
+        echo json_encode(['fingerprint' => $fingerprint, 'code' => $mapped['error_code'], 'request_id' => $context->requestId], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'errors:check-production':
+        $productionConfig = array_replace_recursive($config, ['app' => ['env' => 'production', 'debug' => false]]);
+        $report = (new SecurityConfigValidator($productionConfig))->validate();
+        $errorIssues = array_values(array_filter($report['issues'], fn(array $issue): bool => str_starts_with((string)$issue['path'], 'errors')));
+        echo json_encode(['passed' => count(array_filter($errorIssues, fn(array $issue): bool => in_array($issue['level'], ['critical','high'], true))) === 0, 'issues' => $errorIssues], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+
     case 'errors:sample-response':
         $config['app']['env'] = $config['app']['env'] ?? 'production';
         $config['app']['debug'] = false;
@@ -106,20 +816,101 @@ switch ($command) {
         echo $response->body() . PHP_EOL;
         break;
     default:
-        echo "MNB Secure Core v1.0 CLI\n";
+        echo "MNB Secure Core v1.0.1 CLI\n";
         echo "Commands:\n";
         echo "  key:generate             Generate 64-char app key\n";
+        echo "  config:validate          Validate security config shape, values, and safe combinations\n";
         echo "  check:production         Run production security readiness checks\n";
+        echo "  doctor                   Run full security, package, runtime, storage, and scanner diagnostics\n";
+        echo "  bootstrap:first-token    Issue first file/db/redis-backed API token: user_id scopes ttl [--write-demo-user]\n";
         echo "  secrets:scan             Scan project for accidental secrets\n";
-        echo "  matrix:export            Export vulnerability blocking matrix\n";
+        echo "  audit:verify            Verify tamper-evident audit hash chain
+";
+        echo "  audit:export            Export audit events as JSON: [category] [limit]
+";
+        echo "  logs:purge              Purge old log/audit files by retention policy: [channel]
+";
+        echo "  monitor:summary         Summarize audit integrity, metrics, and alerts
+";
+        echo "  monitor:alerts          Show monitoring alert rules and event count
+";
+        echo "  backup:create           Create encrypted/signed backup: [type]
+";
+        echo "  backup:verify           Verify backup integrity/signature: [path]
+";
+        echo "  backup:list             List backup archives
+";
+        echo "  backup:purge            Purge expired backups by retention policy
+";
+        echo "  recovery:status         Show backup and recovery readiness
+";
+        echo "  recovery:drill          Create backup and perform restore dry-run
+";
+        echo "  restore:dry-run         Verify restore plan without writing files: path
+";
+        echo "  incident:open           Open incident: type [severity]
+";
+        echo "  incident:run-playbook   Open and run incident playbook: name
+";
+        echo "  incident:report         Summarize incident cases and playbooks
+";
+        echo "  vulnerabilities:matrix   Export detailed vulnerability blocking matrix\n";
+        echo "  vulnerabilities:report   Export vulnerability coverage score/report\n";
+        echo "  vulnerabilities:check    Show controls, gaps, and advice for one vulnerability id\n";
+        echo "  vulnerabilities:owasp    Group matrix rows by OWASP Top 10 mapping\n";
+        echo "  vulnerabilities:export   Export vulnerability report as Markdown\n";
+        echo "  matrix:export            Legacy alias for vulnerabilities:matrix\n";
         echo "  pentest:checklist        Export pentest checklist\n";
         echo "  pentest:payloads         Export safe pentest payload library\n";
         echo "  pentest:matrix           Export verification matrix\n";
         echo "  pentest:report-template  Print pentest report template\n";
+        echo "  pentest:run-checklist    Create safe verification run records for a profile\n";
+        echo "  pentest:verify           Create a safe verification record for test id\n";
+        echo "  pentest:evidence         Show redacted evidence bundle sample\n";
+        echo "  pentest:coverage         Calculate verification/control coverage\n";
+        echo "  pentest:remediation-plan Build remediation SLA plan for a finding\n";
+        echo "  pentest:retest           Show retest gate behavior\n";
+        echo "  security:release-gate    Evaluate security release gate\n";
+        echo "  xss:policy               Show output encoding/XSS enforcement policy\n";
+        echo "  xss:scan                 Scan inline content for unsafe output patterns\n";
+        echo "  xss:escape-sample        Show safe context-specific escaping sample\n";
+        echo "  production:readiness     Show final production readiness report\n";
+        echo "  production:env-checklist Show required production .env checklist\n";
+        echo "  production:release-plan  Show final merged release archive plan\n";
+        echo "  release:manifest         Show consolidated v1.0.1 upgrade manifest\n";
+        echo "  release:build-plan       Show clean ZIP build/exclusion plan\n";
+        echo "  final:gate               Evaluate final production release gate\n";
+        echo "  errors:policy            Show safe error response/log isolation policy\n";
+        echo "  errors:catalog           Show safe public error catalog\n";
+        echo "  errors:simulate          Simulate safe error response: internal|validation|security\n";
+        echo "  errors:fingerprint       Generate sanitized error fingerprint\n";
+        echo "  errors:check-production  Validate production-safe error disclosure settings\n";
         echo "  errors:sample-response   Show safe error response and write private error log\n";
         echo "  memory:check             Show PHP memory limit, thresholds, and current snapshot\n";
         echo "  memory:sample-plan       Show recommended chunk size for an item byte estimate\n";
         echo "  throughput:check         Show throughput thresholds and capacity settings\n";
         echo "  throughput:plan          Plan concurrency/workers: rps latency_ms concurrency queue_depth job_ms\n";
+        echo "  queue:policy             Show async queue/background job policy
+";
+        echo "  queue:dispatch           Dispatch a safe test job: [job_name] [queue]
+";
+        echo "  queue:work               Process queued jobs: queue [--once] [--max-jobs=N]
+";
+        echo "  queue:status             Show job status by id
+";
+        echo "  queue:failed             List failed jobs
+";
+        echo "  queue:retry              Retry job by id
+";
+        echo "  queue:dead-letter        List dead-letter jobs
+";
+        echo "  queue:metrics            Show queue metrics
+";
+        echo "  queue:pressure           Show queue pressure report
+";
+        echo "  queue:handlers           List registered job handlers
+";
+        echo "  queue:release-gate       Evaluate queue release gate
+";
         break;
 }

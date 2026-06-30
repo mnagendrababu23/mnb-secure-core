@@ -1,0 +1,22 @@
+{
+    "id": "job_70e02fa78c31c92776190202",
+    "name": "test_job",
+    "queue": "default",
+    "payload": {
+        "source": "cli",
+        "queued_at": "2026-06-30T20:09:50+02:00"
+    },
+    "priority": "normal",
+    "status": "succeeded",
+    "attempts": 1,
+    "idempotency_key": "cli:test_job:default",
+    "available_at": 1782842990,
+    "reserved_at": 1782842994,
+    "created_at": 1782842990,
+    "context": {
+        "actor_id": "system",
+        "tenant_id": null,
+        "metadata": []
+    },
+    "meta": []
+}

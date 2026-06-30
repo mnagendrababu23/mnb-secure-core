@@ -3,6 +3,7 @@ namespace Mnb\SecurityCore\Security;
 
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Http\Response;
+use Mnb\SecurityCore\Origin\ResponseFingerprintAnalyzer;
 
 class ServerIdentityHider
 {
@@ -14,6 +15,9 @@ class ServerIdentityHider
         'X-Generator',
         'X-Runtime',
         'X-Version',
+        'X-Backend-Server',
+        'X-Origin-Server',
+        'X-Served-By',
     ];
 
     public function __construct(private array $config = []) {}
@@ -33,13 +37,18 @@ class ServerIdentityHider
         return $response;
     }
 
+    public function fingerprintReport(Response $response): array
+    {
+        return ResponseFingerprintAnalyzer::fromConfig(['origin_protection' => $this->config])->analyze($response->headers())->toArray();
+    }
+
     public function shouldBlockDirectIpHost(Request $request): bool
     {
         if (empty($this->config['block_direct_ip_host'])) {
             return false;
         }
 
-        return self::isIpAddressHost($request->host());
+        return self::isIpAddressHost($request->effectiveHost());
     }
 
     public static function normalizeHost(string $host): string
@@ -48,6 +57,11 @@ class ServerIdentityHider
 
         if ($host === '') {
             return '';
+        }
+
+        if (str_contains($host, '://')) {
+            $parts = parse_url($host);
+            $host = is_array($parts) ? (string)($parts['host'] ?? '') : '';
         }
 
         if (str_starts_with($host, '[')) {

@@ -1,6 +1,7 @@
 <?php
 namespace Mnb\SecurityCore\Http\Middleware;
 
+use Mnb\SecurityCore\Auth\AuthContext;
 use Mnb\SecurityCore\Auth\OpaqueTokenService;
 use Mnb\SecurityCore\Contracts\MiddlewareInterface;
 use Mnb\SecurityCore\Http\Request;
@@ -20,6 +21,15 @@ class ApiTokenMiddleware implements MiddlewareInterface
         if (!$record) {
             return Response::json(['status' => false, 'message' => 'Invalid or expired token'], 401);
         }
+
+        $auth = AuthContext::fromTokenRecord($record);
+
+        $request = $request
+            ->withAttribute(AuthContext::ATTRIBUTE, $auth)
+            ->withAttribute('auth_token', $record)
+            ->withAttribute('auth_user_id', $record['user_id'] ?? null)
+            ->withAttribute('auth_scopes', $record['scopes'] ?? []);
+
         return $next($request);
     }
 }

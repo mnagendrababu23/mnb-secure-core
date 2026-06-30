@@ -20,14 +20,18 @@ class SessionGuard
         session_start();
     }
 
-    public function login(array $user, array $permissions = []): void
+    public function login(array $user, array $permissions = [], array $roles = [], array $scopes = []): void
     {
         $this->start();
         session_regenerate_id(true);
         $_SESSION['user_id'] = $user['id'] ?? null;
         $_SESSION['school_id'] = $user['school_id'] ?? null;
+        $_SESSION['branch_id'] = $user['branch_id'] ?? null;
+        $_SESSION['academic_year_id'] = $user['academic_year_id'] ?? null;
         $_SESSION['role'] = $user['role'] ?? null;
+        $_SESSION['roles'] = $roles !== [] ? $roles : array_values(array_filter([(string)($user['role'] ?? '')]));
         $_SESSION['permissions'] = $permissions;
+        $_SESSION['scopes'] = $scopes;
         $_SESSION['logged_in_at'] = time();
     }
 

@@ -1,0 +1,20 @@
+* text=auto
+
+*.php text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.env text eol=lf
+bin/mnb-secure text eol=lf
+
+/.git export-ignore
+/.github export-ignore
+/tests/storage export-ignore
+/storage/cache/* export-ignore
+/storage/logs/* export-ignore
+/storage/audit/* export-ignore
+/storage/backups/* export-ignore
+/storage/private/* export-ignore
+/storage/quarantine/* export-ignore
+/storage/tokens/* export-ignore

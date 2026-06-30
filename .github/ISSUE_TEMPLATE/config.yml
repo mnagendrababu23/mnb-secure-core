@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability report
+    url: https://github.com/mnb/mnb-secure-core/security/policy
+    about: Please do not open public issues for vulnerabilities. Follow SECURITY.md / GitHub private vulnerability reporting.
+  - name: Installation checklist
+    url: https://github.com/mnb/mnb-secure-core/blob/main/docs/INSTALL-CHECKLIST.md
+    about: Review the install checklist before opening setup questions.

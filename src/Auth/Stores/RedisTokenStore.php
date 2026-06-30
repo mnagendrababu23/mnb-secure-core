@@ -21,7 +21,6 @@ class RedisTokenStore implements TokenStoreInterface
             $this->redis->set($this->tokenKey($hash), $payload, $ttl);
         }
         $this->redis->sAdd($this->userKey($record['user_id']), $hash);
-        $this->redis->expire($this->userKey($record['user_id']), $ttl);
     }
 
     public function findByHash(string $tokenHash): ?array

@@ -2,6 +2,7 @@
 namespace Mnb\SecurityCore\Auth\Stores;
 
 use Mnb\SecurityCore\Contracts\TokenStoreInterface;
+use Mnb\SecurityCore\Database\SqlIdentifier;
 use PDO;
 
 class DatabaseTokenStore implements TokenStoreInterface
@@ -9,7 +10,9 @@ class DatabaseTokenStore implements TokenStoreInterface
     public function __construct(
         private PDO $pdo,
         private string $table = 'mnb_api_tokens'
-    ) {}
+    ) {
+        $this->table = SqlIdentifier::assert($this->table, 'token table');
+    }
 
     public function installSchema(): void
     {

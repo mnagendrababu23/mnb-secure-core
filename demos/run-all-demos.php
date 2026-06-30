@@ -5,7 +5,7 @@ sort($files);
 $php = PHP_BINARY;
 $failed = 0;
 
-echo "MNB Secure Core v1.0 - Running all demos\n";
+echo "MNB Secure Core v1.0.1 - Running all demos\n";
 echo str_repeat('=', 72) . "\n";
 
 foreach ($files as $file) {

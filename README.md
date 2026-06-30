@@ -1,61 +1,123 @@
-# mnb-secure-core v1.0
+# MNB Secure Core
 
-**Package / library name:** `mnb-secure-core`  
-**Composer package:** `mnb/mnb-secure-core`  
-**Version:** `1.0`  
-**Author:** Nagendra babu Macharla  
-**Type:** reusable no-framework PHP security library
+**Package:** `mnb/mnb-secure-core`  
+**Version:** `v1.0.1`  
+**Type:** reusable no-framework PHP security library  
+**PHP:** 8.1+  
+**License:** MIT  
+**Author:** Nagendra babu Macharla
 
-`mnb-secure-core` is a reusable PHP security core for custom applications that do not use a framework. It gives a project-ready security foundation for school ERP, CRM, billing, admin panels, APIs, file tools, reporting dashboards, and other PHP applications.
+MNB Secure Core is a reusable PHP security foundation for custom applications that do not depend on a framework. It is designed for admin panels, APIs, school/ERP systems, CRM tools, billing platforms, file tools, reporting dashboards, and other PHP applications that need production-grade security building blocks without adopting Laravel/Symfony/Slim as a hard dependency.
 
-This single README is the complete setup and reference document for the package. The earlier multi-file documentation has been merged here so the ZIP stays clean and easy to read.
-
----
-
-## 1. Security concepts covered
-
-1. Trust Zones and Data Boundaries
-2. Secure Request Receiving Strategy
-3. Authentication Strategy
-4. Authorization Strategy
-5. Data Protection Strategy
-6. Web Application Security Controls
-7. API Security and Rate Limiting
-8. File Upload, Download, and Document Security
-9. Caching Strategy
-10. Environment and Secret Management
-11. Logging, Audit, and Monitoring
-12. Backup, Recovery, and Incident Response
-13. Vulnerability Blocking Matrix
-14. Secure Database Connect, Retrieval, Update, Delete, Search, and Alter
-15. Penetration Testing, Security Verification, and Remediation
-16. Error Handling, Safe Error Responses, and Hidden Technical Logs
-17. Memory Management and Resource Safety
-18. Throughput and Performance Capacity Management
-19. Hide Server IP and Origin Identity Protection
+The current `v1.0.1` release line includes request security, authentication, authorization, data protection, file safety, database governance, runtime command safety, outbound network/SSRF protection, security verification, safe errors, memory safety, throughput/capacity governance, origin protection, async queues, token/session control, XSS enforcement, and final production readiness tooling.
 
 ---
 
-## 2. Requirements
+## Why use MNB Secure Core
+
+MNB Secure Core helps PHP teams add serious application security without rebuilding the same controls again and again for every project. The library is especially useful for no-framework apps, shared-hosting projects, custom admin panels, API backends, ERP/CRM systems, education platforms, file tools, and internal business applications.
+
+Key advantages:
+
+| Advantage | Benefit |
+| --- | --- |
+| No-framework design | Works with plain PHP projects and can also be integrated into existing frameworks. |
+| Central security kernel | Gives one consistent entry point for request, auth, database, files, logs, queues, sessions, and production checks. |
+| Security-by-policy approach | High-risk actions such as SQL, schema changes, command execution, outbound HTTP, queues, and sessions are controlled by explicit policies. |
+| Faster secure development | Reduces the need to manually build CSRF, rate limits, data masking, upload validation, audit logs, safe errors, token revocation, and production checks. |
+| Safer production defaults | Encourages deny-by-default behavior, allow-lists, secret redaction, private storage, safe headers, and release-gate checks. |
+| Tenant and role awareness | Helps protect multi-tenant systems by connecting trust zones, authorization, database policies, cache keys, files, sessions, and audit events. |
+| Full lifecycle protection | Covers incoming requests, business operations, background jobs, outbound integrations, runtime execution, monitoring, verification, and release readiness. |
+| Built-in diagnostics | Provides CLI checks, demos, vulnerability reports, readiness checks, coverage reports, and release build planning. |
+| Safer logs and evidence | Keeps frontend responses clean while preserving redacted technical logs, audit records, pentest evidence, and incident response context. |
+| Composer installation | Installs cleanly from Packagist with `composer require mnb/mnb-secure-core`. |
+
+> For more detailed feature documentation and code examples, refer to the `docs/` directory. For runnable usage samples, refer to the `examples/` and `demos/` directories.
+
+---
+
+## Current release status
+
+Latest local validation from the current `v1.0.1` upgrade line:
+
+| Check | Result |
+| --- | ---: |
+| PHP lint | Passed |
+| Test suite | 398 passed, 0 failed |
+| Demo suite | Passed |
+| Config validation | Passed |
+| Vulnerability score | 99.05 |
+| Vulnerability grade | A+ |
+
+> Production `doctor`/readiness results still depend on your real `.env`, secrets, HTTPS, CDN/proxy, storage paths, database user, and deployment firewall settings.
+
+---
+
+## What this package protects
+
+MNB Secure Core is organized as security engines. Each engine can be used independently, or through `Mnb\SecurityCore\Core\SecurityKernel`.
+
+| Area | Main protection |
+| --- | --- |
+| Trust zones | Request, tenant, user, role, data-class, and resource boundary checks |
+| Request receiving | Trusted hosts/proxies, HTTPS, request size, method/content checks, JSON parsing, suspicious request detection |
+| Authentication | Bearer/API/session/webhook/internal authentication strategies |
+| Authorization | Permissions, scopes, roles, ownership, tenant isolation, field-level filtering |
+| Data protection | Encryption, masking, search hashes, redaction, export protection |
+| Web security | Escaping, HTML sanitization, CSP/security headers, safe redirects, signed URLs, secure cookies |
+| API/rate limiting | Token scopes, rate policies, abuse throttling |
+| File security | Upload validation, private storage, malware scanner hooks, protected downloads, retention cleanup |
+| Cache strategy | Tenant-aware keys, TTLs, encryption for sensitive cache policies, invalidation, stampede guard |
+| Secrets | `.env` loading, secret inventory, redaction, scanning, rotation reports |
+| Logging/audit/monitoring | JSONL logs, tamper-evident audit, metrics, alerts, retention |
+| Backup/recovery/incident | Encrypted/signed backups, restore dry-runs, playbooks, evidence collection |
+| Vulnerability matrix | OWASP/CWE-style vulnerability coverage mapping, gaps, recommendations |
+| Database governance | Policy-based CRUD/search/alter, tenant scoping, query limits, schema plans, result masking |
+| Runtime/network | Safe process runner, command allow-listing, outbound HTTP guard, SSRF/DNS/redirect protections |
+| Verification/remediation | Pentest checklist, evidence bundles, SLA plans, retest gates, release gates |
+| Safe errors | Safe public responses, hidden technical logs, problem+JSON, log redaction, error fingerprinting |
+| Memory/resource safety | Operation memory profiles, stream guards, bounded buffers, temp file budgets, worker leak checks |
+| Throughput/capacity | Latency budgets, concurrency limiting, adaptive throttling, queue pressure, SLO and capacity gates |
+| Origin protection | Direct IP Host blocking, trusted proxy validation, fingerprint stripping, leak scanning, firewall guidance |
+| Queue/background jobs | Async dispatch, 202 responses, idempotency, retries, dead-letter queue, worker supervision |
+| Token/session control | Token revocation, refresh rotation, session registry, forced logout, remember-me safety |
+| Final readiness/XSS | Safe template rendering, unsafe output scan, production checklist, release build planning |
+
+---
+
+## Requirements
+
+Required:
 
 - PHP 8.1 or higher
-- `openssl` PHP extension
-- `fileinfo` PHP extension
-- `zip` PHP extension recommended for ZIP backups
-- Writable private storage directory outside public web access
-- HTTPS in production
-- Composer optional; the package also includes a simple standalone autoloader
+- `openssl`
+- `fileinfo`
+- `json`
+- `pdo`
+- Writable private storage outside the public web root
 
-Check PHP locally:
+Recommended/optional:
+
+- `zip` for ZIP backup/archive workflows
+- `redis` for distributed cache, rate limiting, tokens, and queues
+- ClamAV for production malware scanning
+- HTTPS in production
+- CDN/reverse proxy + firewall when origin IP hiding is required
+
+Check your PHP environment:
 
 ```bash
 php -v
-php -m | grep -E "openssl|fileinfo|zip"
+php -m | grep -E "openssl|fileinfo|json|pdo|zip|redis"
 ```
 
 ---
 
-## 3. Recommended folder placement
+## Installation
+
+### Option A: direct library placement
+
+Recommended for no-framework apps and shared hosting:
 
 ```text
 my-php-app/
@@ -70,24 +132,52 @@ my-php-app/
 │   ├── cache/
 │   ├── logs/
 │   ├── audit/
-│   └── backups/
+│   ├── backups/
+│   ├── queue/
+│   └── tokens/
 └── libraries/
     └── mnb-secure-core/
 ```
 
-Copy this package into:
-
-```text
-my-php-app/libraries/mnb-secure-core
-```
-
-Then include the library autoloader in your application bootstrap:
+Bootstrap:
 
 ```php
+<?php
+
 require __DIR__ . '/../libraries/mnb-secure-core/autoload.php';
+
+use Mnb\SecurityCore\Env\EnvLoader;
+use Mnb\SecurityCore\Core\SecurityKernel;
+
+EnvLoader::load(__DIR__ . '/../.env');
+$config = require __DIR__ . '/../config/security.php';
+$kernel = new SecurityKernel($config);
 ```
 
-Composer users can load it through Composer after placing it in their project as a path repository or private package:
+### Option B: Composer / Packagist
+
+Install from Packagist:
+
+```bash
+composer require mnb/mnb-secure-core
+```
+
+Composer bootstrap:
+
+```php
+<?php
+
+require __DIR__ . '/../vendor/autoload.php';
+
+use Mnb\SecurityCore\Env\EnvLoader;
+use Mnb\SecurityCore\Core\SecurityKernel;
+
+EnvLoader::load(__DIR__ . '/../.env');
+$config = require __DIR__ . '/../config/security.php';
+$kernel = new SecurityKernel($config);
+```
+
+For local path development only:
 
 ```json
 {
@@ -98,43 +188,69 @@ Composer users can load it through Composer after placing it in their project as
     }
   ],
   "require": {
-    "mnb/mnb-secure-core": "1.0.0"
+    "mnb/mnb-secure-core": "^1.0"
   }
 }
 ```
 
 ---
 
-## 4. Copy config and environment file
+## First setup
 
-Copy:
+Copy config and environment files. For Composer installs, the package lives under `vendor/mnb/mnb-secure-core`:
 
-```text
-mnb-secure-core/config/security.php  -> my-php-app/config/security.php
-mnb-secure-core/.env.example         -> my-php-app/.env
+```bash
+cp vendor/mnb/mnb-secure-core/config/security.php config/security.php
+cp vendor/mnb/mnb-secure-core/.env.production.example .env
 ```
 
-Example `.env`:
+For direct library placement, use:
+
+```bash
+cp libraries/mnb-secure-core/config/security.php config/security.php
+cp libraries/mnb-secure-core/.env.production.example .env
+```
+
+Create private storage:
+
+```bash
+mkdir -p storage/private storage/quarantine storage/cache storage/logs storage/audit storage/backups storage/queue storage/tokens
+```
+
+Generate keys and validate:
+
+```bash
+php vendor/mnb/mnb-secure-core/bin/mnb-secure key:generate
+php vendor/mnb/mnb-secure-core/bin/mnb-secure config:validate
+php vendor/mnb/mnb-secure-core/bin/mnb-secure doctor
+```
+
+For direct library placement, replace `vendor/mnb/mnb-secure-core` with `libraries/mnb-secure-core`.
+
+Recommended production `.env` values:
 
 ```env
-APP_ENV=local
-APP_DEBUG=true
-APP_URL=http://localhost
-APP_KEY=CHANGE_ME_WITH_bin_mnb-secure_key_generate
-FORCE_HTTPS=false
-TRUSTED_HOSTS=localhost,127.0.0.1
+APP_ENV=production
+APP_DEBUG=false
+APP_URL=https://example.com
+APP_KEY=replace_with_32_plus_char_secret
+FORCE_HTTPS=true
+TRUSTED_HOSTS=example.com,www.example.com
+TRUSTED_PROXIES=
 
-# Origin/server identity protection
-# PHP can help block direct IP Host requests and remove app-level fingerprint headers.
-# For real origin IP hiding, put the site behind a CDN/reverse proxy and firewall the origin.
-ORIGIN_PROTECTION_ENABLED=true
-BLOCK_DIRECT_IP_HOST=true
-CDN_OR_PROXY_ENABLED=false
-REQUIRE_CDN_OR_PROXY_IN_PRODUCTION=true
+DATA_ENCRYPTION_KEY=replace_with_32_plus_char_secret
+DATA_SEARCH_HASH_KEY=replace_with_32_plus_char_secret
+SIGNED_URL_KEY=replace_with_32_plus_char_secret
+REQUEST_WEBHOOK_SECRET=replace_with_32_plus_char_secret
 
-SESSION_SECURE=false
+SESSION_SECURE=true
 SESSION_HTTP_ONLY=true
 SESSION_SAME_SITE=Lax
+
+ORIGIN_PROTECTION_ENABLED=true
+BLOCK_DIRECT_IP_HOST=true
+CDN_OR_PROXY_ENABLED=true
+REQUIRE_CDN_OR_PROXY_IN_PRODUCTION=true
 
 STORAGE_PRIVATE_PATH=../storage/private
 STORAGE_QUARANTINE_PATH=../storage/quarantine
@@ -144,101 +260,98 @@ AUDIT_PATH=../storage/audit
 BACKUP_PATH=../storage/backups
 ```
 
-Generate a secure app key:
-
-```bash
-php libraries/mnb-secure-core/bin/mnb-secure key:generate
-```
-
-Create protected storage folders:
-
-```bash
-mkdir -p storage/private storage/quarantine storage/cache storage/logs storage/audit storage/backups
-```
-
-Keep `storage/private`, `storage/audit`, and `storage/backups` outside `public/`.
+Never commit real `.env` secrets.
 
 ---
 
-## 5. Basic bootstrap pattern
+## Recommended middleware order
 
-```php
-<?php
-require __DIR__ . '/../libraries/mnb-secure-core/autoload.php';
-
-use Mnb\SecurityCore\Env\EnvLoader;
-use Mnb\SecurityCore\Core\SecurityKernel;
-
-EnvLoader::load(__DIR__ . '/../.env');
-$config = require __DIR__ . '/../config/security.php';
-$security = new SecurityKernel($config);
-```
-
----
-
-## 6. Web request protection pattern
+Use this general order for web/API entrypoints:
 
 ```php
 use Mnb\SecurityCore\Http\MiddlewarePipeline;
-use Mnb\SecurityCore\Http\Middleware\TrustedHostMiddleware;
-use Mnb\SecurityCore\Http\Middleware\HttpsMiddleware;
-use Mnb\SecurityCore\Http\Middleware\RequestSizeMiddleware;
-use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Http\Response;
 
-$request = Request::fromGlobals();
+$request = Request::fromGlobals($config['app']['trusted_proxies'] ?? []);
 
 $pipeline = new MiddlewarePipeline([
-    new TrustedHostMiddleware($config['app']['trusted_hosts'] ?? []),
-    new HttpsMiddleware((bool)($config['app']['force_https'] ?? false)),
-    new RequestSizeMiddleware((int)($config['limits']['request_max_bytes'] ?? 2097152)),
-    new SecurityHeadersMiddleware($config['security_headers'] ?? []),
+    $kernel->requestTrustMiddleware(),
+    $kernel->serverIdentityProtectionMiddleware(),
+    $kernel->trustedHostMiddleware(),
+    $kernel->httpsMiddleware(),
+    $kernel->corsMiddleware(),
+    $kernel->securityHeadersMiddleware(),
+    $kernel->inputValidationMiddleware(),
+    $kernel->rateLimitMiddleware('api', 'api.profile'),
+    $kernel->authenticationMiddleware('api_bearer'),
+    $kernel->authorizationMiddleware('students.read'),
+    $kernel->autoAuditMiddleware(),
 ]);
 
 $response = $pipeline->handle($request, function (Request $request): Response {
-    return Response::text('Secure page');
+    return Response::json(['status' => true]);
 });
 
 $response->send();
 ```
 
----
-
-## 7. API token and rate-limit pattern
+For easier setup, use the Secure Request Receiving profiles:
 
 ```php
-use Mnb\SecurityCore\Auth\OpaqueTokenService;
-use Mnb\SecurityCore\Core\SecurityKernel;
-use Mnb\SecurityCore\Http\Request;
+$response = $kernel->secureRequestReceiver('api_authenticated')->handle(
+    $request,
+    fn (Request $request) => Response::json([
+        'status' => true,
+        'request_id' => $request->attribute('request_id'),
+    ])
+);
+```
 
-$security = new SecurityKernel($config);
-$tokens = new OpaqueTokenService($security->tokenStore());
+Common profiles include:
 
-$issued = $tokens->issue('user-1001', ['api:read'], ttlSeconds: 3600);
-
-$request = Request::fromGlobals();
-$plainToken = $request->bearerToken();
-$record = $plainToken ? $tokens->validate($plainToken, $request->ip(), (string)$request->header('user-agent', '')) : null;
-
-if (!$record || !in_array('api:read', $record['scopes'] ?? [], true)) {
-    http_response_code(401);
-    exit('Unauthorized');
-}
-
-$limiter = $security->rateLimiter();
-$result = $limiter->attempt('api:' . $request->ip(), 120, 60);
-
-if (!$result->allowed) {
-    http_response_code(429);
-    header('Retry-After: ' . $result->retryAfter);
-    exit('Too many requests');
-}
+```text
+public_read
+public_form
+api_public
+api_authenticated
+admin
+upload_image
+webhook
+internal_system
 ```
 
 ---
 
-## 8. CSRF pattern
+## Common usage patterns
+
+### API token and rate limit
+
+```php
+use Mnb\SecurityCore\Auth\OpaqueTokenService;
+
+$tokens = new OpaqueTokenService($kernel->tokenStore());
+$issued = $tokens->issue('user-1001', ['api:read'], ttlSeconds: 3600);
+
+$plainToken = $request->bearerToken();
+$record = $plainToken
+    ? $tokens->validate($plainToken, $request->ip(), (string)$request->header('user-agent', ''))
+    : null;
+
+if (!$record || !in_array('api:read', $record['scopes'] ?? [], true)) {
+    return Response::json(['status' => false, 'message' => 'Unauthorized'], 401);
+}
+
+$result = $kernel->rateLimiter()->attempt('api:' . $request->ip(), 120, 60);
+
+if (!$result->allowed) {
+    return Response::json(['status' => false, 'message' => 'Too many requests'], 429, [
+        'Retry-After' => (string)$result->retryAfter,
+    ]);
+}
+```
+
+### CSRF for browser forms
 
 ```php
 use Mnb\SecurityCore\Auth\Csrf;
@@ -246,25 +359,16 @@ use Mnb\SecurityCore\Auth\Csrf;
 $csrf = new Csrf('_csrf_token');
 $token = $csrf->token();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $postedToken = $_POST['_csrf'] ?? '';
-    if (!$csrf->verify($postedToken)) {
-        http_response_code(419);
-        exit('Invalid CSRF token');
-    }
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$csrf->verify($_POST['_csrf'] ?? '')) {
+    return Response::text('Invalid CSRF token', 419);
 }
 ```
 
-Use CSRF protection for browser form submissions. Use bearer tokens or signed API credentials for API clients instead of CSRF tokens.
-
----
-
-## 9. Authorization and ownership pattern
+### Authorization and tenant safety
 
 ```php
 use Mnb\SecurityCore\Authz\TenantContext;
 use Mnb\SecurityCore\Authz\PermissionGuard;
-use Mnb\SecurityCore\Authz\PolicyRegistry;
 
 $context = new TenantContext(
     tenantId: 'school-1',
@@ -273,65 +377,26 @@ $context = new TenantContext(
     permissions: ['student.view', 'student.update']
 );
 
-$permissions = new PermissionGuard();
-$permissions->require($context, 'student.update');
+(new PermissionGuard())->require($context, 'student.update');
 ```
 
-Recommended rules:
-
-- Authorize before reading, creating, updating, deleting, exporting, or altering data.
-- Always validate tenant, owner, school, branch, or organization boundaries.
-- Deny by default when a permission or ownership rule is missing.
-- Audit denied high-risk operations.
-
----
-
-## 10. Data protection pattern
+### Data protection
 
 ```php
-use Mnb\SecurityCore\Data\Encryption;
-use Mnb\SecurityCore\Data\DataMasker;
-
-$crypto = new Encryption($_ENV['APP_KEY']);
-$cipherText = $crypto->encrypt('Sensitive value');
-$plainText = $crypto->decrypt($cipherText);
-
-$maskedEmail = (new DataMasker())->email('student@example.com');
-```
-
-Protect secrets and sensitive data using encryption, masking, and field-level filtering. Never log raw passwords, tokens, session IDs, API keys, cookies, private file paths, or full database error traces.
-
----
-
-## 11. Secure database pattern
-
-The database security layer is built around these controls:
-
-- PDO with safe connection options
-- Identifier allow-lists for table and column names
-- Parameterized values for user data
-- Tenant and permission checks before CRUD
-- Guarded search builder
-- Guarded schema changes
-- Audit logs for sensitive operations
-
-Example:
-
-```php
-use Mnb\SecurityCore\Database\DatabaseConfig;
-use Mnb\SecurityCore\Database\PdoConnectionFactory;
-use Mnb\SecurityCore\Database\SecureDatabase;
-use Mnb\SecurityCore\Database\TableSecurityPolicy;
-
-$dbConfig = DatabaseConfig::fromArray([
-    'driver' => 'mysql',
-    'host' => '127.0.0.1',
-    'database' => 'app_db',
-    'username' => 'app_user',
-    'password' => 'secret',
+$protected = $kernel->dataProtectionRegistry()->protectForStorage('students', [
+    'name' => 'Ravi',
+    'email' => 'ravi@example.com',
+    'parent_phone' => '9876543210',
 ]);
 
-$connection = (new PdoConnectionFactory())->create($dbConfig);
+$safeResponse = $kernel->dataProtectionRegistry()->protectForResponse('students', $protected, $request);
+$logSafe = $kernel->dataProtectionRegistry()->protectForLog('students', $protected);
+```
+
+### Secure database search
+
+```php
+use Mnb\SecurityCore\Database\TableSecurityPolicy;
 
 $policy = new TableSecurityPolicy(
     table: 'students',
@@ -340,383 +405,250 @@ $policy = new TableSecurityPolicy(
     insertableColumns: ['name', 'class_id', 'status'],
     updatableColumns: ['name', 'class_id', 'status'],
     searchableColumns: ['name'],
-    orderableColumns: ['id', 'name']
+    orderableColumns: ['id', 'name', 'created_at']
 );
 
-// Pair SecureDatabase with a PolicyRegistry and AuditLogger as shown in examples/secure-database.php.
-$rows = $connection->fetchAll('SELECT id, name FROM students WHERE school_id = ? LIMIT 50', [$context->schoolId]);
+$rows = $kernel->secureDatabase()->search($context, $policy, 'Ravi', [
+    'status' => ['eq' => 'active'],
+    'class_id' => ['in' => [1, 2, 3]],
+    'created_at' => ['between' => ['2026-01-01', '2026-06-30']],
+], 'created_at', 'DESC', 50, 0);
 ```
 
-Database operation rules:
-
-| Operation | Security rule |
-| --- | --- |
-| Connect | Use least-privilege DB user and safe PDO options |
-| Retrieve | Enforce allowed columns, tenant scope, permission checks |
-| Create | Validate fields and deny unknown columns |
-| Update | Require object-level authorization and allowed fields |
-| Delete | Prefer soft delete; hard delete requires separate permission |
-| Search | Allow-list searchable columns and cap limits |
-| Alter | Use schema guard with explicit permission and allow-list |
-
-
----
-
-## 12. Redis and database-backed storage options
-
-File-based cache, rate limits, and token storage are simple and good for one server. For high traffic or multiple web servers, use Redis or a database-backed store.
+### File upload and protected download
 
 ```php
-use Mnb\SecurityCore\Core\SecurityKernel;
-
-$security = new SecurityKernel($config);
-
-$cache = $security->cache();        // file, redis, or database based on config/security.php
-$limiter = $security->rateLimiter();
-$tokenStore = $security->tokenStore();
-```
-
-Relevant config keys:
-
-```php
-$config['cache']['driver'];        // file, redis, database
-$config['rate_limiter']['driver']; // file, redis, database
-$config['token_store']['driver'];  // file, redis, database
-$config['redis'];                  // host, port, password, database, timeout
-```
-
-Database-backed stores create their lightweight tables automatically when first used. Redis stores need the PHP `ext-redis` extension and a reachable Redis server.
-
-## 13. File upload, download, and private document pattern
-
-```php
-use Mnb\SecurityCore\Files\FileUploadPolicy;
-use Mnb\SecurityCore\Files\SecureFileManager;
-use Mnb\SecurityCore\Files\LocalPrivateStorage;
-use Mnb\SecurityCore\Files\CompositeMalwareScanner;
-use Mnb\SecurityCore\Files\HeuristicMalwareScanner;
-use Mnb\SecurityCore\Files\ClamAvMalwareScanner;
-
-$policy = new FileUploadPolicy(
-    allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg'],
-    allowedMimePrefixes: ['application/pdf', 'image/png', 'image/jpeg'],
-    maxBytes: 5 * 1024 * 1024,
-);
-
-$scanner = new CompositeMalwareScanner([
-    new HeuristicMalwareScanner(),
-    new ClamAvMalwareScanner(failClosedWhenUnavailable: false),
-]);
-
-$manager = new SecureFileManager(
-    new LocalPrivateStorage(__DIR__ . '/../storage/private'),
-    $policy,
-    __DIR__ . '/../storage/quarantine',
-    $scanner
-);
-
-$result = $manager->storeFromPath(
+$record = $kernel->secureFileManager(profile: 'documents')->storeFromPath(
     $_FILES['document']['tmp_name'],
     $_FILES['document']['name'],
-    'documents'
+    'student-documents',
+    ['user_id' => 501],
+    ['school_id' => 10, 'data_class' => 'sensitive']
+);
+
+$response = $kernel->protectedDownloadManager()->download(
+    $request,
+    $record,
+    'student_document.download'
 );
 ```
 
-File security checklist:
-
-- Validate extension and MIME type.
-- Rename uploaded files to safe random names.
-- Store private files outside `public/`.
-- Scan files before use where malware scanning is available.
-- Never execute uploaded files.
-- Download private files through an authorization controller.
-- Add `Content-Disposition: attachment` for risky file types.
-
----
-
-## 14. Security headers
-
-Recommended production headers:
-
-- `Content-Security-Policy`
-- `X-Frame-Options` or CSP `frame-ancestors`
-- `X-Content-Type-Options: nosniff`
-- `Referrer-Policy`
-- `Permissions-Policy`
-- `Strict-Transport-Security` when HTTPS is stable
-
-Use `SecurityHeaders` or `SecurityHeadersMiddleware` to attach headers at the response boundary.
-
----
-
-## 15. Hide server IP and origin identity protection
-
-A PHP library cannot fully hide a public server IP by itself. If DNS points directly to the server, attackers may still find the origin. Real origin IP protection needs deployment controls:
-
-- Put the site behind a CDN, reverse proxy, or load balancer.
-- Proxy the DNS record where your DNS provider supports it.
-- Firewall the origin server so only trusted CDN/proxy IP ranges can reach HTTP/HTTPS ports.
-- Remove or minimize `Server`, `X-Powered-By`, framework, generator, and version headers.
-- Block requests where the `Host` header is a direct IP address.
-- Keep `APP_DEBUG=false` and use safe public error responses in production.
-
-`mnb-secure-core` now includes `ServerIdentityHider` and `ServerIdentityProtectionMiddleware` to help with the application-level part: block direct IP Host requests and strip fingerprint headers from application responses.
+### Runtime command safety and outbound SSRF protection
 
 ```php
-use Mnb\SecurityCore\Http\Middleware\ServerIdentityProtectionMiddleware;
-use Mnb\SecurityCore\Http\MiddlewarePipeline;
-
-$pipeline = new MiddlewarePipeline([
-    new ServerIdentityProtectionMiddleware($config['origin_protection'] ?? []),
-    // other middleware...
-]);
+$result = $kernel->safeProcessRunner()->run('clamav_scan', [$uploadedFilePath]);
+$response = $kernel->outboundHttpClient()->postJson($webhookUrl, ['event' => 'security.alert']);
 ```
 
-Recommended production config:
+### Safe errors
 
 ```php
-'origin_protection' => [
-    'enabled' => true,
-    'block_direct_ip_host' => true,
-    'cdn_or_proxy_enabled' => true,
-    'require_cdn_or_proxy_in_production' => true,
-    'strip_headers' => ['Server', 'X-Powered-By', 'X-Generator', 'X-Runtime', 'X-Version'],
-],
-```
-
-Important server-level settings:
-
-```apache
-# Apache
-ServerTokens Prod
-ServerSignature Off
-Header unset X-Powered-By
-```
-
-```nginx
-# Nginx
-server_tokens off;
-proxy_hide_header X-Powered-By;
-```
-
-```ini
-; php.ini
-expose_php = Off
-display_errors = Off
-```
-
-Use the production checker to warn when direct IP host access is allowed or origin protection is disabled.
-
----
-
-## 15. Cache strategy
-
-The cache layer is intended for safe, bounded, non-sensitive data.
-
-Rules:
-
-- Do not cache passwords, raw tokens, OTPs, private documents, or full PII records.
-- Prefix cache keys by app/module/tenant where needed.
-- Use TTLs for all temporary cache entries.
-- Use cache for rate-limit counters, low-risk lookups, and computed summaries.
-- Clear affected cache after updates or deletes.
-
----
-
-## 16. Environment and secret management
-
-Use `.env` only for local configuration and server-specific secrets. Never commit real secrets.
-
-Recommended secret rules:
-
-- Rotate application keys when exposure is suspected.
-- Use different keys per environment.
-- Keep production `.env` outside public web roots.
-- Do not print environment values in error pages.
-- Use `SecretScanner` before packaging or deployment.
-
----
-
-## 17. Logging, audit, and monitoring
-
-Use two different logging styles:
-
-1. **Safe application logs** for operational debugging.
-2. **Tamper-evident audit logs** for security-sensitive actions.
-
-Audit these events:
-
-- Login success/failure
-- Password changes
-- Permission denied events
-- Sensitive record view/update/delete
-- File upload/download
-- Export actions
-- API token creation/revocation
-- Schema migration or guarded ALTER operations
-- Backup creation/restoration
-
-Never log raw passwords, tokens, cookies, API keys, encryption keys, or private document contents.
-
----
-
-## 18. Error handling strategy
-
-The error handling layer separates public messages from internal diagnostic details.
-
-Public response rules:
-
-- Show clean messages to users.
-- Do not expose file paths, stack traces, SQL, route names, `.env` values, token values, or server internals.
-- Use consistent status codes.
-- Log technical details server-side only.
-
-Example:
-
-```php
-use Mnb\SecurityCore\Errors\SafeErrorHandler;
-use Mnb\SecurityCore\Errors\ErrorResponseFactory;
-use Mnb\SecurityCore\Logging\FileLogger;
-
-$logger = new FileLogger(__DIR__ . '/../storage/logs/app.log');
-$factory = new ErrorResponseFactory(debug: false);
-$handler = new SafeErrorHandler($factory, $logger);
-
+$handler = $kernel->safeErrorHandler();
 $handler->register();
 ```
 
-Recommended public statuses:
+Public responses stay clean while technical details go to hidden, redacted logs with request IDs.
 
-| Exception type | Public HTTP status |
-| --- | --- |
-| ValidationException | 422 |
-| AuthorizationException | 403 |
-| NotFoundException | 404 |
-| BusinessRuleException | 409 |
-| SecurityException | 400 or 403 |
-| Unknown Throwable | 500 |
+### XSS-safe rendering
 
----
+```php
+$safeData = $kernel->safeViewData([
+    'name' => $request->input('name'),
+]);
 
-## 19. Backup, recovery, and incident response
+echo $kernel->safeTemplateRenderer()->render('Hello {{ name }}', $safeData);
+```
 
-Backup rules:
+Use `TemplateSafeValue` only for content that was explicitly sanitized or generated by trusted code.
 
-- Store backups outside `public/`.
-- Encrypt backups when possible.
-- Keep retention limits.
-- Test restoration, not only backup creation.
-- Audit backup create/download/delete actions.
+### Async queue dispatch
 
-Incident response basics:
+```php
+$job = $kernel->jobDispatcher()->dispatch(
+    name: 'file_scan',
+    payload: ['file_id' => $fileId],
+    queue: 'files',
+    idempotencyKey: 'file_scan:' . $fileId
+);
 
-1. Detect suspicious activity.
-2. Preserve logs and evidence.
-3. Contain exposed accounts, tokens, or files.
-4. Patch the root cause.
-5. Rotate secrets.
-6. Restore clean data if needed.
-7. Retest and document remediation.
+return $kernel->asyncResponseFactory()->accepted($job);
+```
 
----
+### Token revocation and session control
 
-## 20. Memory management and resource safety
-
-Use memory guards for large files, exports, imports, conversions, and batch operations.
-
-Rules:
-
-- Cap upload size and request size.
-- Process large rows/files in chunks.
-- Avoid loading entire large files into memory when streaming is possible.
-- Track memory before and after heavy operations.
-- Reject unsafe workloads before processing.
-
-Risk examples:
-
-| Risk | Control |
-| --- | --- |
-| Large CSV import | Chunk processor and row limits |
-| Large PDF/document conversion | Upload size cap and worker process |
-| Large export | Streamed output and query pagination |
-| Repeated API bursts | Rate limiter and throughput monitor |
-
----
-
-## 21. Throughput and performance capacity management
-
-Throughput controls help prevent accidental overload and abuse.
-
-Use them to plan:
-
-- Expected requests per second
-- Average response time
-- Concurrent users
-- Worker capacity
-- Queue pressure
-- Upload and conversion limits
-- API burst limits
-
-Example CLI commands:
-
-```bash
-php bin/mnb-secure throughput:check
-php bin/mnb-secure throughput:plan 80 150 25 500 900
+```php
+$kernel->tokenRevocationService()->revoke('token-jti', 'logout');
+$kernel->forcedLogoutService()->logoutUser('user-1001', 'password_changed');
 ```
 
 ---
 
-## 22. Vulnerability blocking matrix
+## CLI reference
 
-| Vulnerability | Main controls |
-| --- | --- |
-| SQL injection | Parameterized queries, identifier allow-lists, SecureQueryBuilder |
-| XSS | Input validation, output escaping, CSP, safe response builders |
-| CSRF | CSRF tokens on browser form requests |
-| Broken access control / IDOR | PermissionGuard, TenantGuard, PolicyRegistry, ownership checks |
-| API abuse | Bearer tokens, scopes, rate limiter, audit logs |
-| File upload execution | MIME/extension validation, random names, private storage, no execute permissions |
-| Path traversal | Storage abstraction and normalized safe paths |
-| Secret leakage | Env separation, SecretScanner, safe error logger |
-| Sensitive log leakage | Log redaction and public/internal error separation |
-| Cache poisoning | Key namespacing, TTLs, no sensitive cache entries |
-| Backup exposure | Private backup storage, audit logs, retention controls |
-| Memory exhaustion | Request limits, upload limits, MemoryGuard, chunk processing |
-| Throughput overload | Rate limits, throughput monitor, capacity planner |
-| Unauthorized schema alter | Migration/schema guard with explicit allow-list and permission |
-| Origin IP / server fingerprint exposure | ServerIdentityProtectionMiddleware, trusted hosts, CDN/proxy/firewall checklist |
+Run commands from the package root, or prefix with the library path from your app.
+
+### Core
+
+```bash
+php bin/mnb-secure key:generate
+php bin/mnb-secure config:validate
+php bin/mnb-secure doctor
+php bin/mnb-secure matrix:export
+```
+
+### Vulnerability matrix
+
+```bash
+php bin/mnb-secure vulnerabilities:matrix
+php bin/mnb-secure vulnerabilities:report
+php bin/mnb-secure vulnerabilities:check sql_injection
+php bin/mnb-secure vulnerabilities:check ssrf
+php bin/mnb-secure vulnerabilities:check refresh_token_replay
+php bin/mnb-secure vulnerabilities:owasp
+php bin/mnb-secure vulnerabilities:export
+```
+
+### Database
+
+```bash
+php bin/mnb-secure db:health
+php bin/mnb-secure db:check-connection
+php bin/mnb-secure db:policy
+php bin/mnb-secure db:query-limits
+php bin/mnb-secure db:schema-plan add_column students admission_number 'VARCHAR(100)'
+php bin/mnb-secure db:privileges
+```
+
+### Runtime and outbound network
+
+```bash
+php bin/mnb-secure runtime:list-commands
+php bin/mnb-secure runtime:check-command clamav_scan /tmp/example.txt
+php bin/mnb-secure outbound:policy
+php bin/mnb-secure outbound:check-url https://example.com
+```
+
+### Verification and release gates
+
+```bash
+php bin/mnb-secure pentest:run-checklist production_release
+php bin/mnb-secure pentest:verify PT-INJ-001
+php bin/mnb-secure pentest:evidence
+php bin/mnb-secure pentest:coverage production_release
+php bin/mnb-secure pentest:remediation-plan
+php bin/mnb-secure pentest:retest
+php bin/mnb-secure security:release-gate production_release
+```
+
+### Errors
+
+```bash
+php bin/mnb-secure errors:policy
+php bin/mnb-secure errors:catalog
+php bin/mnb-secure errors:simulate internal
+php bin/mnb-secure errors:simulate validation
+php bin/mnb-secure errors:simulate security
+php bin/mnb-secure errors:fingerprint
+php bin/mnb-secure errors:check-production
+```
+
+### Memory/resources
+
+```bash
+php bin/mnb-secure memory:policy
+php bin/mnb-secure memory:profile database_export
+php bin/mnb-secure memory:simulate-allocation 10485760 request
+php bin/mnb-secure memory:stream-plan 52428800 read
+php bin/mnb-secure memory:payload-check
+php bin/mnb-secure memory:worker-check
+php bin/mnb-secure resources:check
+php bin/mnb-secure resources:cleanup-plan
+```
+
+### Throughput/capacity
+
+```bash
+php bin/mnb-secure throughput:policy
+php bin/mnb-secure throughput:profile api_request
+php bin/mnb-secure throughput:budget api_request 1200 1
+php bin/mnb-secure throughput:concurrency api_request
+php bin/mnb-secure throughput:throttle api_request 1800 55
+php bin/mnb-secure throughput:queue 1200 10 250
+php bin/mnb-secure throughput:slo
+php bin/mnb-secure throughput:capacity-risk
+php bin/mnb-secure throughput:simulate api_request 100 750
+php bin/mnb-secure performance:release-gate
+```
+
+### Origin protection
+
+```bash
+php bin/mnb-secure origin:policy
+php bin/mnb-secure origin:check
+php bin/mnb-secure origin:exposure-report
+php bin/mnb-secure origin:fingerprint
+php bin/mnb-secure origin:firewall-plan
+php bin/mnb-secure origin:proxy-profile cloudflare
+php bin/mnb-secure origin:proxy-allowlist
+php bin/mnb-secure origin:leak-scan
+php bin/mnb-secure origin:production-gate
+```
+
+### Queue/background jobs
+
+```bash
+php bin/mnb-secure queue:policy
+php bin/mnb-secure queue:dispatch test_job
+php bin/mnb-secure queue:work default --once
+php bin/mnb-secure queue:work files --max-jobs=10
+php bin/mnb-secure queue:status job_abc123
+php bin/mnb-secure queue:failed
+php bin/mnb-secure queue:retry job_abc123
+php bin/mnb-secure queue:dead-letter
+php bin/mnb-secure queue:metrics
+php bin/mnb-secure queue:pressure
+php bin/mnb-secure queue:handlers
+php bin/mnb-secure queue:release-gate
+```
+
+### Token/session
+
+```bash
+php bin/mnb-secure token:policy
+php bin/mnb-secure token:revoke <jti>
+php bin/mnb-secure token:introspect <jti>
+php bin/mnb-secure token:cleanup
+php bin/mnb-secure token:family <family_id>
+php bin/mnb-secure token:revoke-family <family_id>
+
+php bin/mnb-secure session:policy
+php bin/mnb-secure session:list
+php bin/mnb-secure session:revoke <session_id>
+php bin/mnb-secure session:revoke-user <user_id>
+php bin/mnb-secure session:cleanup
+php bin/mnb-secure session:check <session_id>
+php bin/mnb-secure session:devices <user_id>
+```
+
+### Final readiness and XSS
+
+```bash
+php bin/mnb-secure xss:policy
+php bin/mnb-secure xss:scan
+php bin/mnb-secure xss:escape-sample
+php bin/mnb-secure production:readiness
+php bin/mnb-secure production:env-checklist
+php bin/mnb-secure production:release-plan
+php bin/mnb-secure release:manifest
+php bin/mnb-secure release:build-plan
+php bin/mnb-secure final:gate
+```
 
 ---
 
-## 23. Concept to file map
+## Demos
 
-| Concept | Main files/classes |
-| --- | --- |
-| Trust Zones and Data Boundaries | `src/Trust/*`, `src/Data/DataClassifier.php` |
-| Secure Request Receiving | `src/Http/Request.php`, `src/Http/Middleware/*` |
-| Authentication | `src/Auth/*` |
-| Authorization | `src/Authz/*`, `src/Authz/Policies/*` |
-| Data Protection | `src/Data/*`, `src/Env/SecretScanner.php` |
-| Web Security Controls | `src/Security/WebSecurityControls.php`, `src/Http/Middleware/SecurityHeadersMiddleware.php` |
-| API Security and Rate Limiting | `src/Api/*`, `src/RateLimit/*` |
-| Upload/Download Security | `src/Files/*` |
-| Caching | `src/Cache/*`, `src/Contracts/CacheInterface.php` |
-| Environment and Secrets | `src/Env/*`, `.env.example`, `config/security.php` |
-| Logging and Audit | `src/Logging/*` |
-| Backup and Recovery | `src/Recovery/*` |
-| Vulnerability Matrix | `src/Security/VulnerabilityMatrix.php` |
-| Secure Database | `src/Database/*` |
-| Penetration Testing | `src/Pentest/*` |
-| Safe Error Handling | `src/Errors/*`, `src/Exceptions/*` |
-| Memory Management | `src/Memory/*` |
-| Throughput Management | `src/Throughput/*` |
-| Hide Server IP / Origin Identity | `src/Security/ServerIdentityHider.php`, `src/Http/Middleware/ServerIdentityProtectionMiddleware.php` |
-
----
-
-## 24. Demos
-
-Run all CLI demos:
+Run all demos:
 
 ```bash
 php demos/run-all-demos.php
@@ -734,160 +666,144 @@ Open:
 http://127.0.0.1:8090
 ```
 
-Demo map:
+Important demo files:
 
-| Concept | Demo file |
+| Demo | File |
 | --- | --- |
-| Trust Zones and Data Boundaries | `demos/01-trust-zones-data-boundaries.php` |
-| Secure Request Receiving | `demos/02-secure-request-receiving.php` |
-| Authentication | `demos/03-authentication.php` |
-| Authorization | `demos/04-authorization.php` |
-| Data Protection | `demos/05-data-protection.php` |
-| Web Security Controls | `demos/06-web-application-security-controls.php` |
-| API Security and Rate Limiting | `demos/07-api-security-rate-limiting.php` |
-| File Upload/Download Security | `demos/08-file-upload-download-document-security.php` |
-| Caching Strategy | `demos/09-caching-strategy.php` |
-| Environment and Secrets | `demos/10-environment-secret-management.php` |
-| Logging and Audit | `demos/11-logging-audit-monitoring.php` |
-| Backup and Incident Response | `demos/12-backup-recovery-incident-response.php` |
 | Vulnerability Matrix | `demos/13-vulnerability-blocking-matrix.php` |
 | Secure Database | `demos/14-secure-database-connect-retrieval-update-delete-search-alter.php` |
-| Pentest and Verification | `demos/15-penetration-testing-security-verification.php` |
-| Error Handling | `demos/16-error-handling-custom-errors-logs-hidden-frontend.php` |
-| Memory Management | `demos/17-memory-management-resource-safety.php` |
-| Throughput Management | `demos/18-throughput-performance-capacity-management.php` |
-| Hide Server IP / Origin Identity | `demos/19-hide-server-ip-origin-protection.php` |
+| Pentest / Verification | `demos/15-penetration-testing-security-verification.php` |
+| Safe Errors | `demos/16-error-handling-custom-errors-logs-hidden-frontend.php` |
+| Memory Safety | `demos/17-memory-management-resource-safety.php` |
+| Throughput Capacity | `demos/18-throughput-performance-capacity-management.php` |
+| Secure Request Strategy | `demos/20-secure-request-receiving-strategy.php` |
+| Runtime / Outbound Network | `demos/31-runtime-execution-outbound-network-security-engine.php` |
+| Database Governance | `demos/32-secure-database-governance-query-lifecycle-engine.php` |
+| Verification / Remediation | `demos/33-security-verification-remediation-evidence-automation-engine.php` |
+| Safe Error / Technical Logs | `demos/34-safe-error-response-technical-log-isolation-engine.php` |
+| Memory Governance | `demos/35-memory-governance-resource-safety-engine.php` |
+| Throughput Governance | `demos/36-throughput-governance-performance-capacity-engine.php` |
+| Origin Protection | `demos/37-origin-identity-protection-exposure-hardening-engine.php` |
+| Queue / Background Jobs | `demos/38-async-request-response-queue-background-job-engine.php` |
+| Token / Session Control | `demos/39-token-revocation-session-control-engine.php` |
+| Final Readiness / XSS / Release | `demos/40-final-production-readiness-xss-release-consolidation-patch.php` |
 
 ---
 
-## 25. CLI commands
+## v1.0.1 upgrade consolidation
 
-From package root:
+This release line keeps all upgrades under `v1.0.1`.
 
-```bash
-php tests/run-tests.php
-php demos/run-all-demos.php
-php bin/mnb-secure key:generate
-php bin/mnb-secure matrix:export
-php bin/mnb-secure throughput:check
-php bin/mnb-secure throughput:plan 80 150 25 500 900
-```
+| Upgrade | Engine |
+| ---: | --- |
+| 27 | Runtime Execution and Outbound Network Security Engine |
+| 28 | Secure Database Governance and Query Lifecycle Engine |
+| 29 | Security Verification, Remediation, and Evidence Automation Engine |
+| 30 | Safe Error Response and Technical Log Isolation Engine |
+| 31 | Memory Governance and Resource Safety Engine |
+| 32 | Throughput Governance and Performance Capacity Engine |
+| 33 | Origin Identity Protection and Exposure Hardening Engine |
+| 34 | Async Request, Response Queue, and Background Job Orchestration Engine |
+| 35 | Token Revocation and Session Control Engine |
+| 36 | Final Production Readiness, XSS Enforcement, and Release Consolidation Patch |
 
----
-
-## 26. Testing checklist
-
-Before using this library in production, verify:
-
-- Authentication accepts valid users and rejects invalid credentials.
-- Session cookies are secure, HTTP-only, and SameSite protected.
-- CSRF-protected forms reject missing or invalid tokens.
-- Authorization blocks missing permissions.
-- Tenant/ownership boundaries block cross-tenant access.
-- SQL injection payloads do not alter query structure.
-- XSS payloads are escaped or rejected.
-- API endpoints require valid tokens and scopes.
-- Rate limits return 429 when thresholds are exceeded.
-- Uploads reject unsafe extensions and MIME types.
-- Private downloads require authorization.
-- Cache does not store sensitive data.
-- Logs redact secrets.
-- Public errors do not show stack traces, paths, SQL, or `.env` values.
-- Backups are private and restoration is tested.
-- Memory and throughput guards block unsafe large workloads.
-- Production security checks pass before deployment.
+Patch ZIPs from upgrades 29–36 are intended to be applied in order. For public distribution, create one clean merged release archive instead of shipping many patch ZIPs.
 
 ---
 
-## 27. Penetration testing workflow
+## Production checklist
 
-Only test systems you own or are authorized to test.
-
-Recommended workflow:
-
-1. Define target scope.
-2. List modules, roles, and sensitive objects.
-3. Run authentication, authorization, CSRF, XSS, SQLi, upload, API, and rate-limit tests.
-4. Record findings with severity and reproduction steps.
-5. Patch the issue.
-6. Retest the exact payload/request.
-7. Mark finding as remediated only after proof.
-
-Suggested finding format:
-
-```text
-Title:
-Severity:
-Affected module:
-Affected role/user:
-Steps to reproduce:
-Expected result:
-Actual result:
-Technical impact:
-Business impact:
-Recommended fix:
-Retest result:
-```
-
----
-
-## 28. Production checklist
-
-Before deployment:
+Before deployment, confirm:
 
 - `APP_ENV=production`
 - `APP_DEBUG=false`
 - HTTPS enabled
 - HSTS enabled only after HTTPS is stable
 - Trusted hosts configured
+- Trusted proxies configured when behind a proxy/CDN
 - Direct IP Host requests blocked
-- CDN/reverse proxy enabled when you want to hide the origin server IP
-- Origin firewall allows only trusted proxy/CDN IP ranges
-- Real `APP_KEY` generated and protected
-- Production `.env` not committed
+- CDN/reverse proxy enabled when origin hiding is required
+- Firewall allows HTTP/HTTPS only from trusted proxy/CDN ranges
+- Real app, encryption, search hash, signed URL, JWT/token, and webhook secrets configured
+- Production `.env` is not committed
 - Private storage outside public root
-- Logs outside public root
-- Backups outside public root
+- Logs, audit files, backups, queue files, and token/session stores outside public root
 - Upload execution disabled
 - Database user has least privilege
-- Error pages hide technical details
-- Security headers enabled
+- Public errors hide technical details
+- Logs redact secrets, tokens, cookies, and private paths
+- XSS output escaping is used in templates
+- CSP/security headers configured
 - Rate limits enabled
 - Audit logging enabled
 - Backup and restore tested
-- Penetration testing completed and remediated
+- Queue workers supervised
+- Token/session revocation hooks connected to password/role/permission/account status changes
+- Security verification/retest completed
+- `php bin/mnb-secure final:gate` passes
 
 ---
 
-## 29. Starter integration template
+## What PHP code cannot solve alone
 
-Use `templates/no-framework-app/` as a copy/paste reference for integrating the security core into a custom PHP app.
+Some controls require deployment configuration:
 
-Typical flow:
-
-1. Copy the template into a new app.
-2. Point the template autoloader to `libraries/mnb-secure-core/autoload.php`.
-3. Copy `config/security.php`.
-4. Create `.env` from `.env.example`.
-5. Create storage folders.
-6. Run tests and demos.
-7. Add application-specific policies and controllers.
+- Full origin IP hiding requires CDN/reverse proxy plus firewall rules.
+- HSTS requires working HTTPS.
+- Webhook spoofing prevention requires a real shared webhook secret.
+- Session/token revocation after role/password changes requires the host app to call the revocation hooks.
+- XSS protection requires all templates/views to escape output or use safe renderers.
+- Queue durability at scale requires a production-grade queue backend such as Redis/SQS/RabbitMQ or a properly migrated database queue.
 
 ---
 
-## 30. Package structure
+## Release archive hygiene
+
+Do not ship development/runtime data in public releases.
+
+Exclude:
 
 ```text
-mnb-secure-core/
-├── autoload.php
-├── bin/mnb-secure
-├── composer.json
-├── config/security.php
-├── demos/
-├── examples/
-├── src/
-├── storage/
-├── templates/no-framework-app/
-├── tests/run-tests.php
-└── README.md
+.git/
+vendor/
+.env
+storage/cache/*
+storage/logs/*
+storage/audit/*
+storage/backups/*
+storage/private/*
+storage/quarantine/*
+storage/queue/*
+storage/tokens/*
 ```
+
+Keep placeholder `.gitkeep` files where needed.
+
+A clean release can be created with Git:
+
+```bash
+git archive --format=zip --output=mnb-secure-core-v1.0.1.zip HEAD
+```
+
+Or use the release planning commands:
+
+```bash
+php bin/mnb-secure release:manifest
+php bin/mnb-secure release:build-plan
+php bin/mnb-secure production:release-plan
+```
+
+---
+
+## Public package safety note
+
+MNB Secure Core provides reusable security building blocks. It does not automatically make an application secure unless the application integrates the controls correctly, configures production settings safely, and tests the final deployment.
+
+Use the included demos, CLI diagnostics, release gates, and vulnerability matrix as proof-oriented safety tools, not as a substitute for secure application design, code review, and authorized penetration testing.
+
+---
+
+## Security reporting
+
+Report vulnerabilities privately using `SECURITY.md`. Do not disclose exploitable details in public GitHub issues.
+
