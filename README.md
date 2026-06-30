@@ -13,6 +13,29 @@ The current `v1.0.1` release line includes request security, authentication, aut
 
 ---
 
+## Why use MNB Secure Core
+
+MNB Secure Core helps PHP teams add serious application security without rebuilding the same controls again and again for every project. The library is especially useful for no-framework apps, shared-hosting projects, custom admin panels, API backends, ERP/CRM systems, education platforms, file tools, and internal business applications.
+
+Key advantages:
+
+| Advantage | Benefit |
+| --- | --- |
+| No-framework design | Works with plain PHP projects and can also be integrated into existing frameworks. |
+| Central security kernel | Gives one consistent entry point for request, auth, database, files, logs, queues, sessions, and production checks. |
+| Security-by-policy approach | High-risk actions such as SQL, schema changes, command execution, outbound HTTP, queues, and sessions are controlled by explicit policies. |
+| Faster secure development | Reduces the need to manually build CSRF, rate limits, data masking, upload validation, audit logs, safe errors, token revocation, and production checks. |
+| Safer production defaults | Encourages deny-by-default behavior, allow-lists, secret redaction, private storage, safe headers, and release-gate checks. |
+| Tenant and role awareness | Helps protect multi-tenant systems by connecting trust zones, authorization, database policies, cache keys, files, sessions, and audit events. |
+| Full lifecycle protection | Covers incoming requests, business operations, background jobs, outbound integrations, runtime execution, monitoring, verification, and release readiness. |
+| Built-in diagnostics | Provides CLI checks, demos, vulnerability reports, readiness checks, coverage reports, and release build planning. |
+| Safer logs and evidence | Keeps frontend responses clean while preserving redacted technical logs, audit records, pentest evidence, and incident response context. |
+| Composer installation | Installs cleanly from Packagist with `composer require mnb/mnb-secure-core`. |
+
+> For more detailed feature documentation and code examples, refer to the `docs/` directory. For runnable usage samples, refer to the `examples/` and `demos/` directories.
+
+---
+
 ## Current release status
 
 Latest local validation from the current `v1.0.1` upgrade line:
