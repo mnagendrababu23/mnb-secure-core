@@ -2,6 +2,7 @@
 namespace Mnb\SecurityCore\Security;
 
 use Mnb\SecurityCore\Env\SecretScanner;
+use Mnb\SecurityCore\Core\SecurityKernel;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Http\SecurityHeadersBuilder;
 use Throwable;
@@ -344,18 +345,35 @@ class SecurityDoctor
         $checks = [];
         $issuesBefore = count($this->issues);
         try {
-            $scanner = new SecretScanner();
+            $kernel = new SecurityKernel($this->config);
+            $inventory = $kernel->secretHealthReport()->toArray();
+            $checks[] = $this->checkItem('secret_inventory', (bool)($inventory['passed'] ?? false), 'Secret inventory', ($inventory['summary']['present'] ?? 0) . '/' . ($inventory['summary']['total'] ?? 0) . ' present');
+            foreach ((array)($inventory['items'] ?? []) as $item) {
+                if (($item['severity'] ?? '') === 'high') {
+                    $this->issue('high', 'secret_inventory_issue', 'secret_scan', 'Secret inventory issue: ' . (string)($item['name'] ?? 'unknown'), $item);
+                }
+            }
+            $rotation = $kernel->secretRotationReport()->toArray();
+            $checks[] = $this->checkItem('secret_rotation', (bool)($rotation['passed'] ?? false), 'Secret rotation metadata', (bool)($rotation['passed'] ?? false) ? 'ok' : 'attention required');
+        } catch (Throwable $e) {
+            $checks[] = $this->checkItem('secret_inventory', false, 'Secret inventory', $e->getMessage());
+            $this->issue('medium', 'secret_inventory_failed', 'secret_scan', 'Secret inventory check failed: ' . $e->getMessage());
+        }
+        try {
+            $scannerPolicy = is_array($this->config['secrets']['scanning'] ?? null) ? $this->config['secrets']['scanning'] : [];
+            $scanner = new SecretScanner($scannerPolicy);
             $findings = $scanner->scanDirectory($this->projectRoot);
             $clean = count($findings) === 0;
             $checks[] = $this->checkItem('secret_scan', $clean, 'Secret scanner', $clean ? 'no findings' : count($findings) . ' finding(s)');
             foreach ($findings as $finding) {
-                $this->issue('high', 'secret_scanner_finding', 'secret_scan', 'Potential secret found in project tree.', is_array($finding) ? $finding : ['finding' => $finding]);
+                $level = (string)($finding['severity'] ?? 'high');
+                $this->issue(in_array($level, ['critical', 'high', 'medium', 'low'], true) ? $level : 'high', 'secret_scanner_finding', 'secret_scan', 'Potential secret found in project tree.', is_array($finding) ? $finding : ['finding' => $finding]);
             }
         } catch (Throwable $e) {
             $checks[] = $this->checkItem('secret_scan', false, 'Secret scanner', $e->getMessage());
             $this->issue('medium', 'secret_scan_failed', 'secret_scan', 'Secret scanner failed: ' . $e->getMessage());
         }
-        $this->section('secret_scan', 'Secret Scan', $checks, $issuesBefore);
+        $this->section('secret_scan', 'Secret Scan and Inventory', $checks, $issuesBefore);
     }
 
     /** @param array<int,array<string,mixed>> $checks */

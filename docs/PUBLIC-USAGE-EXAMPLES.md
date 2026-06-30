@@ -429,3 +429,29 @@ $kernel->cacheInvalidator()->invalidateTags(['school:10']);
 ```
 
 Use `secureCache()` for tenant/user/resource scoped data, and reserve the raw `$kernel->cache()` driver for low-risk internal utilities.
+
+## Environment and Secret Management Engine
+
+Use the secret manager when application code needs keys or provider credentials instead of reading `$_ENV` directly everywhere.
+
+```php
+$kernel = new \Mnb\SecurityCore\Core\SecurityKernel($config);
+
+$appKey = $kernel->secretManager()->get('app.key');
+$dataKey = $kernel->secretManager()->get('data.key'); // explicit DATA_KEY or derived from APP_KEY
+$signedUrlKey = $kernel->secretManager()->get('signed_url.key');
+
+$inventory = $kernel->secretHealthReport()->toArray();
+$rotation = $kernel->secretRotationReport()->toArray();
+$safeConfig = $kernel->secretRedactor()->redactArray($config);
+```
+
+CLI helpers:
+
+```bash
+php bin/mnb-secure secrets:inventory
+php bin/mnb-secure secrets:audit
+php bin/mnb-secure secrets:rotate-plan
+php bin/mnb-secure secrets:env-check
+php bin/mnb-secure secrets:scan
+```

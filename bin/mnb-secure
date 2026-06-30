@@ -21,6 +21,7 @@ use Mnb\SecurityCore\Memory\MemoryGuard;
 use Mnb\SecurityCore\Throughput\ThroughputConfig;
 use Mnb\SecurityCore\Throughput\ThroughputPlanner;
 use Mnb\SecurityCore\Quickstart\FirstTokenBootstrapper;
+use Mnb\SecurityCore\Core\SecurityKernel;
 
 $command = $argv[1] ?? 'help';
 $root = getcwd();
@@ -61,9 +62,26 @@ switch ($command) {
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
     case 'secrets:scan':
-        $findings = (new SecretScanner())->scanDirectory($root);
-        echo json_encode(['findings' => $findings], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
-        exit(count($findings) === 0 ? 0 : 1);
+        $scannerPolicy = is_array($config['secrets']['scanning'] ?? null) ? $config['secrets']['scanning'] : [];
+        $report = (new SecretScanner($scannerPolicy))->report($root);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
+    case 'secrets:inventory':
+    case 'secrets:audit':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->secretHealthReport()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
+    case 'secrets:rotate-plan':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->secretRotationReport()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
+    case 'secrets:env-check':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->environmentValidator()->validate();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
     case 'matrix:export':
         echo json_encode((new VulnerabilityMatrix())->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;

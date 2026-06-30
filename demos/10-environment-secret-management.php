@@ -63,6 +63,31 @@ $config = [
         'deny_unclassified_fields' => true,
         'rules' => ['public.read' => ['zones' => ['public'], 'data_classes' => ['public'], 'actions' => ['read']]],
     ],
+
+    'secrets' => [
+        'enabled' => true,
+        'redaction' => ['enabled' => true],
+        'derivation' => ['enabled' => true, 'master' => 'APP_KEY', 'salt' => 'demo-secret-salt'],
+        'definitions' => [
+            'app.key' => ['env' => 'APP_KEY', 'required' => true, 'production_required' => true, 'min_length' => 32, 'purpose' => 'master application key'],
+            'data.key' => ['env' => 'DATA_KEY', 'derive_from' => 'app.key', 'min_length' => 32, 'purpose' => 'data encryption'],
+            'signed_url.key' => ['env' => 'SIGNED_URL_KEY', 'derive_from' => 'app.key', 'min_length' => 32, 'purpose' => 'signed URLs'],
+        ],
+        'scanning' => ['enabled' => true, 'entropy' => false],
+    ],
+    'caching' => [
+        'enabled' => true,
+        'security' => ['deny_highly_sensitive' => true, 'encrypt_sensitive' => true, 'safe_serialization' => true],
+        'policies' => ['public_config' => ['ttl' => 300, 'data_class' => 'public', 'scope' => ['global']]],
+    ],
+    'file_security' => [
+        'enabled' => true,
+        'deny_by_default' => true,
+        'deny_download_until_scan_passed' => true,
+        'policies' => ['files.download' => ['actions' => ['download'], 'data_classes' => ['public', 'internal'], 'require_scan_passed' => true]],
+        'download' => ['nosniff' => true, 'allow_inline' => false],
+        'inspection' => ['enabled' => true],
+    ],
     'uploads' => ['strict_production' => true, 'scanner' => ['driver' => 'heuristic']],
 ];
 $report = (new ProductionSecurityChecker($config))->check();

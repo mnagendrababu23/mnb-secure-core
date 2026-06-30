@@ -1442,3 +1442,25 @@ $kernel->cacheStampedeGuard()->rememberLocked('dashboard.stats', 300, fn () => $
 ```
 
 Highly sensitive policies are denied by default, and sensitive cache policies can be encrypted automatically through the data-protection key ring.
+
+### Environment and Secret Management Engine
+
+`mnb-secure-core v1.0.1` includes a secret management layer for `.env`/provider-backed secrets, inventory checks, redaction, purpose-specific key derivation, rotation reporting, environment validation, and release-time secret scanning.
+
+```php
+$kernel = new \Mnb\SecurityCore\Core\SecurityKernel($config);
+
+$secret = $kernel->secretManager()->get('app.key');
+$dataKey = $kernel->secretManager()->get('data.key');
+$report = $kernel->secretHealthReport()->toArray();
+$safe = $kernel->secretRedactor()->redactArray($config);
+```
+
+CLI:
+
+```bash
+php bin/mnb-secure secrets:inventory
+php bin/mnb-secure secrets:rotate-plan
+php bin/mnb-secure secrets:env-check
+php bin/mnb-secure secrets:scan
+```

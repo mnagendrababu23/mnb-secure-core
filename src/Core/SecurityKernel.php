@@ -49,6 +49,16 @@ use Mnb\SecurityCore\Contracts\CacheInterface;
 use Mnb\SecurityCore\Contracts\MalwareScannerInterface;
 use Mnb\SecurityCore\Contracts\RateLimiterInterface;
 use Mnb\SecurityCore\Contracts\TokenStoreInterface;
+use Mnb\SecurityCore\Env\ArraySecretProvider;
+use Mnb\SecurityCore\Env\EnvSecretProvider;
+use Mnb\SecurityCore\Env\EnvironmentValidator;
+use Mnb\SecurityCore\Env\KeyDeriver;
+use Mnb\SecurityCore\Env\SecretHealthReport;
+use Mnb\SecurityCore\Env\SecretInventory;
+use Mnb\SecurityCore\Env\SecretManager;
+use Mnb\SecurityCore\Env\SecretProviderInterface;
+use Mnb\SecurityCore\Env\SecretRedactor;
+use Mnb\SecurityCore\Env\SecretRotationReport;
 use Mnb\SecurityCore\Database\DatabaseConfig;
 use Mnb\SecurityCore\Database\PdoConnectionFactory;
 use Mnb\SecurityCore\Files\ClamAvMalwareScanner;
@@ -113,6 +123,43 @@ use PDO;
 class SecurityKernel
 {
     public function __construct(private array $config) {}
+
+
+    public function secretManager(?SecretProviderInterface $provider = null): SecretManager
+    {
+        return SecretManager::fromConfig($this->config, $provider);
+    }
+
+    public function secretRedactor(): SecretRedactor
+    {
+        return $this->secretManager()->redactor();
+    }
+
+    public function secretInventory(): SecretInventory
+    {
+        return $this->secretManager()->inventory();
+    }
+
+    public function secretHealthReport(): SecretHealthReport
+    {
+        return $this->secretInventory()->report();
+    }
+
+    public function secretRotationReport(): SecretRotationReport
+    {
+        return $this->secretManager()->rotationReport();
+    }
+
+    public function keyDeriver(): KeyDeriver
+    {
+        $manager = $this->secretManager();
+        return new KeyDeriver((string)$manager->require('app.key'), (string)($this->config['secrets']['derivation']['salt'] ?? 'mnb-secure-core'));
+    }
+
+    public function environmentValidator(): EnvironmentValidator
+    {
+        return new EnvironmentValidator($this->config, $this->secretManager());
+    }
 
     public function fileCache(): FileCache
     {
@@ -461,7 +508,12 @@ class SecurityKernel
     {
         $dataProtection = is_array($this->config['data_protection'] ?? null) ? $this->config['data_protection'] : [];
         $encryption = is_array($dataProtection['encryption'] ?? null) ? $dataProtection['encryption'] : [];
-        return KeyRing::fromConfig($encryption, (string)($this->config['app']['key'] ?? ''));
+        if (empty($encryption['keys']) || !is_array($encryption['keys'])) {
+            $current = (string)($encryption['current_key_id'] ?? 'data-v1');
+            $encryption['current_key_id'] = $current;
+            $encryption['keys'] = [$current => (string)$this->secretManager()->get('data.key', $this->config['app']['key'] ?? '')];
+        }
+        return KeyRing::fromConfig($encryption, (string)$this->secretManager()->get('app.key', $this->config['app']['key'] ?? ''));
     }
 
     public function dataProtectionRegistry(?SecurityAuditTrail $audit = null): DataProtectionRegistry
@@ -570,7 +622,11 @@ class SecurityKernel
         $web = is_array($this->config['web_security'] ?? null) ? $this->config['web_security'] : [];
         $signed = is_array($web['signed_urls'] ?? null) ? $web['signed_urls'] : [];
         $signed = array_replace($signed, $override);
-        return new SignedUrl((string)($signed['key'] ?? $this->config['app']['key'] ?? ''), (int)($signed['default_ttl'] ?? 900));
+        $key = (string)($signed['key'] ?? '');
+        if ($key === '') {
+            $key = (string)$this->secretManager()->get('signed_url.key', $this->config['app']['key'] ?? '');
+        }
+        return new SignedUrl($key, (int)($signed['default_ttl'] ?? 900));
     }
 
     public function webSecurityRegistry(): WebSecurityRegistry

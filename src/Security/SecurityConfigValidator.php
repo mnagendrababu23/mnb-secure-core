@@ -24,6 +24,7 @@ class SecurityConfigValidator
         $this->issues = [];
 
         $this->validateApp();
+        $this->validateSecrets();
         $this->validateCookies();
         $this->validatePaths();
         $this->validateAudit();
@@ -116,6 +117,92 @@ class SecurityConfigValidator
                 if (!$this->isIpOrCidr($proxy)) {
                     $this->issue('high', 'invalid_trusted_proxy', 'app.trusted_proxies', 'Trusted proxy entries must be IP addresses or CIDR ranges.', 'IP or CIDR', $proxy);
                 }
+            }
+        }
+    }
+
+
+    private function validateSecrets(): void
+    {
+        $secrets = $this->section('secrets', false);
+        if ($secrets === null) {
+            $this->issue($this->isProduction($this->config['app'] ?? []) ? 'high' : 'medium', 'secrets_section_missing', 'secrets', 'Define a secrets section for provider, redaction, derivation, inventory, and rotation checks.', 'secrets config array', null);
+            return;
+        }
+
+        $this->bool($secrets, 'enabled', 'secrets.enabled', false);
+        if (array_key_exists('enabled', $secrets) && empty($secrets['enabled']) && $this->isProduction($this->config['app'] ?? [])) {
+            $this->issue('high', 'secrets_engine_disabled', 'secrets.enabled', 'Secret management engine should be enabled in production.', 'true', false);
+        }
+
+        $provider = is_array($secrets['provider'] ?? null) ? $secrets['provider'] : [];
+        if (isset($provider['driver']) && (!$this->isStringLike($provider['driver']) || !in_array((string)$provider['driver'], ['env', 'array'], true))) {
+            $this->issue('medium', 'invalid_secret_provider_driver', 'secrets.provider.driver', 'Secret provider driver should be env or array for the public package.', 'env|array', $provider['driver']);
+        }
+        if (isset($provider['prefix']) && !$this->isStringLike($provider['prefix'])) {
+            $this->issue('medium', 'invalid_secret_provider_prefix', 'secrets.provider.prefix', 'Secret provider prefix should be a string.', 'string', $provider['prefix']);
+        }
+
+        $redaction = is_array($secrets['redaction'] ?? null) ? $secrets['redaction'] : [];
+        if ($redaction !== []) {
+            $this->bool($redaction, 'enabled', 'secrets.redaction.enabled', false);
+            $this->numberRange($redaction, 'show_last', 'secrets.redaction.show_last', 0, 12, false);
+            if (array_key_exists('enabled', $redaction) && empty($redaction['enabled']) && $this->isProduction($this->config['app'] ?? [])) {
+                $this->issue('high', 'secret_redaction_disabled', 'secrets.redaction.enabled', 'Secret redaction should remain enabled for config dumps, logs, audit metadata, and errors.', 'true', false);
+            }
+        }
+
+        $derivation = is_array($secrets['derivation'] ?? null) ? $secrets['derivation'] : [];
+        if ($derivation !== []) {
+            $this->bool($derivation, 'enabled', 'secrets.derivation.enabled', false);
+            if (isset($derivation['master']) && (!$this->isStringLike($derivation['master']) || !preg_match('/^[A-Z0-9_]{2,160}$/', (string)$derivation['master']))) {
+                $this->issue('medium', 'invalid_secret_derivation_master', 'secrets.derivation.master', 'Derivation master must reference a safe environment variable name.', 'APP_KEY', $derivation['master']);
+            }
+            if (array_key_exists('enabled', $derivation) && empty($derivation['enabled']) && $this->isProduction($this->config['app'] ?? [])) {
+                $this->issue('medium', 'secret_key_derivation_disabled', 'secrets.derivation.enabled', 'Purpose-based key derivation should be enabled so one master secret can produce isolated purpose keys.', 'true', false);
+            }
+        }
+
+        $definitions = is_array($secrets['definitions'] ?? null) ? $secrets['definitions'] : [];
+        if ($definitions === []) {
+            $this->issue($this->isProduction($this->config['app'] ?? []) ? 'high' : 'medium', 'secret_definitions_missing', 'secrets.definitions', 'Define secret definitions for APP_KEY, data keys, signed URL keys, and webhook secrets.', 'secret definitions', null);
+        }
+        foreach ($definitions as $name => $definition) {
+            $path = 'secrets.definitions.' . (string)$name;
+            if (!$this->safeName((string)$name)) {
+                $this->issue('high', 'invalid_secret_definition_name', $path, 'Secret definition names must be safe identifiers.', 'letters, numbers, dot, colon, underscore, dash', $name);
+            }
+            if (!is_array($definition)) {
+                $this->issue('high', 'invalid_secret_definition', $path, 'Secret definition must be an array.', 'array', $definition);
+                continue;
+            }
+            $env = $definition['env'] ?? null;
+            if (!$this->isStringLike($env) || !preg_match('/^[A-Z0-9_]{2,160}$/', (string)$env)) {
+                $this->issue('high', 'invalid_secret_env_name', $path . '.env', 'Secret env name must use uppercase environment variable syntax.', 'APP_KEY', $env);
+            }
+            $this->bool($definition, 'required', $path . '.required', false);
+            $this->bool($definition, 'production_required', $path . '.production_required', false);
+            $this->bool($definition, 'rotatable', $path . '.rotatable', false);
+            $this->numberRange($definition, 'min_length', $path . '.min_length', 16, 4096, false);
+            if (isset($definition['derive_from']) && (!$this->isStringLike($definition['derive_from']) || !$this->safeName((string)$definition['derive_from']))) {
+                $this->issue('medium', 'invalid_secret_derive_from', $path . '.derive_from', 'derive_from must reference another secret definition name.', 'app.key', $definition['derive_from']);
+            }
+            if (!empty($definition['production_required']) && !empty($definition['derive_from']) && (string)$name === 'webhook.secret') {
+                $this->issue('medium', 'webhook_secret_should_be_explicit', $path, 'Webhook secrets are shared with external systems and should usually be explicit rather than derived from APP_KEY.', 'explicit WEBHOOK_SECRET', 'derived');
+            }
+        }
+
+        $rotation = is_array($secrets['rotation'] ?? null) ? $secrets['rotation'] : [];
+        if ($rotation !== []) {
+            $this->numberRange($rotation, 'warn_after_days', 'secrets.rotation.warn_after_days', 1, 3650, false);
+            $this->numberRange($rotation, 'fail_after_days', 'secrets.rotation.fail_after_days', 1, 3650, false);
+        }
+        $scanning = is_array($secrets['scanning'] ?? null) ? $secrets['scanning'] : [];
+        if ($scanning !== []) {
+            $this->bool($scanning, 'enabled', 'secrets.scanning.enabled', false);
+            $this->bool($scanning, 'entropy', 'secrets.scanning.entropy', false);
+            if (isset($scanning['fail_on']) && (!$this->isStringLike($scanning['fail_on']) || !in_array((string)$scanning['fail_on'], ['low', 'medium', 'high', 'none'], true))) {
+                $this->issue('medium', 'invalid_secret_scan_fail_on', 'secrets.scanning.fail_on', 'Secret scan fail_on must be low, medium, high, or none.', 'low|medium|high|none', $scanning['fail_on']);
             }
         }
     }
@@ -1841,6 +1928,11 @@ class SecurityConfigValidator
         if (!is_numeric($value) || (float)$value < $min || (float)$value > $max) {
             $this->issue('high', 'invalid_' . str_replace('.', '_', $path), $path, "Config '{$path}' must be a number between {$min} and {$max}.", "{$min}-{$max}", $value);
         }
+    }
+
+    private function safeName(string $name): bool
+    {
+        return (bool)preg_match('/^[A-Za-z0-9_.:-]{1,120}$/', $name);
     }
 
     private function stringList(mixed $value, string $path, bool $required = true): bool

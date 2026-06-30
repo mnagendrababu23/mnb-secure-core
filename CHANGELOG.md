@@ -155,3 +155,10 @@ Added a security-aware caching strategy layer around the existing file, Redis, a
 - Added `EncryptedCache`, `TaggedCache`, `CacheInvalidator`, `CacheStampedeGuard`, and `SafeCacheSerializer`.
 - Added kernel helpers: `secureCache()`, `cacheRegistry()`, `cachePolicy()`, `cacheKeyBuilder()`, `encryptedCache()`, `taggedCache()`, `cacheInvalidator()`, and `cacheStampedeGuard()`.
 - Added caching config validation, production readiness warnings, auto suggestions, tests, and demo 26.
+
+### Improvement 23 — Environment and Secret Management Engine
+
+- Added `SecretManager`, env/array secret providers, secret definitions, inventory and health reports.
+- Added `SecretRedactor`, `KeyDeriver`, environment validation, rotation reports, and expanded `SecretScanner` reporting.
+- Added kernel helpers and CLI commands: `secrets:inventory`, `secrets:audit`, `secrets:rotate-plan`, `secrets:env-check`, and improved `secrets:scan`.
+- Added config validation and production readiness checks for secret provider, redaction, derivation, definitions, rotation, and scanning.

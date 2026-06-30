@@ -29,6 +29,44 @@ class ProductionSecurityChecker
         $webSecurity = $this->config['web_security'] ?? [];
         $fileSecurity = $this->config['file_security'] ?? [];
         $caching = $this->config['caching'] ?? [];
+        $secrets = $this->config['secrets'] ?? [];
+
+
+        if (($app['env'] ?? 'local') === 'production' && is_array($secrets)) {
+            if (array_key_exists('enabled', $secrets) && empty($secrets['enabled'])) {
+                $issues[] = ['level' => 'high', 'key' => 'secret_management_disabled', 'message' => 'Environment and secret management should be enabled in production.'];
+            }
+            $redaction = is_array($secrets['redaction'] ?? null) ? $secrets['redaction'] : [];
+            if (array_key_exists('enabled', $redaction) && empty($redaction['enabled'])) {
+                $issues[] = ['level' => 'high', 'key' => 'secret_redaction_disabled', 'message' => 'Secret redaction should stay enabled for logs, audit metadata, config dumps, and error context.'];
+            }
+            $derivation = is_array($secrets['derivation'] ?? null) ? $secrets['derivation'] : [];
+            if (array_key_exists('enabled', $derivation) && empty($derivation['enabled'])) {
+                $issues[] = ['level' => 'medium', 'key' => 'secret_derivation_disabled', 'message' => 'Purpose-based key derivation should remain enabled so app, data, cache, and signed URL keys are isolated.'];
+            }
+            $definitions = is_array($secrets['definitions'] ?? null) ? $secrets['definitions'] : [];
+            if ($definitions === []) {
+                $issues[] = ['level' => 'high', 'key' => 'secret_definitions_missing', 'message' => 'Define secret definitions for APP_KEY, DATA_KEY, DATA_SEARCH_HASH_KEY, SIGNED_URL_KEY, WEBHOOK_SECRET, and cache/backup keys.'];
+            } else {
+                foreach ($definitions as $name => $definition) {
+                    if (!is_array($definition)) { continue; }
+                    $required = !empty($definition['required']) || !empty($definition['production_required']);
+                    $env = (string)($definition['env'] ?? '');
+                    $value = $env !== '' ? ($_ENV[$env] ?? getenv($env) ?: '') : '';
+                    $derived = !empty($definition['derive_from']);
+                    if ($required && $value === '' && !$derived) {
+                        $issues[] = ['level' => 'high', 'key' => 'production_secret_missing', 'message' => 'Required production secret ' . (string)$name . ' is missing.'];
+                    }
+                    if ($value !== '' && strlen((string)$value) < (int)($definition['min_length'] ?? 32)) {
+                        $issues[] = ['level' => 'high', 'key' => 'production_secret_weak', 'message' => 'Production secret ' . (string)$name . ' should be at least ' . (int)($definition['min_length'] ?? 32) . ' characters.'];
+                    }
+                }
+            }
+            $scanning = is_array($secrets['scanning'] ?? null) ? $secrets['scanning'] : [];
+            if (array_key_exists('enabled', $scanning) && empty($scanning['enabled'])) {
+                $issues[] = ['level' => 'medium', 'key' => 'secret_scanning_disabled', 'message' => 'Secret scanning should remain enabled in CI/release checks.'];
+            }
+        }
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];

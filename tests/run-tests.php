@@ -53,6 +53,13 @@ use Mnb\SecurityCore\Database\SecureQueryBuilder;
 use Mnb\SecurityCore\Database\SqlIdentifier;
 use Mnb\SecurityCore\Database\TableSecurityPolicy;
 use Mnb\SecurityCore\Env\SecretScanner;
+use Mnb\SecurityCore\Env\ArraySecretProvider;
+use Mnb\SecurityCore\Env\EnvSecretProvider;
+use Mnb\SecurityCore\Env\EnvironmentValidator;
+use Mnb\SecurityCore\Env\KeyDeriver;
+use Mnb\SecurityCore\Env\SecretDefinition;
+use Mnb\SecurityCore\Env\SecretManager;
+use Mnb\SecurityCore\Env\SecretRedactor;
 use Mnb\SecurityCore\Exceptions\SecurityException;
 use Mnb\SecurityCore\Files\FileUploadPolicy;
 use Mnb\SecurityCore\Files\FileSecurityRegistry;
@@ -1524,6 +1531,59 @@ ok(!$webInvalidReport['passed'], 'security config validator catches unsafe web s
 
 $webSuggestions = (new AutoSuggestionEngine())->suggestFromCode('echo $name; header(\'Location: \'.$next); setcookie("device", $id);');
 ok(count(array_filter($webSuggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_web_security_controls' || ($item['id'] ?? '') === 'web_security_controls')) >= 1, 'auto suggestion engine recommends web security controls for output redirects and cookies');
+
+
+
+$secretProvider = new ArraySecretProvider([
+    'APP_KEY' => str_repeat('A', 40),
+    'WEBHOOK_SECRET' => str_repeat('B', 40),
+]);
+$secretConfig = array_replace_recursive(require __DIR__ . '/../config/security.php', [
+    'app' => ['env' => 'testing', 'key' => str_repeat('A', 40)],
+    'secrets' => [
+        'definitions' => [
+            'app.key' => ['env' => 'APP_KEY', 'required' => true, 'min_length' => 32, 'purpose' => 'master'],
+            'data.key' => ['env' => 'DATA_KEY', 'derive_from' => 'app.key', 'min_length' => 32, 'purpose' => 'data'],
+            'webhook.secret' => ['env' => 'WEBHOOK_SECRET', 'required' => true, 'min_length' => 32, 'purpose' => 'webhook'],
+        ],
+    ],
+]);
+$secretManager = SecretManager::fromConfig($secretConfig, $secretProvider);
+$derivedDataKey = $secretManager->get('data.key');
+ok($secretManager->get('app.key') === str_repeat('A', 40) && is_string($derivedDataKey) && strlen($derivedDataKey) >= 64, 'secret manager reads explicit secrets and derives purpose keys');
+
+$secretReport = $secretManager->inventory()->report()->toArray();
+ok($secretReport['passed'] && ($secretReport['summary']['present'] ?? 0) >= 2, 'secret inventory reports present required secrets');
+
+$redactor = new SecretRedactor('[secret]', 4);
+$redactedArray = $redactor->redactArray(['api_key' => 'abcdefghijklmnop', 'nested' => ['password' => 'supersecretvalue'], 'public' => 'ok']);
+ok($redactedArray['api_key'] === '[secret]:mnop' && $redactedArray['nested']['password'] === '[secret]:alue' && $redactedArray['public'] === 'ok', 'secret redactor redacts secret-like keys recursively');
+
+$deriver = new KeyDeriver(str_repeat('M', 40), 'test-salt');
+ok($deriver->derive('data.encryption') !== $deriver->derive('signed.url') && strlen($deriver->derive('data.encryption')) === 64, 'key deriver creates separated purpose-specific keys');
+
+$envValidation = (new EnvironmentValidator($secretConfig, $secretManager))->validate();
+ok($envValidation['passed'] && $envValidation['environment'] === 'testing', 'environment validator combines environment and secret readiness');
+
+$rotationReport = $secretManager->rotationReport()->toArray();
+ok(isset($rotationReport['items']) && count($rotationReport['items']) >= 2, 'secret rotation report lists rotatable definitions');
+
+$scanDir = $base . '/secret-scan';
+@mkdir($scanDir, 0777, true);
+file_put_contents($scanDir . '/bad.php', "<?php\n\$api_key = '" . str_repeat('X', 32) . "';\n");
+$scanReport = (new SecretScanner(['entropy' => true, 'ignore_paths' => []]))->report($scanDir);
+ok(!$scanReport['passed'] && count($scanReport['findings']) >= 1, 'secret scanner reports accidental secret findings with metadata');
+
+$_ENV['WEBHOOK_SECRET'] = str_repeat('B', 40);
+$secretKernel = new SecurityKernel($secretConfig);
+ok($secretKernel->secretHealthReport()->toArray()['passed'] && strlen($secretKernel->keyDeriver()->derive('cache.encryption')) === 64, 'security kernel exposes secret manager inventory and key derivation helpers');
+
+
+$secretSuggestions = (new AutoSuggestionEngine())->suggestFromCode("\$_ENV['APP_KEY']; getenv('WEBHOOK_SECRET');");
+ok(count(array_filter($secretSuggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_secret_management_engine' || ($item['id'] ?? '') === 'secret_management_engine')) >= 1, 'auto suggestion engine recommends secret management for raw env secrets');
+
+$secretInvalidReport = (new SecurityConfigValidator(['app' => ['env' => 'production'], 'secrets' => ['enabled' => false, 'definitions' => ['bad name!' => ['env' => 'bad-env']]]]))->validate();
+ok(!$secretInvalidReport['passed'], 'security config validator catches unsafe secret management configuration');
 
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);
