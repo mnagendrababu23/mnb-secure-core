@@ -6,6 +6,7 @@ use Mnb\SecurityCore\Env\EnvLoader;
 use Mnb\SecurityCore\Env\SecretScanner;
 use Mnb\SecurityCore\Security\ProductionSecurityChecker;
 use Mnb\SecurityCore\Security\SecurityConfigValidator;
+use Mnb\SecurityCore\Security\SecurityDoctor;
 use Mnb\SecurityCore\Security\VulnerabilityMatrix;
 use Mnb\SecurityCore\Pentest\PentestChecklist;
 use Mnb\SecurityCore\Pentest\PayloadLibrary;
@@ -39,6 +40,10 @@ switch ($command) {
         exit($report['passed'] ? 0 : 1);
     case 'check:production':
         $report = (new ProductionSecurityChecker($config, $root))->check();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
+    case 'doctor':
+        $report = (new SecurityDoctor($config, $root))->check();
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit($report['passed'] ? 0 : 1);
     case 'secrets:scan':
@@ -116,6 +121,7 @@ switch ($command) {
         echo "  key:generate             Generate 64-char app key\n";
         echo "  config:validate          Validate security config shape, values, and safe combinations\n";
         echo "  check:production         Run production security readiness checks\n";
+        echo "  doctor                   Run full security, package, runtime, storage, and scanner diagnostics\n";
         echo "  secrets:scan             Scan project for accidental secrets\n";
         echo "  matrix:export            Export vulnerability blocking matrix\n";
         echo "  pentest:checklist        Export pentest checklist\n";

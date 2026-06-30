@@ -57,6 +57,7 @@ use Mnb\SecurityCore\RateLimit\RateLimitPolicyRegistry;
 use Mnb\SecurityCore\Security\ProductionSecurityChecker;
 use Mnb\SecurityCore\Security\CspNonceManager;
 use Mnb\SecurityCore\Security\SecurityConfigValidator;
+use Mnb\SecurityCore\Security\SecurityDoctor;
 use Mnb\SecurityCore\Security\VulnerabilityMatrix;
 use Mnb\SecurityCore\Pentest\PentestChecklist;
 use Mnb\SecurityCore\Pentest\PayloadLibrary;
@@ -388,6 +389,36 @@ $archiveProductionConfig = array_replace_recursive($defaultConfig, [
 ]);
 $archiveProductionReport = (new SecurityConfigValidator($archiveProductionConfig))->validate();
 ok(in_array('archives_allowed_in_production_without_opt_in', array_column($archiveProductionReport['issues'], 'key'), true), 'security config validator requires explicit production opt-in for archive upload profile');
+
+
+$doctorConfig = $defaultConfig;
+$doctorConfig['app']['key'] = str_repeat('d', 40);
+$doctorConfig['limits']['request_max_bytes'] = 128 * 1024 * 1024;
+$doctorConfig['paths']['private_storage'] = $base . '/doctor/private';
+$doctorConfig['paths']['quarantine'] = $base . '/doctor/quarantine';
+$doctorConfig['paths']['cache'] = $base . '/doctor/cache';
+$doctorConfig['paths']['logs'] = $base . '/doctor/logs';
+$doctorConfig['paths']['audit'] = $base . '/doctor/audit';
+$doctorConfig['paths']['backups'] = $base . '/doctor/backups';
+$doctorConfig['paths']['tokens'] = $base . '/doctor/tokens/tokens.json';
+foreach (['private_storage', 'quarantine', 'cache', 'logs', 'audit', 'backups'] as $doctorPathKey) {
+    @mkdir($doctorConfig['paths'][$doctorPathKey], 0777, true);
+}
+@mkdir(dirname($doctorConfig['paths']['tokens']), 0777, true);
+$doctorReport = (new SecurityDoctor($doctorConfig, dirname(__DIR__)))->check();
+ok($doctorReport['passed'] === true && isset($doctorReport['sections']['php_runtime']) && isset($doctorReport['sections']['public_package']), 'security doctor reports runtime, config, storage, headers, scanner and package readiness');
+
+$badDoctorConfig = $doctorConfig;
+$badDoctorConfig['cache']['driver'] = 'invalid-driver';
+$badDoctorConfig['security_headers']['enabled'] = false;
+$badDoctorReport = (new SecurityDoctor($badDoctorConfig, dirname(__DIR__)))->check();
+ok(!$badDoctorReport['passed'] && in_array('cache_driver_invalid', array_column($badDoctorReport['issues'], 'key'), true) && in_array('security_headers_disabled', array_column($badDoctorReport['issues'], 'key'), true), 'security doctor catches invalid storage driver and disabled security headers');
+
+$doctorCliOutput = [];
+$doctorCliCode = 0;
+exec('cd ' . escapeshellarg(dirname(__DIR__)) . ' && ' . escapeshellarg(PHP_BINARY) . ' bin/mnb-secure doctor 2>&1', $doctorCliOutput, $doctorCliCode);
+$doctorCliJson = json_decode(implode("\n", $doctorCliOutput), true);
+ok(is_array($doctorCliJson) && isset($doctorCliJson['sections']['config_validation']) && $doctorCliCode === 1, 'CLI doctor command returns JSON diagnostics and non-zero status for blocking issues');
 
 $invalidConfigReport = (new SecurityConfigValidator([
     'app' => ['env' => 'production', 'debug' => 'true', 'force_https' => false, 'key' => 'weak', 'trusted_hosts' => ['*'], 'trusted_proxies' => ['not-a-proxy', '*']],
