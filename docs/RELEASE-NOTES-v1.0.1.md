@@ -211,3 +211,7 @@ This release adds centralized logging and monitoring helpers around existing aud
 - log retention manager
 - monitoring summary reports
 - CLI commands for audit verification, audit export, log purge, and monitoring summary
+
+### Backup, Recovery, and Incident Response Engine
+
+Added secure backup creation, manifests, HMAC signatures, restore dry-runs, recovery status reports, backup retention cleanup, incident cases, playbooks, containment actions, evidence collection, and CLI commands for backup/recovery/incident workflows.

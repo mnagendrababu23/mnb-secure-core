@@ -111,6 +111,77 @@ switch ($command) {
         $report = $kernel->alertManager()->summary();
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit(!empty($report['passed']) ? 0 : 1);
+
+    case 'backup:create':
+        $kernel = new SecurityKernel($config);
+        $type = $argv[2] ?? 'manual';
+        $report = $kernel->secureBackupManager()->create($type);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'backup:verify':
+        $kernel = new SecurityKernel($config);
+        $backup = $argv[2] ?? '';
+        if ($backup === '') {
+            $status = $kernel->recoveryStatusReport()->toArray();
+            $backup = (string)($status['latest_backup']['path'] ?? '');
+        }
+        $report = $backup !== '' ? $kernel->backupIntegrityVerifier()->verify($backup) : ['passed' => false, 'error' => 'backup_path_required'];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'backup:list':
+        $kernel = new SecurityKernel($config);
+        $path = $kernel->backupPolicy()->path();
+        $items = [];
+        if (is_dir($path)) {
+            foreach (new DirectoryIterator($path) as $file) {
+                if ($file->isFile() && preg_match('/\.(zip|enc)$/', $file->getFilename())) {
+                    $items[] = ['name' => $file->getFilename(), 'path' => $file->getPathname(), 'bytes' => $file->getSize(), 'mtime' => date('c', $file->getMTime())];
+                }
+            }
+        }
+        echo json_encode(['passed' => true, 'path' => $path, 'count' => count($items), 'backups' => $items], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'backup:purge':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->backupRetentionManager()->purge();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'recovery:status':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->recoveryStatusReport()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'recovery:drill':
+        $kernel = new SecurityKernel($config);
+        $backup = $kernel->secureBackupManager()->create('drill');
+        $dryRun = $kernel->restoreManager()->dryRun((string)$backup['path'])->toArray();
+        $report = ['passed' => !empty($backup['passed']) && !empty($dryRun['passed']), 'backup' => $backup, 'restore_dry_run' => $dryRun];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'restore:dry-run':
+        $kernel = new SecurityKernel($config);
+        $backup = $argv[2] ?? '';
+        $report = $backup !== '' ? $kernel->restoreManager()->dryRun($backup)->toArray() : ['passed' => false, 'error' => 'backup_path_required'];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'incident:open':
+        $kernel = new SecurityKernel($config);
+        $type = $argv[2] ?? 'manual';
+        $severity = $argv[3] ?? 'medium';
+        $incident = $kernel->incidentResponse()->open($type, $severity, ['source' => 'cli']);
+        echo json_encode($incident->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'incident:run-playbook':
+        $kernel = new SecurityKernel($config);
+        $playbook = $argv[2] ?? 'manual';
+        $report = $kernel->incidentResponse()->runPlaybook($playbook, ['source' => 'cli'])->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'incident:report':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->incidentResponse()->summary();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
     case 'matrix:export':
         echo json_encode((new VulnerabilityMatrix())->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
@@ -194,6 +265,26 @@ switch ($command) {
         echo "  monitor:summary         Summarize audit integrity, metrics, and alerts
 ";
         echo "  monitor:alerts          Show monitoring alert rules and event count
+";
+        echo "  backup:create           Create encrypted/signed backup: [type]
+";
+        echo "  backup:verify           Verify backup integrity/signature: [path]
+";
+        echo "  backup:list             List backup archives
+";
+        echo "  backup:purge            Purge expired backups by retention policy
+";
+        echo "  recovery:status         Show backup and recovery readiness
+";
+        echo "  recovery:drill          Create backup and perform restore dry-run
+";
+        echo "  restore:dry-run         Verify restore plan without writing files: path
+";
+        echo "  incident:open           Open incident: type [severity]
+";
+        echo "  incident:run-playbook   Open and run incident playbook: name
+";
+        echo "  incident:report         Summarize incident cases and playbooks
 ";
         echo "  matrix:export            Export vulnerability blocking matrix\n";
         echo "  pentest:checklist        Export pentest checklist\n";

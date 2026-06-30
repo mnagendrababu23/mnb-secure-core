@@ -133,6 +133,18 @@ use Mnb\SecurityCore\Web\SignedUrl;
 use Mnb\SecurityCore\Web\WebSecurityControls as WebControls;
 use Mnb\SecurityCore\Web\WebSecurityProfile;
 use Mnb\SecurityCore\Web\WebSecurityRegistry;
+use Mnb\SecurityCore\Recovery\BackupIntegrityVerifier;
+use Mnb\SecurityCore\Recovery\BackupPolicy;
+use Mnb\SecurityCore\Recovery\BackupRetentionManager;
+use Mnb\SecurityCore\Recovery\BackupRetentionPolicy;
+use Mnb\SecurityCore\Recovery\BackupSigner;
+use Mnb\SecurityCore\Recovery\RecoveryStatusReport;
+use Mnb\SecurityCore\Recovery\RestoreManager;
+use Mnb\SecurityCore\Recovery\SecureBackupManager;
+use Mnb\SecurityCore\Incident\ContainmentActionRunner;
+use Mnb\SecurityCore\Incident\IncidentEvidenceCollector;
+use Mnb\SecurityCore\Incident\IncidentPlaybook;
+use Mnb\SecurityCore\Incident\IncidentResponseManager;
 use PDO;
 
 class SecurityKernel
@@ -972,6 +984,70 @@ class SecurityKernel
     public function monitoringSummary(): MonitoringSummary
     {
         return new MonitoringSummary($this->auditExporter(), $this->auditIntegrityVerifier(), $this->metricsRegistry(), $this->alertManager());
+    }
+
+
+    public function backupPolicy(): BackupPolicy
+    {
+        return BackupPolicy::fromConfig($this->config, is_array($this->config['paths'] ?? null) ? $this->config['paths'] : []);
+    }
+
+    public function backupSigner(): BackupSigner
+    {
+        return new BackupSigner($this->backupPolicy()->signingKey());
+    }
+
+    public function secureBackupManager(?SecurityAuditTrail $audit = null): SecureBackupManager
+    {
+        return new SecureBackupManager($this->backupPolicy(), $this->backupSigner(), $audit ?: $this->auditTrail());
+    }
+
+    public function backupIntegrityVerifier(): BackupIntegrityVerifier
+    {
+        $restore = is_array($this->config['recovery']['restore'] ?? null) ? $this->config['recovery']['restore'] : [];
+        return new BackupIntegrityVerifier($this->backupSigner(), !empty($restore['require_signature']));
+    }
+
+    public function backupRetentionPolicy(): BackupRetentionPolicy
+    {
+        return BackupRetentionPolicy::fromConfig($this->config);
+    }
+
+    public function backupRetentionManager(): BackupRetentionManager
+    {
+        return new BackupRetentionManager($this->backupRetentionPolicy(), $this->backupPolicy()->path());
+    }
+
+    public function restoreManager(?SecurityAuditTrail $audit = null): RestoreManager
+    {
+        return new RestoreManager($this->backupIntegrityVerifier(), $this->secureBackupManager($audit ?: $this->auditTrail()), is_array($this->config['recovery']['restore'] ?? null) ? $this->config['recovery']['restore'] : [], $audit ?: $this->auditTrail());
+    }
+
+    public function recoveryStatusReport(): RecoveryStatusReport
+    {
+        return new RecoveryStatusReport($this->backupPolicy()->path(), $this->backupIntegrityVerifier(), $this->backupRetentionPolicy());
+    }
+
+    public function incidentPlaybook(string $name): IncidentPlaybook
+    {
+        $ir = is_array($this->config['incident_response']['playbooks'] ?? null) ? $this->config['incident_response']['playbooks'] : [];
+        return IncidentPlaybook::fromArray($name, is_array($ir[$name] ?? null) ? $ir[$name] : ['severity' => 'medium', 'actions' => ['record_incident', 'collect_evidence', 'alert_security']]);
+    }
+
+    public function containmentActionRunner(?SecurityAuditTrail $audit = null): ContainmentActionRunner
+    {
+        return new ContainmentActionRunner($this->cacheInvalidator(), $audit ?: $this->auditTrail());
+    }
+
+    public function incidentEvidenceCollector(): IncidentEvidenceCollector
+    {
+        return new IncidentEvidenceCollector($this->auditExporter(), $this->monitoringSummary(), $this->secretHealthReport());
+    }
+
+    public function incidentResponse(?SecurityAuditTrail $audit = null): IncidentResponseManager
+    {
+        $trail = $audit ?: $this->auditTrail();
+        return IncidentResponseManager::fromConfig($this->config, $this->containmentActionRunner($trail), $this->incidentEvidenceCollector(), $trail);
     }
 
     public function pdo(): PDO

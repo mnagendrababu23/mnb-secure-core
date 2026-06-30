@@ -213,6 +213,63 @@ return [
         ],
     ],
 
+
+    'recovery' => [
+        'enabled' => filter_var($_ENV['RECOVERY_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'backups' => [
+            'enabled' => filter_var($_ENV['BACKUP_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'path' => $_ENV['BACKUP_PATH'] ?? (__DIR__ . '/../storage/backups'),
+            'encrypt' => filter_var($_ENV['BACKUP_ENCRYPT'] ?? true, FILTER_VALIDATE_BOOL),
+            'sign' => filter_var($_ENV['BACKUP_SIGN'] ?? true, FILTER_VALIDATE_BOOL),
+            'key' => $_ENV['BACKUP_KEY'] ?? ($_ENV['APP_KEY'] ?? ''),
+            'signing_key' => $_ENV['BACKUP_SIGNING_KEY'] ?? ($_ENV['APP_KEY'] ?? ''),
+            'include' => [__DIR__],
+            'exclude' => [__DIR__ . '/../vendor', __DIR__ . '/../.git', __DIR__ . '/../storage/cache', __DIR__ . '/../storage/logs'],
+            'retention' => [
+                'daily_days' => (int)($_ENV['BACKUP_RETENTION_DAILY_DAYS'] ?? 7),
+                'weekly_weeks' => (int)($_ENV['BACKUP_RETENTION_WEEKLY_WEEKS'] ?? 4),
+                'monthly_months' => (int)($_ENV['BACKUP_RETENTION_MONTHLY_MONTHS'] ?? 12),
+            ],
+        ],
+        'restore' => [
+            'allow_overwrite' => filter_var($_ENV['RESTORE_ALLOW_OVERWRITE'] ?? false, FILTER_VALIDATE_BOOL),
+            'require_signature' => filter_var($_ENV['RESTORE_REQUIRE_SIGNATURE'] ?? true, FILTER_VALIDATE_BOOL),
+            'require_encryption' => filter_var($_ENV['RESTORE_REQUIRE_ENCRYPTION'] ?? true, FILTER_VALIDATE_BOOL),
+            'restore_to_temp_first' => true,
+            'audit' => true,
+        ],
+        'drills' => [
+            'enabled' => filter_var($_ENV['RECOVERY_DRILLS_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'last_success_max_age_days' => (int)($_ENV['RECOVERY_DRILL_MAX_AGE_DAYS'] ?? 30),
+        ],
+    ],
+
+    'incident_response' => [
+        'enabled' => filter_var($_ENV['INCIDENT_RESPONSE_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'file' => $_ENV['INCIDENT_FILE'] ?? (__DIR__ . '/../storage/logs/incidents.jsonl'),
+        'default_severity' => $_ENV['INCIDENT_DEFAULT_SEVERITY'] ?? 'medium',
+        'audit' => true,
+        'collect_evidence' => true,
+        'playbooks' => [
+            'failed_login_spike' => [
+                'severity' => 'high',
+                'actions' => ['record_incident', 'invalidate_user_auth_cache', 'alert_security'],
+            ],
+            'malware_upload_detected' => [
+                'severity' => 'critical',
+                'actions' => ['record_incident', 'quarantine_file', 'deny_file_download', 'alert_security', 'collect_evidence'],
+            ],
+            'secret_leak_detected' => [
+                'severity' => 'critical',
+                'actions' => ['record_incident', 'rotate_secret_plan', 'revoke_tokens', 'invalidate_cache', 'collect_evidence', 'alert_security'],
+            ],
+            'audit_chain_broken' => [
+                'severity' => 'critical',
+                'actions' => ['record_incident', 'collect_evidence', 'alert_security', 'freeze_audit_export'],
+            ],
+        ],
+    ],
+
     'limits' => [
         'request_max_bytes' => 5 * 1024 * 1024,
         'upload_max_bytes' => 10 * 1024 * 1024,

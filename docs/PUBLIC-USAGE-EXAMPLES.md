@@ -469,3 +469,18 @@ $kernel->metricsRegistry()->increment('auth_failures_total', ['route' => 'login'
 $alerts = $kernel->alertManager()->recordEvent('auth.login.failure', ['ip' => $request->ip()]);
 $summary = $kernel->monitoringSummary()->toArray();
 ```
+
+## Backup, Recovery, and Incident Response
+
+```php
+$backup = $kernel->secureBackupManager()->create('daily');
+$verify = $kernel->backupIntegrityVerifier()->verify($backup['path']);
+$restore = $kernel->restoreManager()->dryRun($backup['path']);
+
+$report = $kernel->incidentResponse()->runPlaybook('malware_upload_detected', [
+    'file_id' => 'file_123',
+    'user_id' => 15,
+]);
+```
+
+Use these helpers to protect backup archives with encryption/signatures, verify restore readiness, and create auditable incident response reports.

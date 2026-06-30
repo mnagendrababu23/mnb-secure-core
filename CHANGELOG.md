@@ -175,3 +175,12 @@ Added a centralized logging, audit integrity, metrics, alerting, and retention l
 - Added log retention/purge manager.
 - Added CLI commands: `audit:verify`, `audit:export`, `logs:purge`, `monitor:summary`, `monitor:alerts`.
 - Added config validation, production readiness checks, demo, tests, and public examples.
+
+## v1.0.1 - Backup, Recovery, and Incident Response Engine
+
+- Added secure backup policy, encrypted/signed backup creation, backup manifests, backup integrity verification, retention purge, restore dry-run, and recovery status reporting.
+- Added incident cases, severity/status helpers, incident playbooks, containment action runner, evidence collector, incident reports, and incident response manager.
+- Added CLI commands: `backup:create`, `backup:verify`, `backup:list`, `backup:purge`, `recovery:status`, `recovery:drill`, `restore:dry-run`, `incident:open`, `incident:run-playbook`, and `incident:report`.
+- Added `SecurityKernel` helpers for secure backup, restore, recovery status, incident response, playbooks, containment, and evidence collection.
+- Added config/env settings and validation for `recovery` and `incident_response`.
+- Added demo `29-backup-recovery-incident-response-engine.php` and tests for encrypted/signed backups, restore dry-run, retention, incidents, playbooks, evidence, and kernel helpers.

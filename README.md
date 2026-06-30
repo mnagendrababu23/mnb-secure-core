@@ -1494,3 +1494,30 @@ php bin/mnb-secure monitor:alerts
 ```
 
 The engine keeps existing `TamperEvidentAuditLogger`, `SecurityAuditTrail`, `AutoAuditLogger`, and `SecurityMonitor` behavior compatible while adding JSONL log channels, redaction, metrics, alert thresholds, retention cleanup, and audit-chain verification.
+
+## Backup, Recovery, and Incident Response Engine
+
+`mnb-secure-core v1.0.1` includes an operational recovery layer around the existing backup/audit/monitoring systems.
+
+```php
+$backup = $kernel->secureBackupManager()->create('daily');
+$verify = $kernel->backupIntegrityVerifier()->verify($backup['path']);
+$dryRun = $kernel->restoreManager()->dryRun($backup['path']);
+
+$incident = $kernel->incidentResponse()->runPlaybook('secret_leak_detected', [
+    'user_id' => 15,
+    'cache_tags' => ['authz', 'user:15'],
+]);
+```
+
+The engine adds encrypted/signed backups, manifests, restore dry-runs, recovery status reports, backup retention cleanup, incident cases, playbooks, containment actions, evidence collection, and CLI commands for backup/recovery/incident workflows.
+
+CLI examples:
+
+```bash
+php bin/mnb-secure backup:create daily
+php bin/mnb-secure backup:verify /path/to/backup.zip.enc
+php bin/mnb-secure recovery:drill
+php bin/mnb-secure incident:run-playbook secret_leak_detected
+php bin/mnb-secure incident:report
+```

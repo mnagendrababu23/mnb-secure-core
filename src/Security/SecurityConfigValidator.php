@@ -29,6 +29,7 @@ class SecurityConfigValidator
         $this->validatePaths();
         $this->validateAudit();
         $this->validateLoggingMonitoring();
+        $this->validateRecoveryIncident();
         $this->validateLimits();
         $this->validateUploads();
         $this->validateStores();
@@ -382,6 +383,57 @@ class SecurityConfigValidator
                     $this->issue('medium', 'invalid_alert_severity', $path . '.severity', 'Alert severity should be a known security level.', 'high|critical', $rule['severity']);
                 }
             }
+        }
+    }
+
+
+
+    private function validateRecoveryIncident(): void
+    {
+        $recovery = $this->section('recovery', false);
+        if ($recovery !== null) {
+            $this->bool($recovery, 'enabled', 'recovery.enabled', false);
+            $backups = is_array($recovery['backups'] ?? null) ? $recovery['backups'] : [];
+            if ($backups === [] && $this->isProduction($this->config['app'] ?? [])) {
+                $this->issue('high', 'recovery_backups_missing', 'recovery.backups', 'Production apps should define encrypted, signed backups.', 'backup policy', null);
+            }
+            if ($backups !== []) {
+                foreach (['enabled','encrypt','sign'] as $key) { $this->bool($backups, $key, 'recovery.backups.' . $key, false); }
+                if (isset($backups['path']) && !$this->isStringLike($backups['path'])) { $this->issue('medium', 'invalid_backup_path', 'recovery.backups.path', 'Backup path must be a string.', 'path', $backups['path']); }
+                foreach (['include','exclude'] as $key) { if (isset($backups[$key])) { $this->stringList($backups[$key], 'recovery.backups.' . $key, false); } }
+                if (array_key_exists('encrypt', $backups) && empty($backups['encrypt']) && $this->isProduction($this->config['app'] ?? [])) { $this->issue('high', 'backup_encryption_disabled', 'recovery.backups.encrypt', 'Production backups should be encrypted.', 'true', false); }
+                if (array_key_exists('sign', $backups) && empty($backups['sign']) && $this->isProduction($this->config['app'] ?? [])) { $this->issue('high', 'backup_signing_disabled', 'recovery.backups.sign', 'Production backups should be signed for integrity.', 'true', false); }
+                foreach (['key','signing_key'] as $key) { if (isset($backups[$key]) && (string)$backups[$key] !== '' && strlen((string)$backups[$key]) < 32 && $this->isProduction($this->config['app'] ?? [])) { $this->issue('high', 'weak_backup_' . $key, 'recovery.backups.' . $key, 'Backup keys should be at least 32 characters.', '>=32 chars', strlen((string)$backups[$key]) . ' chars'); } }
+                $ret = is_array($backups['retention'] ?? null) ? $backups['retention'] : [];
+                $this->intRange($ret, 'daily_days', 'recovery.backups.retention.daily_days', 1, 3650, false);
+                $this->intRange($ret, 'weekly_weeks', 'recovery.backups.retention.weekly_weeks', 1, 520, false);
+                $this->intRange($ret, 'monthly_months', 'recovery.backups.retention.monthly_months', 1, 120, false);
+            }
+            $restore = is_array($recovery['restore'] ?? null) ? $recovery['restore'] : [];
+            foreach (['allow_overwrite','require_signature','require_encryption','restore_to_temp_first','audit'] as $key) { $this->bool($restore, $key, 'recovery.restore.' . $key, false); }
+            if (!empty($restore['allow_overwrite']) && $this->isProduction($this->config['app'] ?? [])) { $this->issue('medium', 'restore_overwrite_allowed', 'recovery.restore.allow_overwrite', 'Restore should dry-run or restore to temp before overwriting production paths.', 'false', true); }
+            $drills = is_array($recovery['drills'] ?? null) ? $recovery['drills'] : [];
+            $this->bool($drills, 'enabled', 'recovery.drills.enabled', false);
+            $this->intRange($drills, 'last_success_max_age_days', 'recovery.drills.last_success_max_age_days', 1, 365, false);
+        } elseif ($this->isProduction($this->config['app'] ?? [])) {
+            $this->issue('high', 'recovery_section_missing', 'recovery', 'Define backup, restore, and recovery drill strategy for production.', 'recovery config', null);
+        }
+
+        $incident = $this->section('incident_response', false);
+        if ($incident !== null) {
+            $this->bool($incident, 'enabled', 'incident_response.enabled', false);
+            if (isset($incident['default_severity']) && (!$this->isStringLike($incident['default_severity']) || !in_array((string)$incident['default_severity'], ['low','medium','high','critical'], true))) { $this->issue('medium', 'invalid_incident_default_severity', 'incident_response.default_severity', 'Incident severity must be low, medium, high, or critical.', 'medium', $incident['default_severity']); }
+            $playbooks = is_array($incident['playbooks'] ?? null) ? $incident['playbooks'] : [];
+            if ($playbooks === [] && $this->isProduction($this->config['app'] ?? [])) { $this->issue('medium', 'incident_playbooks_missing', 'incident_response.playbooks', 'Define incident playbooks for auth spikes, malware uploads, secret leaks, and audit chain failures.', 'playbook map', null); }
+            foreach ($playbooks as $name => $playbook) {
+                $path = 'incident_response.playbooks.' . (string)$name;
+                if (!$this->safeName((string)$name)) { $this->issue('high', 'invalid_incident_playbook_name', $path, 'Incident playbook names must be safe identifiers.', 'safe name', $name); }
+                if (!is_array($playbook)) { $this->issue('high', 'invalid_incident_playbook', $path, 'Incident playbook must be an array.', 'array', $playbook); continue; }
+                if (isset($playbook['severity']) && (!is_string($playbook['severity']) || !in_array($playbook['severity'], ['low','medium','high','critical'], true))) { $this->issue('medium', 'invalid_incident_playbook_severity', $path . '.severity', 'Playbook severity must be low, medium, high, or critical.', 'high', $playbook['severity']); }
+                if (isset($playbook['actions'])) { $this->stringList($playbook['actions'], $path . '.actions', false); }
+            }
+        } elseif ($this->isProduction($this->config['app'] ?? [])) {
+            $this->issue('medium', 'incident_response_missing', 'incident_response', 'Define incident response playbooks for production detection and containment.', 'incident_response config', null);
         }
     }
 

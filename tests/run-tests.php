@@ -115,6 +115,18 @@ use Mnb\SecurityCore\Monitoring\FileAlertChannel;
 use Mnb\SecurityCore\Monitoring\MetricsRegistry;
 use Mnb\SecurityCore\Monitoring\MonitoringSummary;
 use Mnb\SecurityCore\Monitoring\TraceContext;
+use Mnb\SecurityCore\Recovery\BackupPolicy;
+use Mnb\SecurityCore\Recovery\BackupSigner;
+use Mnb\SecurityCore\Recovery\SecureBackupManager;
+use Mnb\SecurityCore\Recovery\BackupIntegrityVerifier;
+use Mnb\SecurityCore\Recovery\BackupRetentionPolicy;
+use Mnb\SecurityCore\Recovery\BackupRetentionManager;
+use Mnb\SecurityCore\Recovery\RestoreManager;
+use Mnb\SecurityCore\Recovery\RecoveryStatusReport;
+use Mnb\SecurityCore\Incident\IncidentPlaybook;
+use Mnb\SecurityCore\Incident\ContainmentActionRunner;
+use Mnb\SecurityCore\Incident\IncidentEvidenceCollector;
+use Mnb\SecurityCore\Incident\IncidentResponseManager;
 use Mnb\SecurityCore\RateLimit\DatabaseRateLimiter;
 use Mnb\SecurityCore\RateLimit\FileRateLimiter;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicy;
@@ -1668,6 +1680,73 @@ ok(!$lmInvalidReport['passed'], 'security config validator catches unsafe loggin
 
 $lmSuggestions = (new AutoSuggestionEngine())->suggestFromCode('error_log($message); file_put_contents("audit.log", $data); TamperEvidentAuditLogger');
 ok(count(array_filter($lmSuggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_logging_monitoring_engine' || ($item['id'] ?? '') === 'logging_monitoring_engine')) >= 1, 'auto suggestion engine recommends logging audit and monitoring engine');
+
+
+
+$recoveryDir = $base . '/recovery-engine';
+$backupDir = $recoveryDir . '/backups';
+$sourceDir = $recoveryDir . '/source';
+@mkdir($sourceDir, 0777, true);
+file_put_contents($sourceDir . '/config.txt', 'backup-body');
+$backupPolicy = new BackupPolicy(true, $backupDir, true, true, str_repeat('B', 40), str_repeat('S', 40), [$sourceDir], []);
+$backupSigner = new BackupSigner(str_repeat('S', 40));
+$secureBackups = new SecureBackupManager($backupPolicy, $backupSigner, $auditTrail2);
+$backupResult = $secureBackups->create('unit');
+ok($backupResult['passed'] && is_file($backupResult['path']) && is_file($backupResult['manifest']) && is_file($backupResult['signature']) && $backupResult['encrypted'], 'secure backup manager creates encrypted signed backup with manifest');
+
+$backupVerifier = new BackupIntegrityVerifier($backupSigner, true);
+$backupVerify = $backupVerifier->verify($backupResult['path']);
+ok($backupVerify['passed'] && $backupVerify['sha256'] === $backupResult['sha256'], 'backup integrity verifier validates checksum and signature');
+file_put_contents($backupResult['path'], ((string)file_get_contents($backupResult['path'])) . 'tamper');
+ok(!$backupVerifier->verify($backupResult['path'])['passed'], 'backup integrity verifier detects tampered backup');
+
+$backupResult2 = $secureBackups->create('unit2');
+$restore = new RestoreManager($backupVerifier, $secureBackups, [], $auditTrail2);
+$restoreDryRun = $restore->dryRun($backupResult2['path'])->toArray();
+ok($restoreDryRun['passed'] && $restoreDryRun['plan']['dry_run'], 'restore manager performs verified dry-run restore plan');
+
+$oldBackup = $backupDir . '/old-backup.zip';
+file_put_contents($oldBackup, 'old');
+touch($oldBackup, time() - 86400 * 40);
+$retentionManager = new BackupRetentionManager(new BackupRetentionPolicy(1, 1, 1), $backupDir);
+$backupPurge = $retentionManager->purge();
+ok($backupPurge['deleted'] >= 1 && !is_file($oldBackup), 'backup retention manager purges expired backups');
+
+$recoveryStatus = new RecoveryStatusReport($backupDir, $backupVerifier, new BackupRetentionPolicy(7, 4, 12));
+$statusReport = $recoveryStatus->toArray();
+ok(isset($statusReport['latest_backup']) && isset($statusReport['latest_verification']), 'recovery status report summarizes latest backup readiness');
+
+$playbook = IncidentPlaybook::fromArray('secret_leak_detected', ['severity' => 'critical', 'actions' => ['record_incident', 'invalidate_cache', 'collect_evidence']]);
+ok($playbook->severity() === 'critical' && count($playbook->actions()) === 3, 'incident playbook normalizes severity and actions');
+
+$incidentFile = $recoveryDir . '/incidents.jsonl';
+$incidentRunner = new ContainmentActionRunner(null, $auditTrail2);
+$evidenceCollector = new IncidentEvidenceCollector(new AuditExporter($auditFile2), $monitoringSummary, $lmKernel->secretHealthReport());
+$incidentManager = new IncidentResponseManager(['secret_leak_detected' => $playbook], $incidentRunner, $evidenceCollector, $auditTrail2, $incidentFile);
+$incidentReport = $incidentManager->runPlaybook('secret_leak_detected', ['user_id' => 15])->toArray();
+ok($incidentReport['passed'] && is_file($incidentFile) && ($incidentReport['incident']['severity'] ?? '') === 'critical' && count($incidentReport['actions']) === 3, 'incident response manager opens case, runs playbook, collects evidence');
+
+$i25Config = array_replace_recursive($lmConfig, [
+    'paths' => ['backups' => $backupDir, 'logs' => $recoveryDir, 'audit' => $recoveryDir],
+    'recovery' => [
+        'enabled' => true,
+        'backups' => ['enabled' => true, 'path' => $backupDir, 'encrypt' => true, 'sign' => true, 'key' => str_repeat('B', 40), 'signing_key' => str_repeat('S', 40), 'include' => [$sourceDir], 'exclude' => [], 'retention' => ['daily_days' => 7, 'weekly_weeks' => 4, 'monthly_months' => 12]],
+        'restore' => ['require_signature' => true, 'require_encryption' => true, 'allow_overwrite' => false],
+    ],
+    'incident_response' => ['enabled' => true, 'file' => $incidentFile, 'playbooks' => ['audit_chain_broken' => ['severity' => 'critical', 'actions' => ['record_incident', 'collect_evidence']]]],
+]);
+$i25Kernel = new SecurityKernel($i25Config);
+$i25Backup = $i25Kernel->secureBackupManager()->create('kernel');
+ok($i25Kernel->backupIntegrityVerifier()->verify($i25Backup['path'])['passed'] && $i25Kernel->restoreManager()->dryRun($i25Backup['path'])->passed(), 'security kernel exposes backup verify and restore helpers');
+$i25Incident = $i25Kernel->incidentResponse()->runPlaybook('audit_chain_broken', ['source' => 'test'])->toArray();
+ok($i25Incident['passed'] && ($i25Kernel->incidentResponse()->summary()['count'] ?? 0) >= 1, 'security kernel exposes incident response helpers');
+
+$i25InvalidReport = (new SecurityConfigValidator(['app' => ['env' => 'production'], 'recovery' => ['enabled' => false, 'backups' => ['encrypt' => false, 'sign' => false]], 'incident_response' => ['enabled' => true, 'playbooks' => ['bad name!' => ['severity' => 'extreme']]]]))->validate();
+ok(!$i25InvalidReport['passed'], 'security config validator catches unsafe recovery and incident response configuration');
+
+$i25Suggestions = (new AutoSuggestionEngine())->suggestFromCode('new BackupManager($path); restore backup incident response malware_upload_detected');
+ok(count(array_filter($i25Suggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_backup_incident_engine' || ($item['id'] ?? '') === 'backup_incident_engine')) >= 1, 'auto suggestion engine recommends backup recovery and incident response engine');
+
 
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

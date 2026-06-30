@@ -32,6 +32,8 @@ class ProductionSecurityChecker
         $secrets = $this->config['secrets'] ?? [];
         $logging = $this->config['logging'] ?? [];
         $monitoring = $this->config['monitoring'] ?? [];
+        $recovery = $this->config['recovery'] ?? [];
+        $incidentResponse = $this->config['incident_response'] ?? [];
 
 
 
