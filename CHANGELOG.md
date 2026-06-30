@@ -144,3 +144,14 @@ Added a file lifecycle security layer around the existing upload profiles and pr
 - Added `FileChecksum` and richer upload metadata: file id, checksum, scan status, scanner driver/message, owner/tenant fields, data class, and creation timestamp.
 - Added `FileRetentionManager` for quarantine, rejected-file, and temporary-export cleanup.
 - Added file security config validation, production-readiness warnings, auto-suggestions, kernel helpers, and demo `25-file-upload-download-document-security-engine.php`.
+
+### v1.0.1 — Caching Strategy Engine
+
+Added a security-aware caching strategy layer around the existing file, Redis, and database cache drivers.
+
+- Added named cache policies with TTL, data class, scope, tags, encryption, stale settings, and audit options.
+- Added tenant/user-aware `CacheKeyBuilder` to reduce cross-tenant cache leakage risk.
+- Added `SecureCache` for policy-based `get`, `put`, `remember`, `forget`, and tag invalidation.
+- Added `EncryptedCache`, `TaggedCache`, `CacheInvalidator`, `CacheStampedeGuard`, and `SafeCacheSerializer`.
+- Added kernel helpers: `secureCache()`, `cacheRegistry()`, `cachePolicy()`, `cacheKeyBuilder()`, `encryptedCache()`, `taggedCache()`, `cacheInvalidator()`, and `cacheStampedeGuard()`.
+- Added caching config validation, production readiness warnings, auto suggestions, tests, and demo 26.

@@ -36,6 +36,15 @@ use Mnb\SecurityCore\Auth\Stores\RedisTokenStore;
 use Mnb\SecurityCore\Cache\DatabaseCache;
 use Mnb\SecurityCore\Cache\FileCache;
 use Mnb\SecurityCore\Cache\RedisCache;
+use Mnb\SecurityCore\Cache\CacheInvalidator;
+use Mnb\SecurityCore\Cache\CacheKeyBuilder;
+use Mnb\SecurityCore\Cache\CachePolicy;
+use Mnb\SecurityCore\Cache\CacheRegistry;
+use Mnb\SecurityCore\Cache\CacheStampedeGuard;
+use Mnb\SecurityCore\Cache\EncryptedCache;
+use Mnb\SecurityCore\Cache\SafeCacheSerializer;
+use Mnb\SecurityCore\Cache\SecureCache;
+use Mnb\SecurityCore\Cache\TaggedCache;
 use Mnb\SecurityCore\Contracts\CacheInterface;
 use Mnb\SecurityCore\Contracts\MalwareScannerInterface;
 use Mnb\SecurityCore\Contracts\RateLimiterInterface;
@@ -128,6 +137,68 @@ class SecurityKernel
         }
 
         return $this->fileCache();
+    }
+
+
+    public function cacheRegistry(): CacheRegistry
+    {
+        return CacheRegistry::fromConfig($this->config);
+    }
+
+    public function cachePolicy(string $name): CachePolicy
+    {
+        return $this->cacheRegistry()->get($name);
+    }
+
+    public function cacheKeyBuilder(): CacheKeyBuilder
+    {
+        $caching = is_array($this->config['caching'] ?? null) ? $this->config['caching'] : [];
+        return new CacheKeyBuilder((string)($caching['key_prefix'] ?? $this->config['cache']['prefix'] ?? 'mnb'));
+    }
+
+    public function safeCacheSerializer(): SafeCacheSerializer
+    {
+        $security = is_array($this->config['caching']['security'] ?? null) ? $this->config['caching']['security'] : [];
+        return new SafeCacheSerializer((int)($security['max_value_bytes'] ?? 1048576));
+    }
+
+    public function encryptedCache(?PDO $pdo = null, ?object $redis = null): EncryptedCache
+    {
+        return new EncryptedCache($this->cache($pdo, $redis), $this->dataKeyRing(), $this->safeCacheSerializer());
+    }
+
+    public function taggedCache(?PDO $pdo = null, ?object $redis = null): TaggedCache
+    {
+        $caching = is_array($this->config['caching'] ?? null) ? $this->config['caching'] : [];
+        return new TaggedCache($this->cache($pdo, $redis), (string)($caching['tag_prefix'] ?? 'mnb:tag:'));
+    }
+
+    public function secureCache(?PDO $pdo = null, ?object $redis = null, ?SecurityAuditTrail $audit = null): SecureCache
+    {
+        $caching = is_array($this->config['caching'] ?? null) ? $this->config['caching'] : [];
+        $security = is_array($caching['security'] ?? null) ? $caching['security'] : [];
+        $stampede = is_array($caching['stampede'] ?? null) ? $caching['stampede'] : [];
+        return new SecureCache(
+            $this->cache($pdo, $redis),
+            $this->cacheRegistry(),
+            $this->cacheKeyBuilder(),
+            $this->safeCacheSerializer(),
+            $this->dataKeyRing(),
+            $audit ?: $this->auditTrail(),
+            array_replace($security, ['jitter_percent' => (int)($stampede['jitter_percent'] ?? 0)]),
+            $this->taggedCache($pdo, $redis)
+        );
+    }
+
+    public function cacheInvalidator(?PDO $pdo = null, ?object $redis = null): CacheInvalidator
+    {
+        return new CacheInvalidator($this->taggedCache($pdo, $redis));
+    }
+
+    public function cacheStampedeGuard(?PDO $pdo = null, ?object $redis = null): CacheStampedeGuard
+    {
+        $stampede = is_array($this->config['caching']['stampede'] ?? null) ? $this->config['caching']['stampede'] : [];
+        return new CacheStampedeGuard($this->cache($pdo, $redis), (int)($stampede['lock_ttl'] ?? 15));
     }
 
     public function fileRateLimiter(): FileRateLimiter

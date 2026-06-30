@@ -28,6 +28,7 @@ class ProductionSecurityChecker
         $dataProtection = $this->config['data_protection'] ?? [];
         $webSecurity = $this->config['web_security'] ?? [];
         $fileSecurity = $this->config['file_security'] ?? [];
+        $caching = $this->config['caching'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -202,6 +203,36 @@ class ProductionSecurityChecker
                 $logs = is_array($dataProtection['logs'] ?? null) ? $dataProtection['logs'] : [];
                 if (array_key_exists('redact_before_write', $logs) && empty($logs['redact_before_write'])) {
                     $issues[] = ['level' => 'high', 'key' => 'log_redaction_disabled', 'message' => 'Audit/log redaction should stay enabled before writing production logs.'];
+                }
+            }
+
+
+            if (is_array($caching)) {
+                if (array_key_exists('enabled', $caching) && empty($caching['enabled'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'caching_strategy_disabled', 'message' => 'Caching strategy should be enabled or explicitly reviewed so tenant/user scoped cache keys, safe serialization, and sensitive-data rules are applied.'];
+                }
+                $security = is_array($caching['security'] ?? null) ? $caching['security'] : [];
+                if (array_key_exists('deny_highly_sensitive', $security) && empty($security['deny_highly_sensitive'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'highly_sensitive_cache_allowed', 'message' => 'Highly sensitive data should not be cacheable by default in production.'];
+                }
+                if (array_key_exists('encrypt_sensitive', $security) && empty($security['encrypt_sensitive'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'sensitive_cache_encryption_disabled', 'message' => 'Sensitive cache policies should encrypt cached payloads in production.'];
+                }
+                if (array_key_exists('safe_serialization', $security) && empty($security['safe_serialization'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'safe_cache_serialization_disabled', 'message' => 'Safe JSON serialization should remain enabled for cache payloads.'];
+                }
+                if (empty($caching['policies']) || !is_array($caching['policies'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'caching_policies_missing', 'message' => 'Define caching policies for public config, tenant settings, authorization decisions, and sensitive data.'];
+                } else {
+                    foreach ($caching['policies'] as $policyName => $policy) {
+                        if (!is_array($policy)) { continue; }
+                        if (($policy['data_class'] ?? '') === 'highly_sensitive' && !empty($policy['cache'])) {
+                            $issues[] = ['level' => 'high', 'key' => 'highly_sensitive_cache_policy_enabled', 'message' => 'Cache policy ' . (string)$policyName . ' caches highly sensitive data.'];
+                        }
+                        if (($policy['cache'] ?? true) !== false && in_array(($policy['data_class'] ?? ''), ['sensitive', 'highly_sensitive'], true) && empty($policy['encrypt'])) {
+                            $issues[] = ['level' => 'medium', 'key' => 'sensitive_cache_policy_not_encrypted', 'message' => 'Cache policy ' . (string)$policyName . ' should enable encryption.'];
+                        }
+                    }
                 }
             }
 

@@ -173,6 +173,60 @@ return [
         'prefix' => $_ENV['CACHE_PREFIX'] ?? 'mnb:cache:',
         'table' => $_ENV['CACHE_TABLE'] ?? 'mnb_cache',
     ],
+
+    'caching' => [
+        'enabled' => filter_var($_ENV['CACHING_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'default_driver' => $_ENV['CACHE_DRIVER'] ?? 'file',
+        'default_ttl' => (int)($_ENV['CACHE_DEFAULT_TTL'] ?? 300),
+        'key_prefix' => $_ENV['CACHE_KEY_PREFIX'] ?? 'mnb',
+        'tag_prefix' => $_ENV['CACHE_TAG_PREFIX'] ?? 'mnb:tag:',
+        'security' => [
+            'tenant_scoped_by_default' => filter_var($_ENV['CACHE_TENANT_SCOPED_BY_DEFAULT'] ?? true, FILTER_VALIDATE_BOOL),
+            'user_scoped_for_sensitive' => filter_var($_ENV['CACHE_USER_SCOPED_FOR_SENSITIVE'] ?? true, FILTER_VALIDATE_BOOL),
+            'deny_highly_sensitive' => filter_var($_ENV['CACHE_DENY_HIGHLY_SENSITIVE'] ?? true, FILTER_VALIDATE_BOOL),
+            'encrypt_sensitive' => filter_var($_ENV['CACHE_ENCRYPT_SENSITIVE'] ?? true, FILTER_VALIDATE_BOOL),
+            'max_value_bytes' => (int)($_ENV['CACHE_MAX_VALUE_BYTES'] ?? 1048576),
+            'safe_serialization' => true,
+        ],
+        'stampede' => [
+            'enabled' => filter_var($_ENV['CACHE_STAMPEDE_PROTECTION'] ?? true, FILTER_VALIDATE_BOOL),
+            'lock_ttl' => (int)($_ENV['CACHE_LOCK_TTL'] ?? 15),
+            'jitter_percent' => (int)($_ENV['CACHE_JITTER_PERCENT'] ?? 10),
+            'stale_while_revalidate' => filter_var($_ENV['CACHE_STALE_WHILE_REVALIDATE'] ?? true, FILTER_VALIDATE_BOOL),
+        ],
+        'policies' => [
+            'public_config' => [
+                'ttl' => 3600,
+                'data_class' => 'public',
+                'scope' => ['global'],
+                'tags' => ['config'],
+            ],
+            'school_settings' => [
+                'ttl' => 600,
+                'data_class' => 'internal',
+                'scope' => ['tenant'],
+                'tags' => ['school'],
+            ],
+            'student_profile' => [
+                'ttl' => 300,
+                'data_class' => 'sensitive',
+                'scope' => ['tenant', 'user'],
+                'encrypt' => true,
+                'tags' => ['students'],
+            ],
+            'authz_decision' => [
+                'ttl' => 120,
+                'data_class' => 'confidential',
+                'scope' => ['tenant', 'user'],
+                'tags' => ['authz'],
+            ],
+            'highly_sensitive_default' => [
+                'ttl' => 0,
+                'data_class' => 'highly_sensitive',
+                'cache' => false,
+            ],
+        ],
+    ],
     'rate_limiter' => [
         // file, redis, database
         'driver' => $_ENV['RATE_LIMIT_DRIVER'] ?? 'file',

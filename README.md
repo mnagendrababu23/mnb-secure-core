@@ -1421,3 +1421,24 @@ $kernel->documentInspector();
 $kernel->documentSanitizer();
 $kernel->fileRetentionManager();
 ```
+
+## Caching Strategy Engine
+
+`mnb-secure-core v1.0.1` includes a security-aware caching strategy layer on top of the existing file, Redis, and database cache drivers.
+
+```php
+$value = $kernel->secureCache()->remember(
+    'student_profile',
+    ['school_id' => 10, 'user_id' => 15, 'resource_id' => 44],
+    fn () => $studentService->profile(44)
+);
+```
+
+The caching engine supports named policies, tenant/user-aware cache keys, safe JSON serialization, sensitive-data encryption, cache tags, invalidation helpers, and stampede protection.
+
+```php
+$kernel->cacheInvalidator()->invalidateTags(['students', 'school:10']);
+$kernel->cacheStampedeGuard()->rememberLocked('dashboard.stats', 300, fn () => $service->stats());
+```
+
+Highly sensitive policies are denied by default, and sensitive cache policies can be encrypted automatically through the data-protection key ring.

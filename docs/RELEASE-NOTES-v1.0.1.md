@@ -189,3 +189,7 @@ This release line now includes the Data Protection Strategy Engine. It unifies f
 ### Improvement 21 — File Upload, Download, and Document Security Engine
 
 This improvement completes the file lifecycle by adding protected downloads, file security policies, scan-status gates, tenant-aware file access, safe download responses, checksums, signed download URLs, archive/document inspection hooks, and file retention cleanup.
+
+### Caching Strategy Engine
+
+Added policy-based secure caching with tenant/user-aware keys, safe serialization, sensitive-data encryption, tags/invalidation, stampede protection, config validation, production warnings, auto suggestions, and demo coverage.

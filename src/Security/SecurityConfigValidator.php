@@ -30,6 +30,7 @@ class SecurityConfigValidator
         $this->validateLimits();
         $this->validateUploads();
         $this->validateStores();
+        $this->validateCaching();
         $this->validateRedis();
         $this->validateCors();
         $this->validateSecurityHeaders();
@@ -462,6 +463,80 @@ class SecurityConfigValidator
 
         if (!$this->isStringLike($path) || trim((string)$path) === '') {
             $this->issue('high', 'missing_file_store_path_for_' . $sectionName, $pathName, "{$sectionName} uses file driver, but its storage path is missing or empty.", 'non-empty path string', $path);
+        }
+    }
+
+
+    private function validateCaching(): void
+    {
+        $caching = $this->section('caching', false);
+        if ($caching === null) {
+            return;
+        }
+        $this->bool($caching, 'enabled', 'caching.enabled', required: false);
+        $this->positiveInt($caching, 'default_ttl', 'caching.default_ttl', required: false);
+        foreach (['key_prefix', 'tag_prefix', 'default_driver'] as $key) {
+            if (isset($caching[$key]) && (!$this->isStringLike($caching[$key]) || preg_match('/[\r\n]/', (string)$caching[$key]))) {
+                $this->issue('medium', 'invalid_caching_' . $key, 'caching.' . $key, 'Caching identifiers must be safe single-line strings.', 'safe string', $caching[$key]);
+            }
+        }
+        if (isset($caching['security'])) {
+            if (!is_array($caching['security'])) {
+                $this->issue('high', 'invalid_caching_security', 'caching.security', 'Caching security config must be an array.', 'array', $caching['security']);
+            } else {
+                foreach (['tenant_scoped_by_default', 'user_scoped_for_sensitive', 'deny_highly_sensitive', 'encrypt_sensitive', 'safe_serialization'] as $key) {
+                    $this->bool($caching['security'], $key, 'caching.security.' . $key, required: false);
+                }
+                $this->intRange($caching['security'], 'max_value_bytes', 'caching.security.max_value_bytes', 1024, 104857600, required: false);
+            }
+        }
+        if (isset($caching['stampede'])) {
+            if (!is_array($caching['stampede'])) {
+                $this->issue('high', 'invalid_caching_stampede', 'caching.stampede', 'Caching stampede config must be an array.', 'array', $caching['stampede']);
+            } else {
+                foreach (['enabled', 'stale_while_revalidate'] as $key) {
+                    $this->bool($caching['stampede'], $key, 'caching.stampede.' . $key, required: false);
+                }
+                $this->intRange($caching['stampede'], 'lock_ttl', 'caching.stampede.lock_ttl', 1, 3600, required: false);
+                $this->intRange($caching['stampede'], 'jitter_percent', 'caching.stampede.jitter_percent', 0, 50, required: false);
+            }
+        }
+        $validClasses = ['public', 'internal', 'confidential', 'sensitive', 'highly_sensitive'];
+        if (empty($caching['policies']) || !is_array($caching['policies'])) {
+            $this->issue('medium', 'missing_caching_policies', 'caching.policies', 'Define caching policies for public config, tenant data, authorization decisions, and sensitive data.', 'non-empty policy map', $caching['policies'] ?? null);
+            return;
+        }
+        foreach ($caching['policies'] as $name => $policy) {
+            if (!$this->isStringLike($name) || !preg_match('/^[A-Za-z0-9_.:-]{1,120}$/', (string)$name)) {
+                $this->issue('high', 'invalid_cache_policy_name', 'caching.policies', 'Cache policy names must be safe identifiers.', 'safe policy name', $name);
+                continue;
+            }
+            if (!is_array($policy)) {
+                $this->issue('high', 'invalid_cache_policy', 'caching.policies.' . (string)$name, 'Cache policy must be an array.', 'array', $policy);
+                continue;
+            }
+            $path = 'caching.policies.' . (string)$name;
+            $this->intRange($policy, 'ttl', $path . '.ttl', 0, 31536000, required: false);
+            $this->intRange($policy, 'stale_ttl', $path . '.stale_ttl', 0, 31536000, required: false);
+            $this->intRange($policy, 'max_value_bytes', $path . '.max_value_bytes', 1024, 104857600, required: false);
+            foreach (['cache', 'encrypt', 'audit', 'stale_if_error', 'tenant_scoped', 'user_scoped'] as $key) {
+                $this->bool($policy, $key, $path . '.' . $key, required: false);
+            }
+            if (isset($policy['data_class']) && (!is_string($policy['data_class']) || !in_array($policy['data_class'], $validClasses, true))) {
+                $this->issue('high', 'invalid_cache_policy_data_class', $path . '.data_class', 'Cache policy data_class must be known.', implode('|', $validClasses), $policy['data_class']);
+            }
+            if (isset($policy['scope'])) {
+                $this->stringList($policy['scope'], $path . '.scope', false);
+            }
+            if (isset($policy['tags'])) {
+                $this->stringList($policy['tags'], $path . '.tags', false);
+            }
+            if (($policy['data_class'] ?? '') === 'highly_sensitive' && !empty($policy['cache'])) {
+                $this->issue('high', 'highly_sensitive_cache_policy_enabled', $path, 'Highly sensitive cache policies should be disabled by default.', 'cache=false', $policy);
+            }
+            if (($policy['cache'] ?? true) !== false && in_array(($policy['data_class'] ?? ''), ['sensitive', 'highly_sensitive'], true) && empty($policy['encrypt'])) {
+                $this->issue('medium', 'sensitive_cache_policy_not_encrypted', $path, 'Sensitive cache policies should enable encryption.', 'encrypt=true', $policy);
+            }
         }
     }
 

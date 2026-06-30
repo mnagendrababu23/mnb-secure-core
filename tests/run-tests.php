@@ -24,6 +24,15 @@ use Mnb\SecurityCore\Authz\TenantContext;
 use Mnb\SecurityCore\Authz\TenantGuard;
 use Mnb\SecurityCore\Cache\DatabaseCache;
 use Mnb\SecurityCore\Cache\FileCache;
+use Mnb\SecurityCore\Cache\CacheInvalidator;
+use Mnb\SecurityCore\Cache\CacheKeyBuilder;
+use Mnb\SecurityCore\Cache\CachePolicy;
+use Mnb\SecurityCore\Cache\CacheRegistry;
+use Mnb\SecurityCore\Cache\CacheStampedeGuard;
+use Mnb\SecurityCore\Cache\EncryptedCache;
+use Mnb\SecurityCore\Cache\SafeCacheSerializer;
+use Mnb\SecurityCore\Cache\SecureCache;
+use Mnb\SecurityCore\Cache\TaggedCache;
 use Mnb\SecurityCore\Data\DataClassifier;
 use Mnb\SecurityCore\Data\DataMasker;
 use Mnb\SecurityCore\Data\Encryption;
@@ -206,6 +215,41 @@ ok($badPolicyBlocked, 'rate limit policy validation blocks unsafe names and unsu
 $cache = new FileCache($base . '/cache');
 $cache->put('school_settings', ['x' => 1], 60);
 ok($cache->get('school_settings')['x'] === 1, 'file cache put/get');
+
+$cacheRegistry = new CacheRegistry([
+    'public_config' => ['ttl' => 60, 'data_class' => 'public', 'scope' => ['global'], 'tags' => ['config']],
+    'student_profile' => ['ttl' => 60, 'data_class' => 'sensitive', 'scope' => ['tenant', 'user'], 'encrypt' => true, 'tags' => ['students']],
+    'secret_cache' => ['ttl' => 60, 'data_class' => 'highly_sensitive', 'cache' => true],
+]);
+$cacheKeyBuilder = new CacheKeyBuilder('test');
+$keyA = $cacheKeyBuilder->build($cacheRegistry->get('student_profile'), ['school_id' => 10, 'user_id' => 1, 'resource_id' => 44]);
+$keyB = $cacheKeyBuilder->build($cacheRegistry->get('student_profile'), ['school_id' => 11, 'user_id' => 1, 'resource_id' => 44]);
+ok($keyA !== $keyB && str_contains($keyA, 'tenant:10') && str_contains($keyA, 'user:1'), 'cache key builder scopes keys by tenant and user context');
+
+$cacheKeys = new KeyRing('cache-v1', ['cache-v1' => str_repeat('C', 40)]);
+$secureCacheBackend = new FileCache($base . '/secure-cache');
+$secureCache = new SecureCache($secureCacheBackend, $cacheRegistry, $cacheKeyBuilder, new SafeCacheSerializer(), $cacheKeys, null, ['deny_highly_sensitive' => true, 'encrypt_sensitive' => true], new TaggedCache($secureCacheBackend));
+$cacheDecision = $secureCache->put('student_profile', ['school_id' => 10, 'user_id' => 1, 'resource_id' => 44], ['name' => 'Ravi', 'parent_phone' => '9876543210']);
+$cachedProfile = $secureCache->get('student_profile', ['school_id' => 10, 'user_id' => 1, 'resource_id' => 44]);
+ok($cacheDecision->allowed() && $cacheDecision->encrypted() && $cachedProfile['parent_phone'] === '9876543210', 'secure cache stores sensitive policy values encrypted and retrieves them safely');
+ok($secureCache->decision('secret_cache', [])->denied(), 'secure cache denies highly sensitive cache policies by default');
+
+$taggedCache = new TaggedCache(new FileCache($base . '/tagged-cache'));
+$taggedCache->put('student:1', ['id' => 1], 60, ['students', 'school:10']);
+$taggedCache->put('student:2', ['id' => 2], 60, ['students', 'school:10']);
+$tagFlushCount = (new CacheInvalidator($taggedCache))->invalidateTags(['students']);
+ok($tagFlushCount >= 2 && $taggedCache->get('student:1') === null && $taggedCache->get('student:2') === null, 'tagged cache invalidator flushes cached keys by tag');
+
+$guardCache = new FileCache($base . '/stampede-cache');
+$guard = new CacheStampedeGuard($guardCache, 2);
+$buildCount = 0;
+$guardValue1 = $guard->rememberLocked('expensive', 60, function () use (&$buildCount) { $buildCount++; return ['value' => 5]; });
+$guardValue2 = $guard->rememberLocked('expensive', 60, function () use (&$buildCount) { $buildCount++; return ['value' => 9]; });
+ok($guardValue1['value'] === 5 && $guardValue2['value'] === 5 && $buildCount === 1, 'cache stampede guard remembers computed values behind a lock');
+
+$encodedCachePayload = (new SafeCacheSerializer(1024))->encode(['safe' => true]);
+ok((new SafeCacheSerializer(1024))->decode($encodedCachePayload)['safe'] === true, 'safe cache serializer encodes arrays without PHP unserialize');
+
 
 $context = new TenantContext(userId: 1, schoolId: 10, branchId: 5, academicYearId: 2026, permissions: ['student.view'], classIds: [3]);
 $tenant = new TenantGuard();
@@ -866,6 +910,38 @@ $kernelRate = $kernel->rateLimiter(null, $fakeRedis)->attempt('driver-test', 1, 
 $kernelTokenService = new OpaqueTokenService($kernel->tokenStore(null, $fakeRedis));
 $kernelIssuedToken = $kernelTokenService->issue(123, ['driver.read'], ttlSeconds: 60);
 ok($kernelCache->get('driver-test')['ok'] === true && $kernelRate->allowed && $kernelTokenService->validate($kernelIssuedToken['plain_token']) !== null, 'security kernel builds injected Redis cache, rate limiter and token store drivers');
+
+$kernelSecureConfig = array_replace_recursive($defaultConfig, [
+    'app' => ['key' => str_repeat('K', 40)],
+    'paths' => ['cache' => $base . '/kernel-secure-cache'],
+    'data_protection' => [
+        'encryption' => [
+            'current_key_id' => 'cache-test',
+            'keys' => ['cache-test' => str_repeat('L', 40)],
+        ],
+    ],
+]);
+unset($kernelSecureConfig['data_protection']['encryption']['keys']['app-v1']);
+$kernelSecureCache = (new SecurityKernel($kernelSecureConfig))->secureCache();
+$kernelSecureCache->put('school_settings', ['school_id' => 10], ['theme' => 'blue']);
+$kernelSecureValue = $kernelSecureCache->remember('school_settings', ['school_id' => 10], fn() => ['theme' => 'red']);
+ok($kernelSecureValue['theme'] === 'blue', 'security kernel builds secure cache from configured caching policies');
+
+$cachingValidationReport = (new SecurityConfigValidator(array_replace_recursive($defaultConfig, [
+    'caching' => [
+        'enabled' => true,
+        'policies' => [
+            'bad policy' => ['ttl' => 60],
+            'unsafe_secret' => ['ttl' => 60, 'data_class' => 'highly_sensitive', 'cache' => true],
+            'sensitive_not_encrypted' => ['ttl' => 60, 'data_class' => 'sensitive', 'scope' => ['tenant']],
+        ],
+    ],
+])))->validate();
+ok(!$cachingValidationReport['passed'], 'security config validator catches unsafe caching strategy policies');
+
+$cachingSuggestions = (new AutoSuggestionEngine())->suggestFromCode('$cache = $kernel->cache(); $cache->put("student:44", $student, 300);', 5);
+ok(count(array_filter($cachingSuggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_caching_strategy' || ($item['id'] ?? '') === 'cache_strategy')) >= 1, 'auto suggestion engine recommends caching strategy for manual cache usage');
+
 
 $kernelInvalidDriverBlocked = false;
 try {

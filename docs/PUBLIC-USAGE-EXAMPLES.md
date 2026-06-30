@@ -412,3 +412,20 @@ $response = $kernel->protectedDownloadManager()->download(
 ```
 
 The protected download manager enforces file policy, tenant scope, scan status, safe filename/disposition headers, no-sniff, no-store cache headers, audit events, and optional signed URLs.
+
+## Caching Strategy examples
+
+```php
+$cache = $kernel->secureCache();
+
+$profile = $cache->remember(
+    'student_profile',
+    ['school_id' => 10, 'user_id' => 15, 'resource_id' => 44],
+    fn () => $students->loadProfile(44)
+);
+
+$cache->put('school_settings', ['school_id' => 10], ['theme' => 'blue']);
+$kernel->cacheInvalidator()->invalidateTags(['school:10']);
+```
+
+Use `secureCache()` for tenant/user/resource scoped data, and reserve the raw `$kernel->cache()` driver for low-risk internal utilities.
