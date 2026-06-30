@@ -56,6 +56,7 @@ class SecurityConfigValidator
         $this->validateThroughput();
         $this->validateQueue();
         $this->validateTokenSessionControl();
+        $this->validateProductionReadiness();
         $this->validatePentest();
 
         $errors = array_values(array_filter($this->issues, fn(array $issue): bool => in_array($issue['level'], ['critical', 'high'], true)));
@@ -1637,6 +1638,18 @@ class SecurityConfigValidator
         if ($web === null) {
             return;
         }
+
+        $output = is_array($web['output_encoding'] ?? null) ? $web['output_encoding'] : [];
+        if ($output !== []) {
+            $this->bool($output, 'enabled', 'web_security.output_encoding.enabled', false);
+            $this->bool($output, 'enforce_by_default', 'web_security.output_encoding.enforce_by_default', false);
+            $this->bool($output, 'require_safe_values', 'web_security.output_encoding.require_safe_values', false);
+            $this->bool($output, 'fail_on_raw_echo_patterns', 'web_security.output_encoding.fail_on_raw_echo_patterns', false);
+            $this->stringList($output['allowed_raw_variables'] ?? [], 'web_security.output_encoding.allowed_raw_variables', false);
+            if ($this->isProduction($this->config['app'] ?? []) && (empty($output['enabled']) || empty($output['enforce_by_default']))) {
+                $this->issue('high', 'xss_output_encoding_not_enforced', 'web_security.output_encoding', 'Output encoding should be enabled and enforced by default in production.', 'enabled + enforce_by_default', $output);
+            }
+        }
         $this->bool($web, 'enabled', 'web_security.enabled', required: false);
 
         if (!isset($web['profiles']) || !is_array($web['profiles']) || $web['profiles'] === []) {
@@ -2498,6 +2511,37 @@ class SecurityConfigValidator
             $remember = is_array($sessions['remember_me'] ?? null) ? $sessions['remember_me'] : [];
             foreach (['enabled','rotate_on_use','hash_storage','revoke_on_password_change'] as $key) { if (isset($remember[$key])) { $this->bool($remember, $key, 'sessions.remember_me.' . $key, required: false); } }
             if (array_key_exists('hash_storage', $remember) && !$remember['hash_storage']) { $this->issue('high', 'remember_me_plaintext_storage', 'sessions.remember_me.hash_storage', 'Remember-me tokens must be hashed at rest.', true, false); }
+        }
+    }
+
+    private function validateProductionReadiness(): void
+    {
+        $readiness = $this->section('production_readiness', false);
+        if ($readiness === null) {
+            return;
+        }
+
+        $this->bool($readiness, 'enabled', 'production_readiness.enabled', false);
+        $this->bool($readiness, 'block_on_high_issues', 'production_readiness.block_on_high_issues', false);
+        $this->bool($readiness, 'require_webhook_secret', 'production_readiness.require_webhook_secret', false);
+        $this->bool($readiness, 'require_xss_enforcement', 'production_readiness.require_xss_enforcement', false);
+        $this->bool($readiness, 'require_origin_gate', 'production_readiness.require_origin_gate', false);
+        $this->bool($readiness, 'require_release_manifest', 'production_readiness.require_release_manifest', false);
+        $this->stringList($readiness['required_secrets'] ?? [], 'production_readiness.required_secrets', false);
+        $this->stringList($readiness['required_upgrade_manifests'] ?? [], 'production_readiness.required_upgrade_manifests', false);
+
+        if (!empty($readiness['require_webhook_secret'])) {
+            $webhookSecret = (string)($this->config['request_receiving']['webhook']['secret'] ?? '');
+            if ($this->isProduction($this->config['app'] ?? []) && strlen($webhookSecret) < 32) {
+                $this->issue('high', 'webhook_secret_not_ready_for_release', 'request_receiving.webhook.secret', 'Production readiness requires a 32+ character webhook secret.', '32+ character secret', strlen($webhookSecret) . ' chars');
+            }
+        }
+
+        if (!empty($readiness['require_xss_enforcement'])) {
+            $output = is_array($this->config['web_security']['output_encoding'] ?? null) ? $this->config['web_security']['output_encoding'] : [];
+            if (empty($output['enabled']) || empty($output['enforce_by_default'])) {
+                $this->issue('high', 'xss_enforcement_required', 'web_security.output_encoding', 'Final production readiness requires output encoding enforcement.', 'enabled + enforce_by_default', $output);
+            }
         }
     }
 

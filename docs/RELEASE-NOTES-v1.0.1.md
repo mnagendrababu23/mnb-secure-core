@@ -370,3 +370,21 @@ Validation summary for this patch: PHP lint passed, tests passed, demos passed, 
 MNB Secure Core v1.0.1 adds the Token Revocation and Session Control Engine, introducing token lifecycle governance, refresh token rotation, revocation lists, session registry, device session tracking, forced logout, replay detection, idle and absolute session timeouts, remember-me token safety, token audit trails, CLI diagnostics, and vulnerability matrix coverage for stolen token reuse, session hijacking, session fixation, refresh token replay, and unrevoked session risks.
 
 New CLI commands include `token:policy`, `token:revoke`, `token:introspect`, `token:cleanup`, `token:family`, `token:revoke-family`, `session:policy`, `session:list`, `session:revoke`, `session:revoke-user`, `session:cleanup`, `session:check`, and `session:devices`.
+
+## Upgrade 36 — Final Production Readiness, XSS Enforcement, and Release Consolidation Patch
+
+This patch adds final production readiness and release consolidation controls under the same v1.0.1 release line. It adds policy-driven output encoding helpers, safe template rendering, unsafe output scanning, production environment checklist generation, required secret/webhook readiness gates, final release-gate evaluation, clean archive planning, and consolidated upgrade manifest reporting.
+
+New CLI commands:
+
+```bash
+php bin/mnb-secure xss:policy
+php bin/mnb-secure xss:scan
+php bin/mnb-secure xss:escape-sample
+php bin/mnb-secure production:readiness
+php bin/mnb-secure production:env-checklist
+php bin/mnb-secure production:release-plan
+php bin/mnb-secure release:manifest
+php bin/mnb-secure release:build-plan
+php bin/mnb-secure final:gate
+```

@@ -2521,5 +2521,43 @@ $tokenSessionMatrix = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityControlM
 ok(isset($tokenSessionMatrix['stolen_token_reuse']) && isset($tokenSessionMatrix['session_fixation']) && $tokenSessionMatrix['stolen_token_reuse']->status() === 'protected', 'vulnerability matrix maps token revocation and session control risks');
 ok(in_array('PT-TOKEN-001', array_column((new PentestChecklist())->toArray(), 'id'), true) && isset((new PayloadLibrary())->all()['token_session']) && isset((new VerificationMatrix())->all()['Token Revocation and Session Control']), 'pentest checklist, payloads, and matrix include token/session cases');
 
+
+
+$finalConfig = array_replace_recursive(require __DIR__ . '/../config/security.php', [
+    'app' => ['env' => 'production', 'debug' => false],
+    'web_security' => ['output_encoding' => ['enabled' => true, 'enforce_by_default' => true, 'require_safe_values' => true, 'fail_on_raw_echo_patterns' => true, 'allowed_raw_variables' => []]],
+    'request_receiving' => ['webhook' => ['secret' => str_repeat('w', 32)]],
+    'origin_protection' => ['enabled' => true],
+    'production_readiness' => ['enabled' => true, 'require_webhook_secret' => true, 'require_xss_enforcement' => true, 'require_origin_gate' => true, 'required_secrets' => ['APP_KEY','DATA_KEY','DATA_SEARCH_HASH_KEY','SIGNED_URL_KEY','WEBHOOK_SECRET'], 'required_upgrade_manifests' => ['UPGRADE-35-CHANGED-FILES-MANIFEST.md']],
+]);
+foreach (['APP_KEY','DATA_KEY','DATA_SEARCH_HASH_KEY','SIGNED_URL_KEY','WEBHOOK_SECRET'] as $secretName) {
+    $_ENV[$secretName] = str_repeat(strtolower($secretName[0]), 32);
+    putenv($secretName . '=' . $_ENV[$secretName]);
+}
+$finalKernel = new SecurityKernel($finalConfig);
+$encodingPolicy = $finalKernel->outputEncodingPolicy();
+ok($encodingPolicy->enabled() && $encodingPolicy->enforceByDefault(), 'output encoding policy enforces XSS-safe output by default');
+$safeTemplate = $finalKernel->safeTemplateRenderer()->renderString('<p>{{ name }}</p>', ['name' => '<script>alert(1)</script>']);
+ok(str_contains($safeTemplate, '&lt;script&gt;') && !str_contains($safeTemplate, '<script>'), 'safe template renderer escapes untrusted HTML data');
+$safeView = $finalKernel->safeViewData()->html('title', '<b>Unsafe</b>')->strings();
+ok($safeView['title'] === '&lt;b&gt;Unsafe&lt;/b&gt;', 'safe view data stores encoded values');
+$scan = $finalKernel->unsafeOutputScanner()->scanString('<?= $userInput ?> <script>el.innerHTML = value</script>', 'unit-view.php');
+ok(!$scan['passed'] && $scan['count'] >= 2, 'unsafe output scanner detects raw echo and innerHTML patterns');
+$readiness = $finalKernel->finalProductionReadinessChecker(dirname(__DIR__))->check();
+ok($readiness->passed(), 'final production readiness checker passes hardened config and environment');
+$envChecklist = $finalKernel->envChecklistBuilder()->build();
+ok(count($envChecklist['items']) >= 5 && $envChecklist['event'] === \Mnb\SecurityCore\Production\ProductionAuditEvents::ENV_CHECKLIST_CREATED, 'production env checklist includes required secrets and deployment variables');
+$releaseManifest = $finalKernel->releaseConsolidationManifest()->toArray();
+ok($releaseManifest['count'] >= 10 && str_contains(implode(' ', $releaseManifest['upgrades']), 'Final Production Readiness'), 'release consolidation manifest summarizes upgrades 27-36');
+$releasePlan = $finalKernel->releaseArchivePlanner()->plan();
+ok(in_array('vendor/', $releasePlan['exclude'], true) && in_array('.env', $releasePlan['exclude'], true), 'release archive planner excludes vendor, .env, and runtime storage');
+$finalGate = $finalKernel->finalReleaseGate()->evaluate($readiness);
+ok($finalGate['passed'] && $finalGate['event'] === \Mnb\SecurityCore\Production\ProductionAuditEvents::FINAL_GATE_PASSED, 'final release gate passes clean readiness report');
+$unsafeFinalReport = (new \Mnb\SecurityCore\Security\SecurityConfigValidator(['app' => ['env' => 'production', 'debug' => true], 'production_readiness' => ['enabled' => true, 'require_xss_enforcement' => true], 'web_security' => ['output_encoding' => ['enabled' => false]]]))->validate();
+ok(!$unsafeFinalReport['passed'], 'security config validator flags unsafe final production readiness and disabled XSS enforcement');
+$finalMatrix = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityControlMapper($finalConfig))->definitions();
+ok(isset($finalMatrix['xss_template_escape_gap'], $finalMatrix['production_readiness_gap'], $finalMatrix['release_consolidation_gap']) && $finalMatrix['xss']->status() === 'protected', 'vulnerability matrix maps final readiness and XSS enforcement risks');
+ok(in_array('PT-XSS-002', array_column((new PentestChecklist())->toArray(), 'id'), true) && isset((new PayloadLibrary())->all()['production_release']) && isset((new VerificationMatrix())->all()['Final Production Readiness and Release Consolidation']), 'pentest checklist, payloads, and matrix include final readiness cases');
+
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

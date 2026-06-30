@@ -380,3 +380,15 @@ MNB Secure Core v1.0.1 adds the Async Request, Response Queue, and Background Jo
 ## v1.0.1 — Upgrade 35: Token Revocation and Session Control Engine
 
 Added the Token Revocation and Session Control Engine, introducing token lifecycle governance, refresh token rotation, revocation stores, token introspection, replay/reuse detection, session registry, session rotation, forced logout, concurrent session limits, remember-me token rotation, device session tracking, CLI diagnostics, pentest coverage, and vulnerability matrix coverage for token/session risks.
+
+## v1.0.1 — Upgrade 36: Final Production Readiness, XSS Enforcement, and Release Consolidation Patch
+
+MNB Secure Core v1.0.1 adds the Final Production Readiness, XSS Enforcement, and Release Consolidation Patch, strengthening final release safety with output encoding enforcement, safe template rendering helpers, unsafe output scanning, production environment readiness checks, required secret and webhook-secret gates, release archive planning, consolidated upgrade manifests, final release gates, CLI diagnostics, pentest coverage, and vulnerability matrix coverage for XSS template escaping gaps and production readiness risks.
+
+### Added
+- Output encoding policy, safe template renderer, safe view data, template-safe values, and unsafe output scanner.
+- Final production readiness policy, checker, release gate, environment checklist builder, release archive planner, and release consolidation manifest.
+- CLI diagnostics for XSS policy/scanning, production readiness, final gate, release manifest, and clean archive planning.
+- Demo `demos/40-final-production-readiness-xss-release-consolidation-patch.php`.
+- Pentest cases for final output/XSS enforcement and final release readiness.
+- Vulnerability matrix coverage for `xss_template_escape_gap`, `production_readiness_gap`, `release_consolidation_gap`, and `webhook_secret_missing`.

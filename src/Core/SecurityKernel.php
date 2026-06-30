@@ -234,6 +234,10 @@ use Mnb\SecurityCore\Http\Middleware\CacheControlMiddleware;
 use Mnb\SecurityCore\Web\CacheControlPolicy;
 use Mnb\SecurityCore\Web\HtmlSanitizer;
 use Mnb\SecurityCore\Web\OutputEscaper;
+use Mnb\SecurityCore\Web\OutputEncodingPolicy;
+use Mnb\SecurityCore\Web\SafeTemplateRenderer;
+use Mnb\SecurityCore\Web\SafeViewData;
+use Mnb\SecurityCore\Web\UnsafeOutputScanner;
 use Mnb\SecurityCore\Web\SafeRedirector;
 use Mnb\SecurityCore\Web\SecureCookieBuilder;
 use Mnb\SecurityCore\Web\SignedUrl;
@@ -256,6 +260,12 @@ use Mnb\SecurityCore\Vulnerability\VulnerabilityAdvisor;
 use Mnb\SecurityCore\Vulnerability\VulnerabilityCoverageReport;
 use Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix;
 use Mnb\SecurityCore\Vulnerability\VulnerabilityReportExporter;
+use Mnb\SecurityCore\Production\ProductionReadinessPolicy;
+use Mnb\SecurityCore\Production\FinalProductionReadinessChecker;
+use Mnb\SecurityCore\Production\EnvChecklistBuilder;
+use Mnb\SecurityCore\Production\ReleaseArchivePlanner;
+use Mnb\SecurityCore\Production\ReleaseConsolidationManifest;
+use Mnb\SecurityCore\Production\FinalReleaseGate;
 use Mnb\SecurityCore\Pentest\EvidenceCollector;
 use Mnb\SecurityCore\Pentest\EvidenceRedactor;
 use Mnb\SecurityCore\Pentest\EvidenceStore;
@@ -925,6 +935,27 @@ class SecurityKernel
     public function outputEscaper(): OutputEscaper
     {
         return new OutputEscaper();
+    }
+
+
+    public function outputEncodingPolicy(): OutputEncodingPolicy
+    {
+        return OutputEncodingPolicy::fromConfig($this->config);
+    }
+
+    public function safeTemplateRenderer(): SafeTemplateRenderer
+    {
+        return new SafeTemplateRenderer($this->outputEncodingPolicy(), $this->outputEscaper());
+    }
+
+    public function safeViewData(): SafeViewData
+    {
+        return new SafeViewData($this->outputEscaper());
+    }
+
+    public function unsafeOutputScanner(): UnsafeOutputScanner
+    {
+        return new UnsafeOutputScanner($this->outputEncodingPolicy());
     }
 
     public function htmlSanitizer(array $override = []): HtmlSanitizer
@@ -1840,6 +1871,36 @@ class SecurityKernel
     public function pdo(): PDO
     {
         return (new PdoConnectionFactory())->create(DatabaseConfig::fromArray($this->config['database'] ?? []))->pdo();
+    }
+
+    public function productionReadinessPolicy(): ProductionReadinessPolicy
+    {
+        return ProductionReadinessPolicy::fromConfig($this->config);
+    }
+
+    public function finalProductionReadinessChecker(string $root = ''): FinalProductionReadinessChecker
+    {
+        return new FinalProductionReadinessChecker($this->config, $root);
+    }
+
+    public function envChecklistBuilder(): EnvChecklistBuilder
+    {
+        return new EnvChecklistBuilder($this->productionReadinessPolicy());
+    }
+
+    public function releaseArchivePlanner(): ReleaseArchivePlanner
+    {
+        return new ReleaseArchivePlanner();
+    }
+
+    public function releaseConsolidationManifest(): ReleaseConsolidationManifest
+    {
+        return ReleaseConsolidationManifest::default();
+    }
+
+    public function finalReleaseGate(): FinalReleaseGate
+    {
+        return new FinalReleaseGate();
     }
 
     private function redis(): object

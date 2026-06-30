@@ -1824,3 +1824,19 @@ php bin/mnb-secure session:list
 php bin/mnb-secure session:devices demo-user
 php bin/mnb-secure vulnerabilities:check refresh_token_replay
 ```
+
+### Upgrade 36 — Final Production Readiness, XSS Enforcement, and Release Consolidation Patch
+
+Upgrade 36 adds final release hardening for v1.0.1: output encoding enforcement, safe template rendering helpers, unsafe output scanning, production `.env` checklist generation, final readiness checks, release archive planning, consolidated upgrade manifest reporting, and a final release gate.
+
+Useful commands:
+
+```bash
+php bin/mnb-secure xss:policy
+php bin/mnb-secure xss:scan
+php bin/mnb-secure production:readiness
+php bin/mnb-secure production:env-checklist
+php bin/mnb-secure release:manifest
+php bin/mnb-secure release:build-plan
+php bin/mnb-secure final:gate
+```

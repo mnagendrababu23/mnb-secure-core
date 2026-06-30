@@ -723,6 +723,49 @@ switch ($command) {
         $report = $kernel->originExposureScanner()->scan()->toArray();
         echo json_encode(['passed' => !empty($report['passed']), 'gate' => 'origin_protection', 'report' => $report], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit(!empty($report['passed']) ? 0 : 1);
+    case 'xss:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->outputEncodingPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'xss:escape-sample':
+        $kernel = new SecurityKernel($config);
+        $input = $argv[2] ?? '<script>alert(1)</script>';
+        $renderer = $kernel->safeTemplateRenderer();
+        echo json_encode([
+            'input' => $input,
+            'html' => (string)$renderer->safeValue($input, 'html'),
+            'attr' => (string)$renderer->safeValue($input, 'attr'),
+            'js' => (string)$renderer->safeValue($input, 'js'),
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'xss:scan':
+        $kernel = new SecurityKernel($config);
+        $content = $argv[2] ?? '<?= $userInput ?> <div id="x"></div><script>el.innerHTML = value</script>';
+        echo json_encode($kernel->unsafeOutputScanner()->scanString($content, 'cli'), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'production:readiness':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->finalProductionReadinessChecker($root)->check()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'production:env-checklist':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->envChecklistBuilder()->build(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'production:release-plan':
+    case 'release:build-plan':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->releaseArchivePlanner()->plan($argv[2] ?? 'mnb-secure-core-v1.0.1-final-merged.zip'), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'release:manifest':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->releaseConsolidationManifest()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'final:gate':
+        $kernel = new SecurityKernel($config);
+        $readiness = $kernel->finalProductionReadinessChecker($root)->check();
+        echo json_encode($kernel->finalReleaseGate()->evaluate($readiness), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+
     case 'errors:policy':
         $kernel = new SecurityKernel($config);
         echo json_encode($kernel->errorPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
@@ -828,6 +871,15 @@ switch ($command) {
         echo "  pentest:remediation-plan Build remediation SLA plan for a finding\n";
         echo "  pentest:retest           Show retest gate behavior\n";
         echo "  security:release-gate    Evaluate security release gate\n";
+        echo "  xss:policy               Show output encoding/XSS enforcement policy\n";
+        echo "  xss:scan                 Scan inline content for unsafe output patterns\n";
+        echo "  xss:escape-sample        Show safe context-specific escaping sample\n";
+        echo "  production:readiness     Show final production readiness report\n";
+        echo "  production:env-checklist Show required production .env checklist\n";
+        echo "  production:release-plan  Show final merged release archive plan\n";
+        echo "  release:manifest         Show consolidated v1.0.1 upgrade manifest\n";
+        echo "  release:build-plan       Show clean ZIP build/exclusion plan\n";
+        echo "  final:gate               Evaluate final production release gate\n";
         echo "  errors:policy            Show safe error response/log isolation policy\n";
         echo "  errors:catalog           Show safe public error catalog\n";
         echo "  errors:simulate          Simulate safe error response: internal|validation|security\n";

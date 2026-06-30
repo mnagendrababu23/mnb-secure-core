@@ -234,6 +234,13 @@ return array_replace_recursive($base, [
 
     'web_security' => [
         'enabled' => filter_var($_ENV['WEB_SECURITY_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'output_encoding' => [
+            'enabled' => filter_var($_ENV['OUTPUT_ENCODING_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'enforce_by_default' => true,
+            'require_safe_values' => true,
+            'fail_on_raw_echo_patterns' => true,
+            'allowed_raw_variables' => array_values(array_filter(array_map('trim', explode(',', $_ENV['OUTPUT_ENCODING_ALLOWED_RAW'] ?? '')))),
+        ],
         'profiles' => [
             'browser_page' => [
                 'security_headers' => true,
@@ -772,7 +779,7 @@ return array_replace_recursive($base, [
         ],
         'vulnerabilities' => [
             'sql_injection' => ['enabled' => true, 'severity' => 'critical'],
-            'xss' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'partially_protected'],
+            'xss' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'protected'],
             'csrf' => ['enabled' => true, 'severity' => 'high'],
             'broken_access_control' => ['enabled' => true, 'severity' => 'critical'],
             'sensitive_data_exposure' => ['enabled' => true, 'severity' => 'critical'],

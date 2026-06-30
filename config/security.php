@@ -573,6 +573,13 @@ return [
 
     'web_security' => [
         'enabled' => filter_var($_ENV['WEB_SECURITY_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'output_encoding' => [
+            'enabled' => filter_var($_ENV['OUTPUT_ENCODING_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'enforce_by_default' => true,
+            'require_safe_values' => true,
+            'fail_on_raw_echo_patterns' => true,
+            'allowed_raw_variables' => array_values(array_filter(array_map('trim', explode(',', $_ENV['OUTPUT_ENCODING_ALLOWED_RAW'] ?? '')))),
+        ],
         'profiles' => [
             'browser_page' => [
                 'security_headers' => true,
@@ -1185,7 +1192,7 @@ return [
         ],
         'vulnerabilities' => [
             'sql_injection' => ['enabled' => true, 'severity' => 'critical'],
-            'xss' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'partially_protected'],
+            'xss' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'protected'],
             'csrf' => ['enabled' => true, 'severity' => 'high'],
             'broken_access_control' => ['enabled' => true, 'severity' => 'critical'],
             'sensitive_data_exposure' => ['enabled' => true, 'severity' => 'critical'],
@@ -1622,6 +1629,25 @@ return [
             'rotate_on_use' => true,
             'hash_storage' => true,
             'revoke_on_password_change' => true,
+        ],
+    ],
+
+    'production_readiness' => [
+        'enabled' => true,
+        'block_on_high_issues' => true,
+        'require_webhook_secret' => true,
+        'require_xss_enforcement' => true,
+        'require_origin_gate' => true,
+        'require_release_manifest' => true,
+        'required_secrets' => ['APP_KEY', 'DATA_KEY', 'DATA_SEARCH_HASH_KEY', 'SIGNED_URL_KEY', 'WEBHOOK_SECRET'],
+        'required_upgrade_manifests' => [
+            'UPGRADE-30-CHANGED-FILES-MANIFEST.md',
+            'UPGRADE-31-CHANGED-FILES-MANIFEST.md',
+            'UPGRADE-32-CHANGED-FILES-MANIFEST.md',
+            'UPGRADE-33-CHANGED-FILES-MANIFEST.md',
+            'UPGRADE-34-CHANGED-FILES-MANIFEST.md',
+            'UPGRADE-35-CHANGED-FILES-MANIFEST.md',
+            'UPGRADE-36-CHANGED-FILES-MANIFEST.md',
         ],
     ],
 
