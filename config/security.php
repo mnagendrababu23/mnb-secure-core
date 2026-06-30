@@ -95,6 +95,10 @@ return [
         'block_direct_ip_host' => filter_var($_ENV['BLOCK_DIRECT_IP_HOST'] ?? true, FILTER_VALIDATE_BOOL),
         'cdn_or_proxy_enabled' => filter_var($_ENV['CDN_OR_PROXY_ENABLED'] ?? false, FILTER_VALIDATE_BOOL),
         'require_cdn_or_proxy_in_production' => filter_var($_ENV['REQUIRE_CDN_OR_PROXY_IN_PRODUCTION'] ?? true, FILTER_VALIDATE_BOOL),
+        // Reject spoofed Forwarded/X-Forwarded-* headers unless REMOTE_ADDR is trusted.
+        'block_untrusted_forwarded_headers' => filter_var($_ENV['BLOCK_UNTRUSTED_FORWARDED_HEADERS'] ?? true, FILTER_VALIDATE_BOOL),
+        // Enable only when every valid request reaches PHP through a configured trusted proxy/CDN.
+        'require_trusted_proxy' => filter_var($_ENV['REQUIRE_TRUSTED_PROXY'] ?? false, FILTER_VALIDATE_BOOL),
         'strip_headers' => ['Server', 'X-Powered-By', 'X-AspNet-Version', 'X-AspNetMvc-Version', 'X-Generator', 'X-Runtime', 'X-Version'],
     ],
 

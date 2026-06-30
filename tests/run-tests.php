@@ -38,6 +38,9 @@ use Mnb\SecurityCore\Http\Middleware\ApiTokenMiddleware;
 use Mnb\SecurityCore\Http\Middleware\HttpsMiddleware;
 use Mnb\SecurityCore\Http\Middleware\RateLimitMiddleware;
 use Mnb\SecurityCore\Http\Middleware\RateLimitPolicyMiddleware;
+use Mnb\SecurityCore\Http\Middleware\RequestTrustMiddleware;
+use Mnb\SecurityCore\Http\Middleware\ServerIdentityProtectionMiddleware;
+use Mnb\SecurityCore\Http\Middleware\TrustedHostMiddleware;
 use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
 use Mnb\SecurityCore\Http\MiddlewarePipeline;
 use Mnb\SecurityCore\Http\Request;
@@ -250,6 +253,44 @@ ok(!$spoofedForwardedHttps->isSecure(), 'request ignores spoofed forwarded HTTPS
 
 $trustedForwardedHttps = new Request('GET', '/', [], [], [], ['HTTPS' => 'off', 'HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => '203.0.113.10'], ['203.0.113.0/24']);
 ok($trustedForwardedHttps->isSecure(), 'request trusts forwarded HTTPS only from trusted proxy ranges');
+
+$trustedForwardedClient = new Request('GET', '/api', [], [], [], [
+    'REMOTE_ADDR' => '10.0.0.20',
+    'HTTP_X_FORWARDED_FOR' => '198.51.100.25, 10.0.0.10',
+], ['10.0.0.0/8']);
+ok($trustedForwardedClient->remoteIp() === '10.0.0.20' && $trustedForwardedClient->clientIp() === '198.51.100.25' && $trustedForwardedClient->ip() === '198.51.100.25', 'request resolves real client IP through trusted proxy chain');
+
+$untrustedForwardedClient = new Request('GET', '/api', [], [], [], [
+    'REMOTE_ADDR' => '198.51.100.77',
+    'HTTP_X_FORWARDED_FOR' => '10.10.10.10',
+], ['10.0.0.0/8']);
+ok($untrustedForwardedClient->clientIp() === '198.51.100.77', 'request ignores forwarded client IP from untrusted peer');
+
+$trustedForwardedHost = new Request('GET', '/api', [], [], [], [
+    'REMOTE_ADDR' => '10.0.0.20',
+    'HTTP_HOST' => '10.0.0.20',
+    'HTTP_X_FORWARDED_HOST' => 'app.example.com',
+], ['10.0.0.0/8']);
+ok($trustedForwardedHost->host() === '10.0.0.20' && $trustedForwardedHost->effectiveHost() === 'app.example.com', 'request exposes safe trusted forwarded host separately from raw host');
+
+$badForwardedHost = new Request('GET', '/api', [], [], [], [
+    'REMOTE_ADDR' => '10.0.0.20',
+    'HTTP_HOST' => 'origin.local',
+    'HTTP_X_FORWARDED_HOST' => "bad.example.com\r\nInjected: yes",
+], ['10.0.0.0/8']);
+ok($badForwardedHost->trustedForwardedHost() === null && $badForwardedHost->effectiveHost() === 'origin.local', 'request rejects unsafe forwarded host values');
+
+$trustPipeline = new MiddlewarePipeline([new RequestTrustMiddleware(['block_untrusted_forwarded_headers' => true])]);
+$blockedForwarded = $trustPipeline->handle($untrustedForwardedClient, fn() => Response::text('ok'));
+ok($blockedForwarded->status() === 400, 'request trust middleware blocks spoofed forwarded headers from untrusted clients');
+
+$trustedHostPipeline = new MiddlewarePipeline([new TrustedHostMiddleware(['app.example.com'])]);
+$trustedHostResponse = $trustedHostPipeline->handle($trustedForwardedHost, fn() => Response::text('ok'));
+ok($trustedHostResponse->status() === 200, 'trusted host middleware accepts effective trusted forwarded host');
+
+$originPipeline = new MiddlewarePipeline([new ServerIdentityProtectionMiddleware(['enabled' => true, 'block_direct_ip_host' => true])]);
+$originResponse = $originPipeline->handle($trustedForwardedHost, fn() => Response::text('ok'));
+ok($originResponse->status() === 200, 'origin protection does not block proxy requests with safe forwarded public host');
 
 $attributedRequest = $request->withAttribute('auth_user_id', 99);
 ok($request->attribute('auth_user_id') === null && $attributedRequest->attribute('auth_user_id') === 99, 'request attributes are immutable and available for auth context');

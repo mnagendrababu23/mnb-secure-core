@@ -17,11 +17,27 @@ class ServerIdentityProtectionMiddleware implements MiddlewareInterface
 
     public function process(Request $request, callable $next): Response
     {
-        if (!empty($this->config['enabled']) && $this->hider->shouldBlockDirectIpHost($request)) {
-            return Response::json([
-                'status' => false,
-                'message' => 'Direct server access is not allowed.',
-            ], 421);
+        if (!empty($this->config['enabled'])) {
+            if (!empty($this->config['block_untrusted_forwarded_headers']) && $request->hasForwardedHeaders() && !$request->isFromTrustedProxy()) {
+                return Response::json([
+                    'status' => false,
+                    'message' => 'Untrusted forwarded request headers are not allowed.',
+                ], 400);
+            }
+
+            if (!empty($this->config['require_trusted_proxy']) && !$request->isFromTrustedProxy()) {
+                return Response::json([
+                    'status' => false,
+                    'message' => 'Direct origin access is not allowed.',
+                ], 421);
+            }
+
+            if ($this->hider->shouldBlockDirectIpHost($request)) {
+                return Response::json([
+                    'status' => false,
+                    'message' => 'Direct server access is not allowed.',
+                ], 421);
+            }
         }
 
         $response = $next($request);

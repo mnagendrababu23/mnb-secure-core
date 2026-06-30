@@ -55,6 +55,15 @@ class ProductionSecurityChecker
             if (!empty($originProtection['require_cdn_or_proxy_in_production']) && empty($originProtection['cdn_or_proxy_enabled'])) {
                 $issues[] = ['level' => 'medium', 'key' => 'cdn_or_proxy_not_marked_enabled', 'message' => 'Use a CDN/reverse proxy plus firewall rules to truly hide the origin server IP.'];
             }
+            if (array_key_exists('block_untrusted_forwarded_headers', $originProtection) && empty($originProtection['block_untrusted_forwarded_headers'])) {
+                $issues[] = ['level' => 'medium', 'key' => 'untrusted_forwarded_headers_allowed', 'message' => 'Reject spoofed Forwarded/X-Forwarded-* headers from untrusted clients in production.'];
+            }
+            if (!empty($originProtection['cdn_or_proxy_enabled']) && empty($app['trusted_proxies'])) {
+                $issues[] = ['level' => 'medium', 'key' => 'cdn_enabled_without_trusted_proxies', 'message' => 'CDN/proxy mode is enabled, but app.trusted_proxies is empty; forwarded client IP/host/proto headers will not be trusted.'];
+            }
+            if (!empty($originProtection['require_trusted_proxy']) && empty($app['trusted_proxies'])) {
+                $issues[] = ['level' => 'high', 'key' => 'require_trusted_proxy_without_proxies', 'message' => 'require_trusted_proxy is enabled but no trusted proxy IP/CIDR ranges are configured.'];
+            }
         }
         if (($app['env'] ?? 'local') === 'production' && (($uploads['scanner']['driver'] ?? 'heuristic') === 'none')) {
             $issues[] = ['level' => 'medium', 'key' => 'upload_scanner_disabled', 'message' => 'Enable at least heuristic upload scanning in production.'];

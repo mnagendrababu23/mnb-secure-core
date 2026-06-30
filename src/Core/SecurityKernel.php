@@ -26,6 +26,8 @@ use Mnb\SecurityCore\RateLimit\RedisRateLimiter;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicy;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicyRegistry;
 use Mnb\SecurityCore\Http\Middleware\RateLimitPolicyMiddleware;
+use Mnb\SecurityCore\Http\Middleware\RequestTrustMiddleware;
+use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
 use Mnb\SecurityCore\Logging\FileLogger;
@@ -167,6 +169,16 @@ class SecurityKernel
     public function serverIdentityHider(): ServerIdentityHider
     {
         return new ServerIdentityHider($this->config['origin_protection'] ?? []);
+    }
+
+    public function requestFromGlobals(): Request
+    {
+        return Request::fromGlobals($this->config['app']['trusted_proxies'] ?? []);
+    }
+
+    public function requestTrustMiddleware(): RequestTrustMiddleware
+    {
+        return new RequestTrustMiddleware($this->config['origin_protection'] ?? []);
     }
 
     public function pdo(): PDO

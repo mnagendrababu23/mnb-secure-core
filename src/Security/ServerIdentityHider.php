@@ -39,7 +39,7 @@ class ServerIdentityHider
             return false;
         }
 
-        return self::isIpAddressHost($request->host());
+        return self::isIpAddressHost($request->effectiveHost());
     }
 
     public static function normalizeHost(string $host): string

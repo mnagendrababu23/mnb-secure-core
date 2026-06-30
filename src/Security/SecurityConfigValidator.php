@@ -385,11 +385,37 @@ class SecurityConfigValidator
         if ($origin === null) {
             return;
         }
-        foreach (['enabled', 'block_direct_ip_host', 'cdn_or_proxy_enabled', 'require_cdn_or_proxy_in_production', 'hide_php_session_cookie_name'] as $key) {
+
+        foreach ([
+            'enabled',
+            'block_direct_ip_host',
+            'cdn_or_proxy_enabled',
+            'require_cdn_or_proxy_in_production',
+            'hide_php_session_cookie_name',
+            'block_untrusted_forwarded_headers',
+            'require_trusted_proxy',
+            'emit_headers',
+        ] as $key) {
             $this->bool($origin, $key, 'origin_protection.' . $key, required: false);
         }
+
         if (isset($origin['strip_headers'])) {
             $this->stringList($origin['strip_headers'], 'origin_protection.strip_headers', false);
+        }
+
+        $app = is_array($this->config['app'] ?? null) ? $this->config['app'] : [];
+        $trustedProxies = is_array($app['trusted_proxies'] ?? null) ? array_filter($app['trusted_proxies']) : [];
+
+        if (!empty($origin['cdn_or_proxy_enabled']) && $trustedProxies === []) {
+            $this->issue('medium', 'cdn_enabled_without_trusted_proxies', 'app.trusted_proxies', 'CDN/proxy mode is marked enabled, but no trusted proxy IP/CIDR ranges are configured. Forwarded headers will not be trusted.', 'trusted proxy IP/CIDR list', []);
+        }
+
+        if (!empty($origin['require_trusted_proxy']) && $trustedProxies === []) {
+            $this->issue('high', 'require_trusted_proxy_without_proxies', 'origin_protection.require_trusted_proxy', 'require_trusted_proxy blocks all direct requests unless app.trusted_proxies contains the proxy/CDN IP ranges.', 'configured app.trusted_proxies', []);
+        }
+
+        if ($this->isProduction($app) && array_key_exists('block_untrusted_forwarded_headers', $origin) && empty($origin['block_untrusted_forwarded_headers'])) {
+            $this->issue('medium', 'untrusted_forwarded_headers_allowed', 'origin_protection.block_untrusted_forwarded_headers', 'Production apps should reject spoofed Forwarded/X-Forwarded-* headers from untrusted clients.', 'true', false);
         }
     }
 

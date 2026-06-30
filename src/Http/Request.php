@@ -16,7 +16,7 @@ class Request
         private array $trustedProxies = []
     ) {
         $this->headers = array_change_key_case($headers, CASE_LOWER);
-        $this->trustedProxies = array_values(array_filter(array_map('trim', $trustedProxies), fn($proxy) => $proxy !== ''));
+        $this->trustedProxies = RequestTrust::normalizeTrustedProxies($trustedProxies);
     }
 
     public static function fromGlobals(array $trustedProxies = []): self
@@ -54,43 +54,73 @@ class Request
         return trim(substr($authorization, 7));
     }
 
-    public function ip(): string { return $this->server['REMOTE_ADDR'] ?? '0.0.0.0'; }
-    public function host(): string { return strtolower($this->server['HTTP_HOST'] ?? $this->header('host', '')); }
+    /**
+     * Returns the best client IP for application-level decisions. Forwarded IPs are
+     * accepted only when the immediate REMOTE_ADDR matches a configured trusted proxy.
+     */
+    public function ip(): string { return $this->clientIp(); }
+
+    public function clientIp(): string
+    {
+        return RequestTrust::clientIp($this->headers, $this->server, $this->trustedProxies);
+    }
+
+    /** Returns the immediate peer IP that connected to PHP/web server. */
+    public function remoteIp(): string
+    {
+        return RequestTrust::remoteIp($this->server);
+    }
+
+    /** Returns the raw Host header normalized, without trusting forwarded headers. */
+    public function host(): string
+    {
+        return RequestTrust::host($this->headers, $this->server);
+    }
+
+    /** Returns trusted X-Forwarded-Host/Forwarded host when available, otherwise Host. */
+    public function effectiveHost(): string
+    {
+        return RequestTrust::effectiveHost($this->headers, $this->server, $this->trustedProxies);
+    }
+
+    public function trustedForwardedHost(): ?string
+    {
+        return RequestTrust::forwardedHost($this->headers, $this->server, $this->trustedProxies);
+    }
+
+    public function trustedForwardedProto(): ?string
+    {
+        if (!$this->isFromTrustedProxy()) {
+            return null;
+        }
+        return RequestTrust::forwardedProto($this->headers, $this->server);
+    }
+
+    public function trustedForwardedPort(): ?int
+    {
+        return RequestTrust::forwardedPort($this->headers, $this->server, $this->trustedProxies);
+    }
+
+    public function hasForwardedHeaders(): bool
+    {
+        return RequestTrust::hasForwardedHeaders($this->headers, $this->server);
+    }
 
     public function isSecure(): bool
     {
-        if (!empty($this->server['HTTPS']) && $this->server['HTTPS'] !== 'off') {
-            return true;
-        }
-
-        $forwardedProto = strtolower((string)($this->server['HTTP_X_FORWARDED_PROTO'] ?? $this->header('x-forwarded-proto', '')));
-        if ($forwardedProto === '') {
-            return false;
-        }
-
-        $firstProto = trim(explode(',', $forwardedProto)[0]);
-        return $firstProto === 'https' && $this->isFromTrustedProxy();
+        return RequestTrust::isSecure($this->headers, $this->server, $this->trustedProxies);
     }
 
     public function withTrustedProxies(array $trustedProxies): self
     {
         $clone = clone $this;
-        $clone->trustedProxies = array_values(array_filter(array_map('trim', $trustedProxies), fn($proxy) => $proxy !== ''));
+        $clone->trustedProxies = RequestTrust::normalizeTrustedProxies($trustedProxies);
         return $clone;
     }
 
     public function isFromTrustedProxy(): bool
     {
-        $remoteAddr = (string)($this->server['REMOTE_ADDR'] ?? '');
-        if ($remoteAddr === '') {
-            return false;
-        }
-        foreach ($this->trustedProxies as $proxy) {
-            if ($this->ipMatches($remoteAddr, (string)$proxy)) {
-                return true;
-            }
-        }
-        return false;
+        return RequestTrust::isTrustedProxy($this->remoteIp(), $this->trustedProxies);
     }
 
     public function attribute(string $key, mixed $default = null): mixed
@@ -106,36 +136,4 @@ class Request
     }
 
     public function contentLength(): int { return (int)($this->server['CONTENT_LENGTH'] ?? 0); }
-
-    private function ipMatches(string $ip, string $trustedProxy): bool
-    {
-        if ($trustedProxy === '*') {
-            return true;
-        }
-        if ($ip === $trustedProxy) {
-            return true;
-        }
-        if (!str_contains($trustedProxy, '/')) {
-            return false;
-        }
-
-        [$subnet, $bits] = explode('/', $trustedProxy, 2);
-        $bits = (int)$bits;
-        $ipBinary = @inet_pton($ip);
-        $subnetBinary = @inet_pton($subnet);
-        if ($ipBinary === false || $subnetBinary === false || strlen($ipBinary) !== strlen($subnetBinary)) {
-            return false;
-        }
-
-        $bytes = intdiv($bits, 8);
-        $remainingBits = $bits % 8;
-        if ($bytes > 0 && substr($ipBinary, 0, $bytes) !== substr($subnetBinary, 0, $bytes)) {
-            return false;
-        }
-        if ($remainingBits === 0) {
-            return true;
-        }
-        $mask = (0xFF << (8 - $remainingBits)) & 0xFF;
-        return (ord($ipBinary[$bytes]) & $mask) === (ord($subnetBinary[$bytes]) & $mask);
-    }
 }
