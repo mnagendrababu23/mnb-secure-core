@@ -61,6 +61,19 @@ use Mnb\SecurityCore\Env\SecretRedactor;
 use Mnb\SecurityCore\Env\SecretRotationReport;
 use Mnb\SecurityCore\Database\DatabaseConfig;
 use Mnb\SecurityCore\Database\PdoConnectionFactory;
+use Mnb\SecurityCore\Database\DatabaseHealthChecker;
+use Mnb\SecurityCore\Database\DatabaseOperationPolicy;
+use Mnb\SecurityCore\Database\DatabasePolicyRegistry;
+use Mnb\SecurityCore\Database\DatabasePrivilegeInspector;
+use Mnb\SecurityCore\Database\DatabaseResultFilter;
+use Mnb\SecurityCore\Database\QueryComplexityGuard;
+use Mnb\SecurityCore\Database\QueryCostPolicy;
+use Mnb\SecurityCore\Database\RawQueryGuard;
+use Mnb\SecurityCore\Database\SchemaChangePolicy;
+use Mnb\SecurityCore\Database\SchemaMigrationGuard;
+use Mnb\SecurityCore\Database\SecureDatabase;
+use Mnb\SecurityCore\Database\SecureQueryBuilder;
+use Mnb\SecurityCore\Contracts\DatabaseConnectionInterface;
 use Mnb\SecurityCore\Files\ClamAvMalwareScanner;
 use Mnb\SecurityCore\Files\CompositeMalwareScanner;
 use Mnb\SecurityCore\Files\FileUploadPolicy;
@@ -1103,6 +1116,71 @@ class SecurityKernel
     public function vulnerabilityReportExporter(): VulnerabilityReportExporter
     {
         return new VulnerabilityReportExporter($this->vulnerabilityCoverageReport());
+    }
+
+    public function databaseOperationPolicy(): DatabaseOperationPolicy
+    {
+        return DatabaseOperationPolicy::fromConfig($this->config);
+    }
+
+    public function databaseQueryCostPolicy(): QueryCostPolicy
+    {
+        return QueryCostPolicy::fromConfig($this->config);
+    }
+
+    public function databaseQueryGuard(): QueryComplexityGuard
+    {
+        return QueryComplexityGuard::fromConfig($this->config);
+    }
+
+    public function databaseFieldResultFilter(): DatabaseResultFilter
+    {
+        return DatabaseResultFilter::fromConfig($this->config);
+    }
+
+    public function rawQueryGuard(): RawQueryGuard
+    {
+        return RawQueryGuard::fromConfig($this->config);
+    }
+
+    public function databasePolicyRegistry(array $policies = []): DatabasePolicyRegistry
+    {
+        return new DatabasePolicyRegistry($policies);
+    }
+
+    public function schemaChangePolicy(): SchemaChangePolicy
+    {
+        return SchemaChangePolicy::fromConfig($this->config);
+    }
+
+    public function schemaMigrationGuard(): SchemaMigrationGuard
+    {
+        return SchemaMigrationGuard::fromConfig($this->config);
+    }
+
+    public function secureDatabase(DatabaseConnectionInterface $connection, ?object $audit = null, array $tablePolicies = []): SecureDatabase
+    {
+        return new SecureDatabase(
+            $connection,
+            null,
+            $audit ?: $this->auditTrail(),
+            new SecureQueryBuilder($this->databaseQueryGuard()),
+            new \Mnb\SecurityCore\Database\SchemaGuard(),
+            $this->databasePolicyRegistry($tablePolicies),
+            $this->databaseQueryGuard(),
+            $this->databaseFieldResultFilter(),
+            $this->schemaMigrationGuard()
+        );
+    }
+
+    public function databaseHealthChecker(?DatabaseConnectionInterface $connection = null): DatabaseHealthChecker
+    {
+        return new DatabaseHealthChecker($this->config, $connection);
+    }
+
+    public function databasePrivilegeInspector(array $grantsOrPrivileges = []): DatabasePrivilegeInspector
+    {
+        return new DatabasePrivilegeInspector($grantsOrPrivileges);
     }
 
     public function pdo(): PDO

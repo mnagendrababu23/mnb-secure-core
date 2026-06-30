@@ -2082,11 +2082,75 @@ class SecurityConfigValidator
                 $this->issue('medium', 'invalid_database_' . $key, 'database.' . $key, "database.{$key} should be a string.", 'string', $database[$key]);
             }
         }
-        if (isset($database['require_policies'])) {
-            $this->bool($database, 'require_policies', 'database.require_policies', required: false);
+        foreach (['require_policies', 'soft_delete_default', 'deny_raw_sql', 'audit_queries', 'audit_bindings'] as $key) {
+            if (isset($database[$key])) {
+                $this->bool($database, $key, 'database.' . $key, required: false);
+            }
         }
-        if (isset($database['soft_delete_default'])) {
-            $this->bool($database, 'soft_delete_default', 'database.soft_delete_default', required: false);
+
+        $limits = is_array($database['query_limits'] ?? null) ? $database['query_limits'] : [];
+        if ($limits !== []) {
+            $this->intRange($limits, 'max_limit', 'database.query_limits.max_limit', 1, 100000, required: false);
+            $this->intRange($limits, 'default_limit', 'database.query_limits.default_limit', 1, 100000, required: false);
+            $this->intRange($limits, 'max_offset', 'database.query_limits.max_offset', 0, 100000000, required: false);
+            $this->intRange($limits, 'max_search_length', 'database.query_limits.max_search_length', 1, 10000, required: false);
+            $this->intRange($limits, 'max_filter_count', 'database.query_limits.max_filter_count', 0, 1000, required: false);
+            $this->positiveInt($limits, 'slow_query_ms', 'database.query_limits.slow_query_ms', required: false);
+            $this->bool($limits, 'block_leading_wildcard', 'database.query_limits.block_leading_wildcard', required: false);
+            if (isset($limits['allowed_operators'])) {
+                if ($this->stringList($limits['allowed_operators'], 'database.query_limits.allowed_operators', false)) {
+                    $allowed = ['eq','neq','in','not_in','like','starts_with','ends_with','between','gte','lte','gt','lt','is_null','is_not_null'];
+                    foreach ($limits['allowed_operators'] as $operator) {
+                        if (!in_array((string)$operator, $allowed, true)) {
+                            $this->issue('medium', 'invalid_database_filter_operator', 'database.query_limits.allowed_operators', 'Database filter operator is not supported.', $allowed, $operator);
+                        }
+                    }
+                }
+            }
+            if (isset($limits['default_limit'], $limits['max_limit']) && (int)$limits['default_limit'] > (int)$limits['max_limit']) {
+                $this->issue('high', 'invalid_database_default_limit', 'database.query_limits', 'database.query_limits.default_limit should not exceed max_limit.', 'default_limit <= max_limit', $limits);
+            }
+        }
+
+        $transactions = is_array($database['transactions'] ?? null) ? $database['transactions'] : [];
+        if ($transactions !== []) {
+            $this->bool($transactions, 'enabled', 'database.transactions.enabled', required: false);
+            $this->positiveInt($transactions, 'max_operations', 'database.transactions.max_operations', required: false);
+            $this->bool($transactions, 'audit_begin_commit_rollback', 'database.transactions.audit_begin_commit_rollback', required: false);
+        }
+
+        $schema = is_array($database['schema_changes'] ?? null) ? $database['schema_changes'] : [];
+        if ($schema !== []) {
+            foreach (['enabled', 'require_super_admin', 'require_backup_before_alter', 'allow_destructive_changes', 'dry_run_default'] as $key) {
+                $this->bool($schema, $key, 'database.schema_changes.' . $key, required: false);
+            }
+            if (isset($schema['allowed_operations'])) {
+                if ($this->stringList($schema['allowed_operations'], 'database.schema_changes.allowed_operations', false)) {
+                    foreach ($schema['allowed_operations'] as $operation) {
+                        if (!in_array((string)$operation, ['add_column', 'add_index'], true)) {
+                            $this->issue('medium', 'unsupported_schema_operation', 'database.schema_changes.allowed_operations', 'Only non-destructive schema operations are supported by default.', ['add_column', 'add_index'], $operation);
+                        }
+                    }
+                }
+            }
+            if ($this->isProduction($this->config['app'] ?? []) && !empty($schema['allow_destructive_changes'])) {
+                $this->issue('high', 'destructive_schema_changes_enabled', 'database.schema_changes.allow_destructive_changes', 'Destructive schema changes should stay disabled in production.', false, true);
+            }
+        }
+
+        $fieldProtection = is_array($database['field_protection'] ?? null) ? $database['field_protection'] : [];
+        if ($fieldProtection !== []) {
+            foreach (['enabled', 'mask_sensitive_columns', 'deny_password_columns'] as $key) {
+                $this->bool($fieldProtection, $key, 'database.field_protection.' . $key, required: false);
+            }
+            foreach (['hidden_columns', 'masked_columns'] as $key) {
+                if (isset($fieldProtection[$key])) {
+                    $this->stringList($fieldProtection[$key], 'database.field_protection.' . $key, false);
+                }
+            }
+            if ($this->isProduction($this->config['app'] ?? []) && empty($fieldProtection['deny_password_columns'])) {
+                $this->issue('high', 'database_password_columns_not_denied', 'database.field_protection.deny_password_columns', 'Password-like database columns should never be returned from secure result filtering.', true, $fieldProtection['deny_password_columns'] ?? null);
+            }
         }
     }
 

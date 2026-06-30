@@ -247,3 +247,29 @@ php bin/mnb-secure outbound:check-url https://example.com
 
 The vulnerability matrix now maps SSRF and command injection to concrete controls including `OutboundHttpClient`, `OutboundRequestPolicy`, `DnsResolutionGuard`, `RedirectGuard`, `BlockedIpRangePolicy`, `SafeProcessRunner`, `CommandAllowList`, `SafeArgumentBuilder`, and `ProcessPolicy`.
 
+
+
+## Add-on: Secure Database Governance and Query Lifecycle Engine
+
+MNB Secure Core v1.0.1 adds the Secure Database Governance and Query Lifecycle Engine, strengthening secure database connection, retrieval, creation, update, deletion, search, transaction, and schema alteration workflows with policy-based access, tenant scoping, query complexity limits, field-level protection, safe schema plans, audit logging, and vulnerability matrix coverage for database security risks.
+
+### Database governance highlights
+
+- Policy registry for reusable table/resource access policies.
+- Query complexity limits for pagination, search length, filter count, and leading wildcard control.
+- Advanced safe filter operators for exact match, ranges, IN lists, comparisons, null checks, and escaped LIKE searches.
+- Field-level result protection for hidden password/token columns, masked sensitive columns, and permission-required fields.
+- Safe transaction workflow with begin/commit/rollback audit events.
+- Schema change dry-run plans with destructive schema operations blocked by default.
+- Database health and privilege inspection helpers for production readiness.
+
+### New database CLI commands
+
+```bash
+php bin/mnb-secure db:health
+php bin/mnb-secure db:check-connection
+php bin/mnb-secure db:policy
+php bin/mnb-secure db:query-limits
+php bin/mnb-secure db:schema-plan add_column students admission_number 'VARCHAR(100)'
+php bin/mnb-secure db:privileges
+```

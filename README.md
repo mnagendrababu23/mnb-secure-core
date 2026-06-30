@@ -1561,3 +1561,51 @@ php bin/mnb-secure runtime:list-commands
 php bin/mnb-secure outbound:check-url https://example.com
 ```
 
+
+### Secure Database Governance and Query Lifecycle Engine
+
+MNB Secure Core v1.0.1 includes the Secure Database Governance and Query Lifecycle Engine for policy-based database connection, retrieval, creation, update, deletion, search, transaction, and schema alteration workflows.
+
+Main controls:
+
+- `DatabasePolicyRegistry` for reusable table/resource policies.
+- `QueryComplexityGuard` and `QueryCostPolicy` for max limits, max offset, max filter count, search length, slow-query thresholds, and leading wildcard blocking.
+- Advanced allow-listed filters through `DatabaseSearchFilter` and `DatabaseFilterOperator`.
+- `DatabaseResultFilter` and `DatabaseFieldProtection` for hiding password/token columns, masking sensitive fields, and enforcing permission-gated fields.
+- `RawQueryGuard` to discourage raw SQL when `database.deny_raw_sql` is enabled.
+- `SafeTransaction` and `SecureDatabase::transaction()` for audited transaction workflows.
+- `SchemaMigrationGuard` and `SchemaChangePlan` for dry-run schema plans and destructive schema blocking.
+- `DatabaseHealthChecker` and `DatabasePrivilegeInspector` for production readiness checks.
+
+Example safe search:
+
+```php
+$rows = $secureDb->search($context, $studentPolicy, 'Ravi', [
+    'status' => ['eq' => 'active'],
+    'class_id' => ['in' => [1, 2, 3]],
+    'created_at' => ['between' => ['2026-01-01', '2026-06-30']],
+], 'created_at', 'DESC', 50, 0);
+```
+
+Example schema dry-run plan:
+
+```php
+$plan = $secureDb->schemaPlanAddColumn(
+    $schemaContext,
+    'students',
+    'admission_number',
+    'VARCHAR(100)',
+    dryRun: true
+);
+```
+
+Database governance CLI helpers:
+
+```bash
+php bin/mnb-secure db:health
+php bin/mnb-secure db:check-connection
+php bin/mnb-secure db:policy
+php bin/mnb-secure db:query-limits
+php bin/mnb-secure db:schema-plan add_column students admission_number 'VARCHAR(100)'
+php bin/mnb-secure db:privileges
+```

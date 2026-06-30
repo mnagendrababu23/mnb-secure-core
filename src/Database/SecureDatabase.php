@@ -6,6 +6,7 @@ use Mnb\SecurityCore\Authz\TenantContext;
 use Mnb\SecurityCore\Contracts\DatabaseConnectionInterface;
 use Mnb\SecurityCore\Exceptions\SecurityException;
 use Mnb\SecurityCore\Logging\SecurityAuditEvent;
+use Throwable;
 
 class SecureDatabase
 {
@@ -14,16 +15,35 @@ class SecureDatabase
         private ?PolicyRegistry $policies = null,
         private ?object $audit = null,
         private SecureQueryBuilder $builder = new SecureQueryBuilder(),
-        private SchemaGuard $schemaGuard = new SchemaGuard()
+        private SchemaGuard $schemaGuard = new SchemaGuard(),
+        private ?DatabasePolicyRegistry $databasePolicies = null,
+        private ?QueryComplexityGuard $queryGuard = null,
+        private ?DatabaseResultFilter $resultFilter = null,
+        private ?SchemaMigrationGuard $schemaMigrationGuard = null
     ) {}
+
+    public function policy(string $name): TableSecurityPolicy
+    {
+        if (!$this->databasePolicies) {
+            throw new \InvalidArgumentException('Database policy registry is not configured.');
+        }
+        return $this->databasePolicies->get($name);
+    }
 
     /** @return array<int,array<string,mixed>> */
     public function search(TenantContext $context, TableSecurityPolicy $policy, string $term, array $filters = [], ?string $orderBy = null, string $direction = 'ASC', int $limit = 50, int $offset = 0): array
     {
+        $this->guard()->assertSearch($term, $filters, $limit, $offset);
         $this->authorize($context, $policy, 'view', ['search' => true]);
         $plan = $this->builder->select($policy, $policy->selectableColumns, $filters, $this->tenantScopes($context, $policy), $term, $policy->searchableColumns, $orderBy, $direction, $limit, $offset);
         $this->audit('db.search', $context, $policy, $plan);
-        return $this->connection->fetchAll($plan->sql, $plan->bindings);
+        return $this->filter()->filterRows($context, $policy, $this->connection->fetchAll($plan->sql, $plan->bindings));
+    }
+
+    /** @return array<int,array<string,mixed>> */
+    public function searchPolicy(TenantContext $context, string $policyName, string $term = '', array $filters = [], ?string $orderBy = null, string $direction = 'ASC', int $limit = 50, int $offset = 0): array
+    {
+        return $this->search($context, $this->policy($policyName), $term, $filters, $orderBy, $direction, $limit, $offset);
     }
 
     public function findById(TenantContext $context, TableSecurityPolicy $policy, int|string $id): ?array
@@ -31,7 +51,7 @@ class SecureDatabase
         $this->authorize($context, $policy, 'view', ['id' => $id]);
         $plan = $this->builder->findById($policy, $id, $this->tenantScopes($context, $policy), $policy->selectableColumns);
         $this->audit('db.find', $context, $policy, $plan, ['id' => $id]);
-        return $this->connection->fetchOne($plan->sql, $plan->bindings);
+        return $this->filter()->filterOne($context, $policy, $this->connection->fetchOne($plan->sql, $plan->bindings));
     }
 
     public function create(TenantContext $context, TableSecurityPolicy $policy, array $data): string
@@ -61,6 +81,29 @@ class SecureDatabase
         return $affected;
     }
 
+    public function restoreById(TenantContext $context, TableSecurityPolicy $policy, int|string $id): int
+    {
+        $this->authorize($context, $policy, 'restore', ['id' => $id]);
+        $plan = $this->builder->restoreById($policy, $id, $this->tenantScopes($context, $policy));
+        $affected = $this->connection->execute($plan->sql, $plan->bindings);
+        $this->audit('db.restore', $context, $policy, $plan, ['id' => $id]);
+        return $affected;
+    }
+
+    /** @template T @param callable(self):T $callback @return T */
+    public function transaction(TenantContext $context, callable $callback): mixed
+    {
+        $this->auditRaw(DatabaseAuditEvents::TRANSACTION_BEGIN, $context, new QueryPlan('transaction_begin', 'transaction', 'TRANSACTION BEGIN'));
+        try {
+            $result = $this->connection->transaction(fn() => $callback($this));
+            $this->auditRaw(DatabaseAuditEvents::TRANSACTION_COMMIT, $context, new QueryPlan('transaction_commit', 'transaction', 'TRANSACTION COMMIT'));
+            return $result;
+        } catch (Throwable $e) {
+            $this->auditRaw(DatabaseAuditEvents::TRANSACTION_ROLLBACK, $context, new QueryPlan('transaction_rollback', 'transaction', 'TRANSACTION ROLLBACK', [], ['error_class' => get_class($e)]));
+            throw $e;
+        }
+    }
+
     public function alterAddColumn(TenantContext $context, string $table, string $column, string $type, bool $nullable = true, mixed $default = null): int
     {
         $this->schemaGuard->assertSchemaChangeAllowed($context, 'schema.alter');
@@ -77,6 +120,20 @@ class SecureDatabase
         $affected = $this->connection->execute($plan->sql, $plan->bindings);
         $this->auditRaw('db.schema.add_index', $context, $plan);
         return $affected;
+    }
+
+    public function schemaPlanAddColumn(TenantContext $context, string $table, string $column, string $type, bool $nullable = true, mixed $default = null, ?bool $dryRun = null): SchemaChangePlan
+    {
+        $plan = $this->schemaMigration()->planAddColumn($context, $table, $column, $type, $nullable, $default, $dryRun);
+        $this->auditRaw(DatabaseAuditEvents::SCHEMA_PLAN_CREATED, $context, new QueryPlan($plan->operation, $plan->table, $plan->sql ?? 'SCHEMA PLAN', $plan->bindings, $plan->toArray()));
+        return $plan;
+    }
+
+    public function schemaPlanAddIndex(TenantContext $context, string $table, string $indexName, array $columns, ?bool $dryRun = null): SchemaChangePlan
+    {
+        $plan = $this->schemaMigration()->planAddIndex($context, $table, $indexName, $columns, $dryRun);
+        $this->auditRaw(DatabaseAuditEvents::SCHEMA_PLAN_CREATED, $context, new QueryPlan($plan->operation, $plan->table, $plan->sql ?? 'SCHEMA PLAN', $plan->bindings, $plan->toArray()));
+        return $plan;
     }
 
     private function authorize(TenantContext $context, TableSecurityPolicy $policy, string $ability, mixed $resource): void
@@ -120,7 +177,7 @@ class SecureDatabase
             'operation' => $plan->operation,
             'sql_shape' => preg_replace('/\s+/', ' ', $plan->sql),
             'binding_count' => count($plan->bindings),
-        ];
+        ] + $plan->meta;
 
         if (method_exists($this->audit, 'recordEvent')) {
             $this->audit->recordEvent(SecurityAuditEvent::database($action, SecurityAuditEvent::OUTCOME_SUCCESS, $actor, $target, [], $meta));
@@ -130,5 +187,20 @@ class SecureDatabase
         if (method_exists($this->audit, 'record')) {
             $this->audit->record($action, $actor, $target, $meta);
         }
+    }
+
+    private function guard(): QueryComplexityGuard
+    {
+        return $this->queryGuard ??= new QueryComplexityGuard();
+    }
+
+    private function filter(): DatabaseResultFilter
+    {
+        return $this->resultFilter ??= new DatabaseResultFilter();
+    }
+
+    private function schemaMigration(): SchemaMigrationGuard
+    {
+        return $this->schemaMigrationGuard ??= new SchemaMigrationGuard();
     }
 }

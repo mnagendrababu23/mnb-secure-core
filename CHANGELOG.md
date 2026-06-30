@@ -2,6 +2,24 @@
 
 All notable changes to `mnb-secure-core` are documented here.
 
+## v1.0.1 — Secure Database Governance and Query Lifecycle Engine
+
+MNB Secure Core v1.0.1 adds the Secure Database Governance and Query Lifecycle Engine, strengthening secure database connection, retrieval, creation, update, deletion, search, transaction, and schema alteration workflows with policy-based access, tenant scoping, query complexity limits, field-level protection, safe schema plans, audit logging, and vulnerability matrix coverage for database security risks.
+
+### Added
+- Added `DatabasePolicyRegistry`, `DatabaseOperationPolicy`, `QueryCostPolicy`, `QueryComplexityGuard`, `DatabaseSearchFilter`, and `DatabaseFilterOperator` for policy-driven database query lifecycle governance.
+- Added advanced safe filters for `eq`, `neq`, `in`, `not_in`, `between`, comparison, null checks, and escaped LIKE-style searches.
+- Added `DatabaseFieldProtection` and `DatabaseResultFilter` for hiding password/token columns, permission-gated fields, and masking sensitive result values.
+- Added `RawQueryGuard`, `SafeTransaction`, `SchemaChangePolicy`, `SchemaChangePlan`, `SchemaMigrationGuard`, `DatabaseHealthChecker`, `DatabasePrivilegeInspector`, and `DatabaseAuditEvents`.
+- Added CLI commands: `db:health`, `db:check-connection`, `db:policy`, `db:query-limits`, `db:schema-plan`, and `db:privileges`.
+- Added demo `32-secure-database-governance-query-lifecycle-engine.php`.
+
+### Changed
+- Extended `SecureDatabase` with registry-backed policy lookup, result filtering, restore support, safe transactions, and schema dry-run plan helpers while preserving existing method signatures.
+- Extended `SecureQueryBuilder` with advanced allow-listed filter operators and query complexity enforcement while preserving scalar equality filters.
+- Extended `TableSecurityPolicy` with optional sensitive, hidden, masked, and permission-required columns.
+- Extended `SecurityKernel`, config validation, and vulnerability matrix coverage for database governance risks including mass assignment, unbounded query DoS, dangerous schema alteration, unsafe hard delete, and database audit gaps.
+
 ## v1.0.1 - Public Package Hardening
 
 ### Added

@@ -18,6 +18,10 @@ class TableSecurityPolicy
             'academic_year_id' => 'academicYearId',
         ],
         public readonly bool $softDeletes = true,
-        public readonly string $deletedAtColumn = 'deleted_at'
+        public readonly string $deletedAtColumn = 'deleted_at',
+        public readonly array $sensitiveColumns = [],
+        public readonly array $hiddenColumns = [],
+        public readonly array $maskedColumns = [],
+        public readonly array $permissionColumns = []
     ) {}
 }

@@ -203,6 +203,56 @@ switch ($command) {
         $report = $url !== '' ? $kernel->outboundHttpClient()->checkUrl($url) : ['passed' => false, 'error' => 'url_required'];
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit(!empty($report['passed']) ? 0 : 1);
+    case 'db:health':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->databaseHealthChecker()->check(false);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'db:check-connection':
+        $kernel = new SecurityKernel($config);
+        try {
+            $report = $kernel->databaseHealthChecker(new \Mnb\SecurityCore\Database\PdoDatabaseConnection($kernel->pdo()))->check(true);
+        } catch (Throwable $e) {
+            $report = ['passed' => false, 'error' => 'connection_failed', 'error_class' => get_class($e), 'message' => 'Database connection could not be established.'];
+        }
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'db:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'operation_policy' => $kernel->databaseOperationPolicy()->toArray(), 'schema_policy' => $kernel->schemaChangePolicy()->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'db:query-limits':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'query_limits' => $kernel->databaseQueryCostPolicy()->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'db:schema-plan':
+        $kernel = new SecurityKernel($config);
+        $operation = $argv[2] ?? 'add_column';
+        $table = $argv[3] ?? 'example_table';
+        $column = $argv[4] ?? 'example_column';
+        $type = $argv[5] ?? 'VARCHAR(100)';
+        $context = new \Mnb\SecurityCore\Authz\TenantContext(userId: 'cli', roles: ['super_admin'], permissions: ['schema.alter']);
+        try {
+            if ($operation === 'add_index') {
+                $columns = array_slice($argv, 5) ?: ['id'];
+                $plan = $kernel->schemaMigrationGuard()->planAddIndex($context, $table, $column, $columns, true);
+            } elseif ($operation === 'add_column') {
+                $plan = $kernel->schemaMigrationGuard()->planAddColumn($context, $table, $column, $type, true, null, true);
+            } else {
+                $plan = $kernel->schemaMigrationGuard()->planDestructive($context, $operation, $table);
+            }
+            $report = ['passed' => $plan->allowed, 'schema_plan' => $plan->toArray()];
+        } catch (Throwable $e) {
+            $report = ['passed' => false, 'error' => 'schema_plan_failed', 'error_class' => get_class($e), 'message' => $e->getMessage()];
+        }
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'db:privileges':
+        $kernel = new SecurityKernel($config);
+        $grants = array_slice($argv, 2);
+        $report = $kernel->databasePrivilegeInspector($grants)->inspect();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
     case 'vulnerabilities:matrix':
     case 'matrix:export':
         $kernel = new SecurityKernel($config);

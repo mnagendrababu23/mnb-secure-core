@@ -52,6 +52,15 @@ use Mnb\SecurityCore\Database\SecureDatabase;
 use Mnb\SecurityCore\Database\SecureQueryBuilder;
 use Mnb\SecurityCore\Database\SqlIdentifier;
 use Mnb\SecurityCore\Database\TableSecurityPolicy;
+use Mnb\SecurityCore\Database\DatabaseHealthChecker;
+use Mnb\SecurityCore\Database\DatabasePolicyRegistry;
+use Mnb\SecurityCore\Database\DatabasePrivilegeInspector;
+use Mnb\SecurityCore\Database\DatabaseResultFilter;
+use Mnb\SecurityCore\Database\QueryComplexityGuard;
+use Mnb\SecurityCore\Database\QueryCostPolicy;
+use Mnb\SecurityCore\Database\RawQueryGuard;
+use Mnb\SecurityCore\Database\SchemaChangePolicy;
+use Mnb\SecurityCore\Database\SchemaMigrationGuard;
 use Mnb\SecurityCore\Env\SecretScanner;
 use Mnb\SecurityCore\Env\ArraySecretProvider;
 use Mnb\SecurityCore\Env\EnvSecretProvider;
@@ -1175,6 +1184,82 @@ ok($last && str_starts_with($last['sql'], 'ALTER TABLE students ADD COLUMN blood
 $dbConfig = DatabaseConfig::fromArray(['driver' => 'mysql', 'host' => 'localhost', 'database' => 'boss_school', 'username' => 'user']);
 ok(str_contains($dbConfig->dsn, 'mysql:host=localhost') && isset($dbConfig->securePdoOptions()[PDO::ATTR_ERRMODE]), 'database config builds secure PDO options');
 
+$dbPolicyRegistry = new DatabasePolicyRegistry(['students' => $studentTable]);
+ok($dbPolicyRegistry->has('students') && $dbPolicyRegistry->get('student')->table === 'students', 'database policy registry resolves policy by table and resource');
+
+$strictCostPolicy = new QueryCostPolicy(maxLimit: 50, defaultLimit: 10, maxOffset: 100, maxSearchLength: 10, maxFilterCount: 2, blockLeadingWildcard: true, slowQueryMs: 500);
+$strictGuard = new QueryComplexityGuard($strictCostPolicy);
+$complexityBlocked = 0;
+try { $strictGuard->assertSearch('%bad', [], 10, 0); } catch (InvalidArgumentException $e) { $complexityBlocked++; }
+try { $strictGuard->assertSearch('good', ['a' => 1, 'b' => 2, 'c' => 3], 10, 0); } catch (InvalidArgumentException $e) { $complexityBlocked++; }
+try { $strictGuard->assertSearch('good', [], 51, 0); } catch (InvalidArgumentException $e) { $complexityBlocked++; }
+ok($complexityBlocked === 3, 'query complexity guard blocks leading wildcard, too many filters, and over-limit pagination');
+
+$advancedBuilder = new SecureQueryBuilder(new QueryComplexityGuard(new QueryCostPolicy(maxLimit: 100, maxFilterCount: 10, blockLeadingWildcard: true)));
+$advancedPlan = $advancedBuilder->select($studentTable, ['id', 'first_name'], ['class_id' => ['in' => [1, 2]], 'status' => ['neq' => 'archived']], ['school_id' => 10], null, [], 'id', 'ASC', 20, 0);
+ok(str_contains($advancedPlan->sql, 'class_id IN (?, ?)') && str_contains($advancedPlan->sql, 'status <> ?') && $advancedPlan->bindings === [1, 2, 'archived', 10], 'secure query builder supports allow-listed advanced filters');
+
+$betweenPlan = $advancedBuilder->select($studentTable, ['id'], ['id' => ['between' => [1, 10]]], ['school_id' => 10], null, [], null, 'ASC', 5, 0);
+ok(str_contains($betweenPlan->sql, 'id BETWEEN ? AND ?') && $betweenPlan->bindings === [1, 10, 10], 'secure query builder supports between filter safely');
+
+$sensitivePolicy = new TableSecurityPolicy(
+    table: 'users',
+    resourceType: 'user',
+    selectableColumns: ['id', 'email', 'phone', 'password_hash', 'salary'],
+    insertableColumns: ['email', 'phone'],
+    updatableColumns: ['email', 'phone'],
+    maskedColumns: ['email', 'phone'],
+    permissionColumns: ['salary' => 'user.view_salary']
+);
+$filteredRow = (new DatabaseResultFilter())->filterRow(new TenantContext(userId: 9, permissions: ['user.view']), $sensitivePolicy, ['id' => 1, 'email' => 'person@example.com', 'phone' => '9876543210', 'password_hash' => 'hash', 'salary' => 999]);
+ok(!isset($filteredRow['password_hash']) && !isset($filteredRow['salary']) && $filteredRow['email'] !== 'person@example.com' && $filteredRow['phone'] !== '9876543210', 'database result filter hides password fields, permission fields, and masks sensitive values');
+
+$restorePlan = $builder->restoreById($studentTable, 44, ['school_id' => 10]);
+ok($restorePlan->operation === 'restore' && str_contains($restorePlan->sql, 'deleted_at = NULL') && str_contains($restorePlan->sql, 'school_id = ?'), 'restore query clears soft-delete column with scoped WHERE');
+
+$secureDb->restoreById(new TenantContext(userId: 7, schoolId: 10, permissions: ['student.restore']), $studentTable, 44);
+$last = $dryDb->lastQuery();
+ok($last && $last['type'] === 'execute' && str_contains($last['sql'], 'deleted_at = NULL'), 'secure database restore executes guarded restore plan');
+
+$txCommitted = false;
+$secureDb->transaction($dbContext, function (SecureDatabase $db) use (&$txCommitted, $studentTable, $dbContext) {
+    $txCommitted = true;
+    $db->updateById($dbContext, $studentTable, 44, ['status' => 'active']);
+});
+$queries = $dryDb->queries();
+ok($txCommitted && count(array_filter($queries, fn($q) => $q['type'] === 'transaction.begin')) >= 1 && count(array_filter($queries, fn($q) => $q['type'] === 'transaction.commit')) >= 1, 'secure database transaction commits through connection');
+
+$schemaMigration = new SchemaMigrationGuard(new SchemaChangePolicy(requireSuperAdmin: true, requireBackupBeforeAlter: true, allowDestructiveChanges: false, dryRunDefault: true));
+$schemaPlan = $schemaMigration->planAddColumn($schemaContext, 'students', 'admission_category', 'VARCHAR(100)');
+$dropPlan = $schemaMigration->planDestructive($schemaContext, 'drop_table', 'students');
+ok($schemaPlan->allowed && $schemaPlan->dryRun && $schemaPlan->requiresBackup && !$dropPlan->allowed && $dropPlan->destructive, 'schema migration guard creates dry-run plan and blocks destructive operations');
+
+$rawSqlBlocked = false;
+try { RawQueryGuard::fromConfig(['database' => ['deny_raw_sql' => true]])->assertAllowed('SELECT * FROM users'); } catch (InvalidArgumentException $e) { $rawSqlBlocked = true; }
+ok($rawSqlBlocked, 'raw query guard blocks raw SQL when deny_raw_sql is enabled');
+
+$health = (new DatabaseHealthChecker(['database' => ['driver' => 'mysql', 'charset' => 'utf8mb4']]))->check(false);
+ok($health['passed'] && $health['secure_pdo_options']['emulated_prepares_disabled'], 'database health checker verifies secure PDO options without connecting');
+
+$privilegeReport = (new DatabasePrivilegeInspector(['GRANT SELECT, INSERT, UPDATE, DELETE, DROP, ALTER ON app.* TO runtime_user']))->inspect();
+ok(!$privilegeReport['passed'] && in_array('DROP', $privilegeReport['dangerous_privileges'], true) && in_array('ALTER', $privilegeReport['dangerous_privileges'], true), 'database privilege inspector flags dangerous runtime privileges');
+
+$dbGovernanceConfig = array_replace_recursive($defaultConfig, [
+    'database' => [
+        'query_limits' => ['max_limit' => 50, 'default_limit' => 10, 'max_filter_count' => 5, 'allowed_operators' => ['eq', 'between']],
+        'transactions' => ['enabled' => true, 'max_operations' => 20],
+        'schema_changes' => ['enabled' => true, 'allow_destructive_changes' => false],
+        'field_protection' => ['enabled' => true, 'deny_password_columns' => true],
+    ],
+]);
+$dbGovernanceReport = (new SecurityConfigValidator($dbGovernanceConfig))->validate();
+ok($dbGovernanceReport['passed'], 'security config validator accepts database governance config');
+
+$badDbGovernanceReport = (new SecurityConfigValidator(array_replace_recursive($defaultConfig, ['database' => ['query_limits' => ['max_limit' => 10, 'default_limit' => 50], 'schema_changes' => ['allow_destructive_changes' => true]]])))->validate();
+ok(in_array('invalid_database_default_limit', array_column($badDbGovernanceReport['errors'], 'key'), true), 'security config validator catches invalid database query limit order');
+
+$dbMatrix = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix($defaultConfig))->find('mass_assignment');
+ok($dbMatrix !== null && $dbMatrix->status() === 'protected', 'vulnerability matrix includes mass assignment database governance coverage');
 
 
 $payloadLibrary = new PayloadLibrary();
