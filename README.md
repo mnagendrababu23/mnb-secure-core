@@ -1777,3 +1777,24 @@ php bin/mnb-secure origin:production-gate
 ```
 
 Note: a PHP package cannot fully hide an origin IP by itself. Use a CDN/reverse proxy, configure trusted proxy ranges, and firewall the origin so only trusted proxy/CDN ranges can reach HTTP/HTTPS ports.
+
+## Upgrade 34 — Async Request, Response Queue, and Background Job Orchestration Engine
+
+MNB Secure Core v1.0.1 now includes an async queue and background job orchestration layer for safely deferring expensive request work. It provides secure job dispatch, 202-style async response payloads, idempotency protection, payload redaction/blocking, safe handler registration, retry/backoff policy, dead-letter handling, worker supervision, queue pressure checks, and release-gate support.
+
+Useful commands:
+
+```bash
+php bin/mnb-secure queue:policy
+php bin/mnb-secure queue:dispatch test_job
+php bin/mnb-secure queue:work default --once
+php bin/mnb-secure queue:status job_xxx
+php bin/mnb-secure queue:failed
+php bin/mnb-secure queue:dead-letter
+php bin/mnb-secure queue:metrics
+php bin/mnb-secure queue:pressure
+php bin/mnb-secure queue:handlers
+php bin/mnb-secure queue:release-gate
+```
+
+The engine is intended for long-running or expensive work such as file scans, database exports, backups, audit exports, webhook dispatch, security verification runs, and report generation.

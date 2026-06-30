@@ -364,3 +364,15 @@ Changed:
 - Added `SecurityKernel` helpers for throughput governance and performance capacity management.
 - Expanded pentest payloads/checklist/matrix with performance capacity verification cases.
 - Expanded vulnerability matrix coverage for `performance_dos`, `capacity_exhaustion`, `concurrency_exhaustion`, `queue_overload`, `worker_saturation`, `database_export_overload`, and failed SLO release risks.
+
+## v1.0.1 — Upgrade 34: Async Request, Response Queue, and Background Job Orchestration Engine
+
+MNB Secure Core v1.0.1 adds the Async Request, Response Queue, and Background Job Orchestration Engine, introducing secure job dispatch, request-to-background deferral, response acknowledgement patterns, retry and dead-letter handling, idempotency protection, worker supervision, queue pressure controls, job audit trails, CLI worker diagnostics, and vulnerability matrix coverage for retry storms, duplicate execution, lost jobs, queue overload, and unsafe background processing risks.
+
+### Added
+- `src/Queue/*` queue orchestration engine with jobs, payload guards, stores, workers, retries, dead-letter handling, idempotency, queue metrics, and release gates.
+- Queue configuration under `queue` in `config/security.php` and `config/security.production.php`.
+- Queue CLI diagnostics and operations: `queue:policy`, `queue:dispatch`, `queue:work`, `queue:status`, `queue:failed`, `queue:retry`, `queue:dead-letter`, `queue:metrics`, `queue:pressure`, `queue:handlers`, and `queue:release-gate`.
+- Demo `demos/38-async-request-response-queue-background-job-engine.php`.
+- Pentest payloads/checklist/matrix coverage for background job risks.
+- Vulnerability matrix coverage for unsafe background jobs, duplicate execution, retry storms, dead-letter growth, payload secret exposure, queue overload, stale workers, and privilege confusion.

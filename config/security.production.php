@@ -884,6 +884,41 @@ return array_replace_recursive($base, [
         ],
     ],
 
+
+    'queue' => [
+        'enabled' => true,
+        'default_connection' => $_ENV['QUEUE_CONNECTION'] ?? 'file',
+        'default_queue' => $_ENV['QUEUE_DEFAULT'] ?? 'default',
+        'connections' => [
+            'file' => [
+                'driver' => 'file',
+                'path' => __DIR__ . '/../storage/queue',
+                'lock_path' => __DIR__ . '/../storage/cache/queue-locks',
+            ],
+            'database' => [
+                'driver' => 'database',
+                'table' => 'mnb_jobs',
+                'failed_table' => 'mnb_failed_jobs',
+            ],
+            'memory' => ['driver' => 'memory'],
+        ],
+        'queues' => [
+            'default' => ['enabled' => true, 'max_depth' => 10000, 'max_payload_bytes' => 65536, 'default_priority' => 'normal', 'visibility_timeout_seconds' => 300],
+            'security' => ['enabled' => true, 'max_depth' => 5000, 'max_payload_bytes' => 65536, 'default_priority' => 'high', 'visibility_timeout_seconds' => 300],
+            'files' => ['enabled' => true, 'max_depth' => 5000, 'max_payload_bytes' => 131072, 'default_priority' => 'normal', 'visibility_timeout_seconds' => 900],
+            'exports' => ['enabled' => true, 'max_depth' => 1000, 'max_payload_bytes' => 65536, 'default_priority' => 'low', 'visibility_timeout_seconds' => 1800],
+            'webhooks' => ['enabled' => true, 'max_depth' => 10000, 'max_payload_bytes' => 65536, 'default_priority' => 'normal', 'visibility_timeout_seconds' => 120],
+            'failed' => ['enabled' => true, 'max_depth' => 10000, 'max_payload_bytes' => 65536, 'default_priority' => 'low', 'visibility_timeout_seconds' => 300],
+        ],
+        'dispatch' => ['allow_sync' => false, 'force_async_for' => ['file_scan', 'database_export', 'backup_create', 'security_verification', 'audit_export'], 'return_accepted_response' => true, 'accepted_status_code' => 202, 'include_job_id' => true, 'include_status_url' => true],
+        'retry' => ['enabled' => true, 'max_attempts' => 3, 'backoff' => 'exponential', 'initial_delay_seconds' => 5, 'max_delay_seconds' => 300, 'jitter' => true],
+        'dead_letter' => ['enabled' => true, 'queue' => 'failed', 'store_payload' => true, 'redact_payload' => true],
+        'idempotency' => ['enabled' => true, 'ttl_seconds' => 86400, 'dedupe_window_seconds' => 300, 'require_for_critical_jobs' => true],
+        'workers' => ['max_jobs_per_worker' => 500, 'max_runtime_seconds' => 3600, 'sleep_seconds' => 1, 'memory_profile' => 'queue_worker', 'throughput_profile' => 'queue_worker', 'heartbeat_seconds' => 30, 'stop_on_memory_growth' => true],
+        'payload_security' => ['redact_secrets' => true, 'deny_raw_filesystem_paths' => true, 'deny_password_fields' => true, 'deny_tokens' => true, 'max_depth' => 16, 'max_string_bytes' => 8192],
+        'release_gate' => ['enabled' => true, 'block_on_failed_jobs' => false, 'block_on_dead_letter_growth' => true, 'block_on_queue_overload' => true, 'block_on_missing_handlers' => true],
+    ],
+
     'memory' => [
         'enabled' => true,
         'profiles' => [

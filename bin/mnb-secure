@@ -546,6 +546,76 @@ switch ($command) {
         $report = $kernel->performanceReleaseGate()->evaluate($slo, $capacity);
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit(!empty($report['passed']) ? 0 : 1);
+
+    case 'queue:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->queuePolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:dispatch':
+        $kernel = new SecurityKernel($config);
+        $name = $argv[2] ?? 'test_job';
+        $queueName = $argv[3] ?? 'default';
+        $store = $kernel->queueStore();
+        $dispatcher = $kernel->jobDispatcher($store, $kernel->jobHandlerRegistry());
+        $result = $dispatcher->dispatch($name, ['source' => 'cli', 'queued_at' => date('c')], $queueName, null, 'cli:' . $name . ':' . $queueName);
+        echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($result['accepted']) ? 0 : 1);
+    case 'queue:work':
+        $kernel = new SecurityKernel($config);
+        $queueName = $argv[2] ?? 'default';
+        $store = $kernel->queueStore();
+        $worker = $kernel->queueWorker($store, $kernel->jobHandlerRegistry());
+        $maxJobs = 1;
+        foreach ($argv as $arg) { if (str_starts_with($arg, '--max-jobs=')) { $maxJobs = max(1, (int)substr($arg, 11)); } }
+        $runs = [];
+        for ($i = 0; $i < $maxJobs; $i++) {
+            $runs[] = $worker->workOnce($queueName);
+            if (!empty($runs[$i]['reason']) && $runs[$i]['reason'] === 'no_job_available') { break; }
+            if (in_array('--once', $argv, true)) { break; }
+        }
+        echo json_encode(['passed' => true, 'queue' => $queueName, 'runs' => $runs], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:status':
+        $kernel = new SecurityKernel($config);
+        $jobId = $argv[2] ?? '';
+        $report = $kernel->jobStatusResponseFactory()->response($jobId !== '' ? $kernel->queueStore()->find($jobId) : null);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['status']) ? 0 : 1);
+    case 'queue:failed':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'failed' => array_map(fn($j) => $j->toArray(), $kernel->queueStore()->failed())], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:retry':
+        $kernel = new SecurityKernel($config);
+        $jobId = $argv[2] ?? '';
+        $store = $kernel->queueStore();
+        $job = $jobId !== '' ? $store->find($jobId) : null;
+        if ($job) { $store->save($job->withStatus(Mnb\SecurityCore\Queue\JobStatus::RETRYING)->withAvailableAt(time())); }
+        echo json_encode(['passed' => (bool)$job, 'job_id' => $jobId, 'status' => $job ? 'retrying' : 'not_found'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($job ? 0 : 1);
+    case 'queue:dead-letter':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'dead_letters' => $kernel->deadLetterQueue($kernel->queueStore())->all()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:metrics':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->queueStore()->metrics()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:pressure':
+        $kernel = new SecurityKernel($config);
+        $queueName = $argv[2] ?? 'default';
+        echo json_encode($kernel->queuePressureGuard()->check($queueName), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:handlers':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->jobHandlerRegistry()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'queue:release-gate':
+        $kernel = new SecurityKernel($config);
+        $required = array_slice($argv, 2) ?: ['test_job'];
+        $report = $kernel->queueReleaseGate()->evaluate($kernel->queueStore()->metrics(), $kernel->jobHandlerRegistry(), $required);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
     case 'origin:policy':
         $kernel = new SecurityKernel($config);
         echo json_encode($kernel->originProtectionPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
@@ -702,5 +772,27 @@ switch ($command) {
         echo "  memory:sample-plan       Show recommended chunk size for an item byte estimate\n";
         echo "  throughput:check         Show throughput thresholds and capacity settings\n";
         echo "  throughput:plan          Plan concurrency/workers: rps latency_ms concurrency queue_depth job_ms\n";
+        echo "  queue:policy             Show async queue/background job policy
+";
+        echo "  queue:dispatch           Dispatch a safe test job: [job_name] [queue]
+";
+        echo "  queue:work               Process queued jobs: queue [--once] [--max-jobs=N]
+";
+        echo "  queue:status             Show job status by id
+";
+        echo "  queue:failed             List failed jobs
+";
+        echo "  queue:retry              Retry job by id
+";
+        echo "  queue:dead-letter        List dead-letter jobs
+";
+        echo "  queue:metrics            Show queue metrics
+";
+        echo "  queue:pressure           Show queue pressure report
+";
+        echo "  queue:handlers           List registered job handlers
+";
+        echo "  queue:release-gate       Evaluate queue release gate
+";
         break;
 }

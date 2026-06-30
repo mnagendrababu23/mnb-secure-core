@@ -54,6 +54,7 @@ class SecurityConfigValidator
         $this->validateMemory();
         $this->validateDatabase();
         $this->validateThroughput();
+        $this->validateQueue();
         $this->validatePentest();
 
         $errors = array_values(array_filter($this->issues, fn(array $issue): bool => in_array($issue['level'], ['critical', 'high'], true)));
@@ -2387,6 +2388,74 @@ class SecurityConfigValidator
         foreach (['enabled', 'block_on_critical_capacity', 'block_on_failed_slo', 'block_on_missing_profiles'] as $key) {
             if (isset($releaseGate[$key])) { $this->bool($releaseGate, $key, 'throughput.release_gate.' . $key, required: false); }
         }
+    }
+
+
+    private function validateQueue(): void
+    {
+        $queue = $this->section('queue', false);
+        if ($queue === null) {
+            return;
+        }
+        $this->bool($queue, 'enabled', 'queue.enabled', required: false);
+        foreach (['default_connection','default_queue'] as $key) {
+            if (isset($queue[$key]) && (!$this->isStringLike($queue[$key]) || !$this->safeName((string)$queue[$key]))) {
+                $this->issue('medium', 'invalid_queue_' . $key, 'queue.' . $key, 'Queue default values must be safe identifiers.', 'safe name', $queue[$key]);
+            }
+        }
+        if (isset($queue['connections']) && !is_array($queue['connections'])) {
+            $this->issue('high', 'invalid_queue_connections', 'queue.connections', 'Queue connections must be an array.', 'array', $queue['connections']);
+        }
+        foreach ((is_array($queue['connections'] ?? null) ? $queue['connections'] : []) as $name => $connection) {
+            $path = 'queue.connections.' . (string)$name;
+            if (!$this->safeName((string)$name)) {
+                $this->issue('medium', 'invalid_queue_connection_name', $path, 'Queue connection names should be safe identifiers.', 'safe name', $name);
+            }
+            if (!is_array($connection)) {
+                $this->issue('high', 'invalid_queue_connection', $path, 'Queue connection must be an array.', 'array', $connection);
+                continue;
+            }
+            if (isset($connection['driver']) && (!$this->isStringLike($connection['driver']) || !in_array((string)$connection['driver'], ['file','database','memory'], true))) {
+                $this->issue('high', 'invalid_queue_driver', $path . '.driver', 'Queue driver must be file, database, or memory.', 'file|database|memory', $connection['driver']);
+            }
+        }
+        if (isset($queue['queues']) && !is_array($queue['queues'])) {
+            $this->issue('high', 'invalid_queues_config', 'queue.queues', 'queue.queues must be an array.', 'array', $queue['queues']);
+        }
+        foreach ((is_array($queue['queues'] ?? null) ? $queue['queues'] : []) as $name => $q) {
+            $path = 'queue.queues.' . (string)$name;
+            if (!$this->safeName((string)$name)) {
+                $this->issue('medium', 'invalid_queue_name', $path, 'Queue names should be safe identifiers.', 'safe name', $name);
+            }
+            if (!is_array($q)) {
+                $this->issue('high', 'invalid_queue_definition', $path, 'Queue definition must be an array.', 'array', $q);
+                continue;
+            }
+            $this->bool($q, 'enabled', $path . '.enabled', required: false);
+            foreach (['max_depth','max_payload_bytes','visibility_timeout_seconds'] as $key) {
+                if (isset($q[$key])) { $this->positiveInt($q, $key, $path . '.' . $key, required: false); }
+            }
+            if (isset($q['default_priority']) && (!$this->isStringLike($q['default_priority']) || !in_array((string)$q['default_priority'], ['low','normal','high','critical'], true))) {
+                $this->issue('medium', 'invalid_queue_priority', $path . '.default_priority', 'Queue priority must be low, normal, high, or critical.', 'known priority', $q['default_priority']);
+            }
+        }
+        $dispatch = is_array($queue['dispatch'] ?? null) ? $queue['dispatch'] : [];
+        foreach (['allow_sync','return_accepted_response','include_job_id','include_status_url'] as $key) { if (isset($dispatch[$key])) { $this->bool($dispatch, $key, 'queue.dispatch.' . $key, required: false); } }
+        if (isset($dispatch['accepted_status_code'])) { $this->intRange($dispatch, 'accepted_status_code', 'queue.dispatch.accepted_status_code', 200, 299, required: false); }
+        if (isset($dispatch['force_async_for'])) { $this->stringList($dispatch['force_async_for'], 'queue.dispatch.force_async_for', false); }
+        $retry = is_array($queue['retry'] ?? null) ? $queue['retry'] : [];
+        if ($retry !== []) {
+            $this->bool($retry, 'enabled', 'queue.retry.enabled', required: false);
+            foreach (['max_attempts','initial_delay_seconds','max_delay_seconds'] as $key) { if (isset($retry[$key])) { $this->positiveInt($retry, $key, 'queue.retry.' . $key, required: false); } }
+            if (isset($retry['backoff']) && (!$this->isStringLike($retry['backoff']) || !in_array((string)$retry['backoff'], ['linear','exponential'], true))) {
+                $this->issue('medium', 'invalid_queue_backoff', 'queue.retry.backoff', 'Retry backoff must be linear or exponential.', 'linear|exponential', $retry['backoff']);
+            }
+        }
+        $payload = is_array($queue['payload_security'] ?? null) ? $queue['payload_security'] : [];
+        foreach (['redact_secrets','deny_raw_filesystem_paths','deny_password_fields','deny_tokens'] as $key) { if (isset($payload[$key])) { $this->bool($payload, $key, 'queue.payload_security.' . $key, required: false); } }
+        foreach (['max_depth','max_string_bytes'] as $key) { if (isset($payload[$key])) { $this->positiveInt($payload, $key, 'queue.payload_security.' . $key, required: false); } }
+        $release = is_array($queue['release_gate'] ?? null) ? $queue['release_gate'] : [];
+        foreach (['enabled','block_on_failed_jobs','block_on_dead_letter_growth','block_on_queue_overload','block_on_missing_handlers'] as $key) { if (isset($release[$key])) { $this->bool($release, $key, 'queue.release_gate.' . $key, required: false); } }
     }
 
     private function validatePentest(): void

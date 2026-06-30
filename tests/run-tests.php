@@ -2383,5 +2383,76 @@ $originMatrix = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityControlMapper(
 ok(isset($originMatrix['origin_ip_exposure']) && isset($originMatrix['forwarded_header_spoofing']) && $originMatrix['origin_ip_exposure']->status() === 'protected', 'vulnerability matrix maps origin exposure and forwarded header spoofing');
 ok(in_array('PT-ORIGIN-001', array_column((new PentestChecklist())->toArray(), 'id'), true) && isset((new PayloadLibrary())->all()['origin']), 'pentest checklist and payload library include origin identity cases');
 
+
+
+$queueConfig = array_replace_recursive(require __DIR__ . '/../config/security.php', [
+    'queue' => [
+        'enabled' => true,
+        'default_connection' => 'memory',
+        'default_queue' => 'default',
+        'queues' => [
+            'default' => ['enabled' => true, 'max_depth' => 10, 'max_payload_bytes' => 65536, 'default_priority' => 'normal', 'visibility_timeout_seconds' => 300],
+            'files' => ['enabled' => true, 'max_depth' => 2, 'max_payload_bytes' => 1024, 'default_priority' => 'normal', 'visibility_timeout_seconds' => 300],
+            'failed' => ['enabled' => true, 'max_depth' => 10, 'max_payload_bytes' => 65536],
+        ],
+        'dispatch' => ['allow_sync' => false, 'force_async_for' => ['file_scan'], 'return_accepted_response' => true, 'accepted_status_code' => 202, 'include_job_id' => true, 'include_status_url' => true],
+        'retry' => ['enabled' => true, 'max_attempts' => 1, 'backoff' => 'exponential', 'initial_delay_seconds' => 1, 'max_delay_seconds' => 5, 'jitter' => false],
+        'dead_letter' => ['enabled' => true, 'queue' => 'failed', 'store_payload' => true, 'redact_payload' => true],
+        'idempotency' => ['enabled' => true, 'ttl_seconds' => 86400, 'dedupe_window_seconds' => 300, 'require_for_critical_jobs' => true],
+        'workers' => ['max_jobs_per_worker' => 2, 'max_runtime_seconds' => 60, 'sleep_seconds' => 0, 'heartbeat_seconds' => 30],
+        'payload_security' => ['redact_secrets' => true, 'deny_raw_filesystem_paths' => true, 'deny_password_fields' => true, 'deny_tokens' => true, 'max_depth' => 4, 'max_string_bytes' => 128],
+        'release_gate' => ['enabled' => true, 'block_on_failed_jobs' => false, 'block_on_dead_letter_growth' => true, 'block_on_queue_overload' => true, 'block_on_missing_handlers' => true],
+    ],
+]);
+$queueKernel = new SecurityKernel($queueConfig);
+$queueStore = new \Mnb\SecurityCore\Queue\InMemoryQueueStore();
+$queueHandlers = $queueKernel->jobHandlerRegistry([
+    'failing_job' => new class implements \Mnb\SecurityCore\Queue\JobHandlerInterface {
+        public function handle(\Mnb\SecurityCore\Queue\Job $job): \Mnb\SecurityCore\Queue\JobResult { return \Mnb\SecurityCore\Queue\JobResult::failure('validation failure', [], false); }
+    },
+]);
+$queuePolicy = $queueKernel->queuePolicy();
+ok($queuePolicy->config()->enabled() && $queuePolicy->queueExists('default'), 'queue policy loads and resolves configured queues');
+ok(!$queuePolicy->evaluateDispatch('test_job', 'missing', [])->allowed(), 'queue policy blocks unknown queue');
+ok($queuePolicy->shouldForceAsync('file_scan'), 'queue policy detects forced async jobs');
+$protector = $queueKernel->jobPayloadProtector();
+$secretInspection = $protector->inspect(['token' => 'abc123']);
+ok(!$secretInspection['passed'] && $secretInspection['redacted_payload']['token'] === '[redacted]', 'queue payload protector redacts and blocks secrets');
+$dispatcher = $queueKernel->jobDispatcher($queueStore, $queueHandlers);
+$dispatch = $dispatcher->dispatch('test_job', ['file_id' => 100], 'default', null, 'idem:file:100');
+ok($dispatch['accepted'] && isset($dispatch['job_id']), 'job dispatcher accepts safe registered job');
+$duplicateDispatch = $dispatcher->dispatch('test_job', ['file_id' => 100], 'default', null, 'idem:file:100');
+ok(!empty($duplicateDispatch['duplicate']) && $duplicateDispatch['job_id'] === $dispatch['job_id'], 'duplicate job dispatch returns existing idempotent job');
+$unknownDispatch = $dispatcher->dispatch('unknown_job', [], 'default');
+ok(!$unknownDispatch['accepted'] && $unknownDispatch['reason'] === 'unknown_handler', 'job dispatcher rejects unknown job handler');
+$asyncResponse = $queueKernel->asyncResponseFactory()->accepted($dispatch)->toArray();
+ok($asyncResponse['status_code'] === 202 && $asyncResponse['body']['job_id'] === $dispatch['job_id'], 'async response factory generates 202 accepted job response');
+$statusResponse = $queueKernel->jobStatusResponseFactory()->response($queueStore->find($dispatch['job_id']));
+ok($statusResponse['status'] && $statusResponse['job']['id'] === $dispatch['job_id'], 'job status response returns safe job status payload');
+$work = $queueKernel->queueWorker($queueStore, $queueHandlers)->workOnce('default');
+ok($work['processed'] && $work['status'] === \Mnb\SecurityCore\Queue\JobStatus::SUCCEEDED, 'queue worker processes one successful job');
+$failingDispatch = $dispatcher->dispatch('failing_job', ['safe_id' => 1], 'default', null, 'idem:fail:1');
+$failWork = $queueKernel->queueWorker($queueStore, $queueHandlers)->workOnce('default');
+ok($failWork['processed'] && $failWork['status'] === \Mnb\SecurityCore\Queue\JobStatus::DEAD_LETTERED && count($queueKernel->deadLetterQueue($queueStore)->all()) === 1, 'permanent job failure moves to dead-letter queue');
+$retryPolicy = \Mnb\SecurityCore\Queue\RetryPolicy::fromConfig($queueConfig);
+$retryJob = \Mnb\SecurityCore\Queue\Job::create('test_job', [], 'default')->withAttemptIncrement();
+$retryDecision = $retryPolicy->decide($retryJob, \Mnb\SecurityCore\Queue\JobResult::failure('temporary network', [], true))->toArray();
+ok(!$retryDecision['retry'] && $retryDecision['reason'] === 'max_attempts_reached', 'retry policy blocks retries after max attempts');
+$heartbeat = \Mnb\SecurityCore\Queue\WorkerHeartbeat::now('worker-1', 'default', 1);
+ok(!$heartbeat->stale(30), 'worker heartbeat reports fresh worker status');
+$workerHealth = $queueKernel->workerSupervisorForQueue()->check(3, 10)->toArray();
+ok(!$workerHealth['passed'] && !$workerHealth['checks']['job_limit_ok'], 'worker supervisor detects max job threshold');
+$pressure = $queueKernel->queuePressureGuard($queueStore)->check('default');
+ok($pressure['passed'] && $pressure['status'] === 'ok', 'queue pressure guard reports healthy queue');
+$releaseBlocked = $queueKernel->queueReleaseGate()->evaluate($queueStore->metrics(), $queueHandlers, ['missing_handler']);
+ok(!$releaseBlocked['passed'] && $releaseBlocked['blockers'][0]['reason'] === 'dead_letter_growth', 'queue release gate blocks dead-letter growth before release');
+$queueConfigReport = (new SecurityConfigValidator($queueConfig))->validate();
+ok($queueConfigReport['passed'], 'security config validator accepts async queue configuration');
+$unsafeQueueConfigReport = (new SecurityConfigValidator(['queue' => ['enabled' => true, 'default_connection' => 'bad driver', 'connections' => ['bad driver' => ['driver' => 'shell']], 'queues' => ['bad queue name!' => ['max_depth' => 0]]]]))->validate();
+ok(!$unsafeQueueConfigReport['passed'], 'security config validator flags unsafe queue configuration');
+$queueMatrix = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityControlMapper($queueConfig))->definitions();
+ok(isset($queueMatrix['unsafe_background_job']) && isset($queueMatrix['retry_storm']) && $queueMatrix['unsafe_background_job']->status() === 'protected', 'vulnerability matrix maps async queue and retry storm protections');
+ok(in_array('PT-QUEUE-001', array_column((new PentestChecklist())->toArray(), 'id'), true) && isset((new PayloadLibrary())->all()['queue']) && isset((new VerificationMatrix())->all()['Async Request, Response Queue, and Background Jobs']), 'pentest checklist, payloads, and matrix include async queue cases');
+
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

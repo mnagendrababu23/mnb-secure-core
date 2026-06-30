@@ -358,3 +358,9 @@ php bin/mnb-secure performance:release-gate
 ### Upgrade 33 — Origin Identity Protection and Exposure Hardening Engine
 
 MNB Secure Core v1.0.1 adds the Origin Identity Protection and Exposure Hardening Engine, strengthening server IP and origin identity protection with policy-driven trusted proxy validation, direct IP Host blocking, canonical host enforcement, response fingerprint reduction, origin leak detection, firewall rule guidance, production exposure scanning, origin log redaction, audit events, CLI diagnostics, and vulnerability matrix coverage for origin IP exposure, host header poisoning, forwarded header spoofing, and server fingerprint leakage risks.
+
+### Upgrade 34 — Async Request, Response Queue, and Background Job Orchestration Engine
+
+MNB Secure Core v1.0.1 adds the Async Request, Response Queue, and Background Job Orchestration Engine, introducing secure job dispatch, request-to-background deferral, response acknowledgement patterns, retry and dead-letter handling, idempotency protection, worker supervision, queue pressure controls, job audit trails, CLI worker diagnostics, and vulnerability matrix coverage for retry storms, duplicate execution, lost jobs, queue overload, and unsafe background processing risks.
+
+Validation summary for this patch: PHP lint passed, tests passed, demos passed, config validation passed, queue CLI commands passed, and vulnerability report remained Grade A+.

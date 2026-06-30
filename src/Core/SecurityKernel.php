@@ -181,6 +181,29 @@ use Mnb\SecurityCore\Origin\ProxyIpAllowlist;
 use Mnb\SecurityCore\Origin\OriginLeakDetector;
 use Mnb\SecurityCore\Origin\CanonicalHostPolicy;
 use Mnb\SecurityCore\Origin\OriginLogRedactor;
+use Mnb\SecurityCore\Queue\AsyncResponseFactory;
+use Mnb\SecurityCore\Queue\DeadLetterQueue;
+use Mnb\SecurityCore\Queue\DuplicateJobGuard;
+use Mnb\SecurityCore\Queue\FileQueueStore;
+use Mnb\SecurityCore\Queue\InMemoryQueueStore;
+use Mnb\SecurityCore\Queue\DatabaseQueueStore;
+use Mnb\SecurityCore\Queue\IdempotencyStore;
+use Mnb\SecurityCore\Queue\JobDispatcher;
+use Mnb\SecurityCore\Queue\JobHandlerInterface;
+use Mnb\SecurityCore\Queue\JobHandlerRegistry;
+use Mnb\SecurityCore\Queue\JobResult;
+use Mnb\SecurityCore\Queue\JobStatusResponseFactory;
+use Mnb\SecurityCore\Queue\JobPayloadProtector;
+use Mnb\SecurityCore\Queue\JobPayloadRedactor;
+use Mnb\SecurityCore\Queue\QueueConfig;
+use Mnb\SecurityCore\Queue\QueuePolicy;
+use Mnb\SecurityCore\Queue\QueuePressureGuard;
+use Mnb\SecurityCore\Queue\QueueReleaseGate;
+use Mnb\SecurityCore\Queue\QueueStoreInterface;
+use Mnb\SecurityCore\Queue\RetryPolicy;
+use Mnb\SecurityCore\Queue\Worker;
+use Mnb\SecurityCore\Queue\WorkerConfig;
+use Mnb\SecurityCore\Queue\WorkerSupervisor;
 use Mnb\SecurityCore\Http\Middleware\CacheControlMiddleware;
 use Mnb\SecurityCore\Web\CacheControlPolicy;
 use Mnb\SecurityCore\Web\HtmlSanitizer;
@@ -1346,6 +1369,110 @@ class SecurityKernel
     }
 
 
+
+
+
+    public function queueConfig(): QueueConfig
+    {
+        return QueueConfig::fromConfig($this->config, dirname(__DIR__, 2));
+    }
+
+    public function queuePolicy(): QueuePolicy
+    {
+        return new QueuePolicy($this->queueConfig());
+    }
+
+    public function queueStore(): QueueStoreInterface
+    {
+        $config = $this->queueConfig();
+        $connection = $config->connection($config->defaultConnection());
+        $driver = (string)($connection['driver'] ?? $config->defaultConnection());
+        return match ($driver) {
+            'memory' => new InMemoryQueueStore(),
+            'database' => new DatabaseQueueStore(),
+            default => FileQueueStore::fromConfig($config),
+        };
+    }
+
+    public function jobHandlerRegistry(array $handlers = []): JobHandlerRegistry
+    {
+        $registry = new JobHandlerRegistry();
+        $registry->register('test_job', new class implements JobHandlerInterface {
+            public function handle(\Mnb\SecurityCore\Queue\Job $job): JobResult { return JobResult::success(['handled' => true, 'job_id' => $job->id()]); }
+        });
+        $registry->register('webhook_dispatch', new class implements JobHandlerInterface {
+            public function handle(\Mnb\SecurityCore\Queue\Job $job): JobResult { return JobResult::success(['dispatched' => true]); }
+        });
+        foreach ($handlers as $name => $handler) {
+            if ($handler instanceof JobHandlerInterface) {
+                $registry->register((string)$name, $handler);
+            }
+        }
+        return $registry;
+    }
+
+    public function jobPayloadProtector(): JobPayloadProtector
+    {
+        return JobPayloadProtector::fromConfig($this->config);
+    }
+
+    public function idempotencyStore(): IdempotencyStore
+    {
+        $queue = is_array($this->config['queue'] ?? null) ? $this->config['queue'] : [];
+        $idempotency = is_array($queue['idempotency'] ?? null) ? $queue['idempotency'] : [];
+        return new IdempotencyStore((int)($idempotency['ttl_seconds'] ?? 86400));
+    }
+
+    public function duplicateJobGuard(): DuplicateJobGuard
+    {
+        return new DuplicateJobGuard($this->idempotencyStore());
+    }
+
+    public function jobDispatcher(?QueueStoreInterface $store = null, ?JobHandlerRegistry $handlers = null): JobDispatcher
+    {
+        return new JobDispatcher($this->queuePolicy(), $store ?: $this->queueStore(), $handlers ?: $this->jobHandlerRegistry(), $this->jobPayloadProtector(), $this->duplicateJobGuard());
+    }
+
+    public function retryPolicy(): RetryPolicy
+    {
+        return RetryPolicy::fromConfig($this->config);
+    }
+
+    public function deadLetterQueue(?QueueStoreInterface $store = null): DeadLetterQueue
+    {
+        return new DeadLetterQueue($store ?: $this->queueStore(), new JobPayloadRedactor());
+    }
+
+    public function queueWorker(?QueueStoreInterface $store = null, ?JobHandlerRegistry $handlers = null): Worker
+    {
+        $store = $store ?: $this->queueStore();
+        return new Worker($store, $handlers ?: $this->jobHandlerRegistry(), $this->retryPolicy(), $this->deadLetterQueue($store), WorkerConfig::fromConfig($this->config));
+    }
+
+    public function workerSupervisorForQueue(): WorkerSupervisor
+    {
+        return new WorkerSupervisor(WorkerConfig::fromConfig($this->config));
+    }
+
+    public function queuePressureGuard(?QueueStoreInterface $store = null): QueuePressureGuard
+    {
+        return new QueuePressureGuard($this->queuePolicy(), $store ?: $this->queueStore());
+    }
+
+    public function queueReleaseGate(): QueueReleaseGate
+    {
+        return QueueReleaseGate::fromConfig($this->config);
+    }
+
+    public function asyncResponseFactory(): AsyncResponseFactory
+    {
+        return AsyncResponseFactory::fromConfig($this->config);
+    }
+
+    public function jobStatusResponseFactory(): JobStatusResponseFactory
+    {
+        return new JobStatusResponseFactory();
+    }
 
     public function originProtectionPolicy(): OriginProtectionPolicy
     {
