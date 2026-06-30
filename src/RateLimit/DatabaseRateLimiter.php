@@ -2,6 +2,7 @@
 namespace Mnb\SecurityCore\RateLimit;
 
 use Mnb\SecurityCore\Contracts\RateLimiterInterface;
+use Mnb\SecurityCore\Database\SqlIdentifier;
 use PDO;
 
 class DatabaseRateLimiter implements RateLimiterInterface
@@ -10,7 +11,9 @@ class DatabaseRateLimiter implements RateLimiterInterface
         private PDO $pdo,
         private string $table = 'mnb_rate_limits',
         private string $prefix = 'mnb:rate:'
-    ) {}
+    ) {
+        $this->table = SqlIdentifier::assert($this->table, 'rate limit table');
+    }
 
     public function installSchema(): void
     {

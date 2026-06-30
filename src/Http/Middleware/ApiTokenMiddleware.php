@@ -20,6 +20,12 @@ class ApiTokenMiddleware implements MiddlewareInterface
         if (!$record) {
             return Response::json(['status' => false, 'message' => 'Invalid or expired token'], 401);
         }
+
+        $request = $request
+            ->withAttribute('auth_token', $record)
+            ->withAttribute('auth_user_id', $record['user_id'] ?? null)
+            ->withAttribute('auth_scopes', $record['scopes'] ?? []);
+
         return $next($request);
     }
 }

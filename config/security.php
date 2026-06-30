@@ -7,6 +7,8 @@ return [
         'key' => $_ENV['APP_KEY'] ?? '',
         'force_https' => filter_var($_ENV['FORCE_HTTPS'] ?? false, FILTER_VALIDATE_BOOL),
         'trusted_hosts' => array_filter(array_map('trim', explode(',', $_ENV['TRUSTED_HOSTS'] ?? 'localhost'))),
+        // X-Forwarded-* headers are trusted only when REMOTE_ADDR is in this list.
+        'trusted_proxies' => array_filter(array_map('trim', explode(',', $_ENV['TRUSTED_PROXIES'] ?? ''))),
     ],
     'cookies' => [
         'secure' => filter_var($_ENV['SESSION_SECURE'] ?? false, FILTER_VALIDATE_BOOL),
@@ -43,7 +45,7 @@ return [
             'driver' => $_ENV['UPLOAD_SCANNER_DRIVER'] ?? 'heuristic',
             'clamav_binary' => $_ENV['CLAMAV_BINARY'] ?? 'clamscan',
             'timeout_seconds' => (int)($_ENV['UPLOAD_SCAN_TIMEOUT'] ?? 30),
-            'fail_closed' => filter_var($_ENV['UPLOAD_SCAN_FAIL_CLOSED'] ?? false, FILTER_VALIDATE_BOOL),
+            'fail_closed' => filter_var($_ENV['UPLOAD_SCAN_FAIL_CLOSED'] ?? (($_ENV['APP_ENV'] ?? 'local') === 'production' ? true : false), FILTER_VALIDATE_BOOL),
             'heuristic_read_bytes' => (int)($_ENV['UPLOAD_HEURISTIC_READ_BYTES'] ?? 2097152),
         ],
     ],

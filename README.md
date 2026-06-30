@@ -1,14 +1,15 @@
-# mnb-secure-core v1.0
+# mnb-secure-core v1.0.1
 
 **Package / library name:** `mnb-secure-core`  
 **Composer package:** `mnb/mnb-secure-core`  
-**Version:** `1.0`  
+**Version:** `1.0.1`  
 **Author:** Nagendra babu Macharla  
-**Type:** reusable no-framework PHP security library
+**Type:** reusable no-framework PHP security library  
+**License:** MIT
 
 `mnb-secure-core` is a reusable PHP security core for custom applications that do not use a framework. It gives a project-ready security foundation for school ERP, CRM, billing, admin panels, APIs, file tools, reporting dashboards, and other PHP applications.
 
-This single README is the complete setup and reference document for the package. The earlier multi-file documentation has been merged here so the ZIP stays clean and easy to read.
+This README is the primary setup and reference document for the package. Supporting files such as `LICENSE`, `CHANGELOG.md`, and `SECURITY.md` are included for public GitHub/package use.
 
 ---
 
@@ -41,7 +42,11 @@ This single README is the complete setup and reference document for the package.
 - PHP 8.1 or higher
 - `openssl` PHP extension
 - `fileinfo` PHP extension
+- `json` PHP extension
+- `pdo` PHP extension
 - `zip` PHP extension recommended for ZIP backups
+- `redis` PHP extension optional for Redis-backed cache, rate limiting, and token storage
+- ClamAV optional for production malware scanning
 - Writable private storage directory outside public web access
 - HTTPS in production
 - Composer optional; the package also includes a simple standalone autoloader
@@ -87,7 +92,29 @@ Then include the library autoloader in your application bootstrap:
 require __DIR__ . '/../libraries/mnb-secure-core/autoload.php';
 ```
 
-Composer users can load it through Composer after placing it in their project as a path repository or private package:
+Composer users can install the public package after it is tagged/published:
+
+```bash
+composer require mnb/mnb-secure-core:^1.0
+```
+
+If you are installing directly from GitHub before Packagist publication, use a VCS repository entry:
+
+```json
+{
+  "repositories": [
+    {
+      "type": "vcs",
+      "url": "https://github.com/<your-user>/mnb-secure-core"
+    }
+  ],
+  "require": {
+    "mnb/mnb-secure-core": "^1.0"
+  }
+}
+```
+
+For local development, the path repository approach still works:
 
 ```json
 {
@@ -98,7 +125,7 @@ Composer users can load it through Composer after placing it in their project as
     }
   ],
   "require": {
-    "mnb/mnb-secure-core": "1.0.0"
+    "mnb/mnb-secure-core": "^1.0"
   }
 }
 ```
@@ -123,6 +150,7 @@ APP_URL=http://localhost
 APP_KEY=CHANGE_ME_WITH_bin_mnb-secure_key_generate
 FORCE_HTTPS=false
 TRUSTED_HOSTS=localhost,127.0.0.1
+TRUSTED_PROXIES=
 
 # Origin/server identity protection
 # PHP can help block direct IP Host requests and remove app-level fingerprint headers.
@@ -187,7 +215,7 @@ use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Http\Response;
 
-$request = Request::fromGlobals();
+$request = Request::fromGlobals($config['app']['trusted_proxies'] ?? []);
 
 $pipeline = new MiddlewarePipeline([
     new TrustedHostMiddleware($config['app']['trusted_hosts'] ?? []),
@@ -202,6 +230,8 @@ $response = $pipeline->handle($request, function (Request $request): Response {
 
 $response->send();
 ```
+
+`X-Forwarded-Proto` is trusted only when the request comes from `TRUSTED_PROXIES`. This prevents direct clients from spoofing HTTPS through a forged proxy header.
 
 ---
 
@@ -509,7 +539,7 @@ Use the production checker to warn when direct IP host access is allowed or orig
 
 ---
 
-## 15. Cache strategy
+## 16. Cache strategy
 
 The cache layer is intended for safe, bounded, non-sensitive data.
 
@@ -523,7 +553,7 @@ Rules:
 
 ---
 
-## 16. Environment and secret management
+## 17. Environment and secret management
 
 Use `.env` only for local configuration and server-specific secrets. Never commit real secrets.
 
@@ -537,7 +567,7 @@ Recommended secret rules:
 
 ---
 
-## 17. Logging, audit, and monitoring
+## 18. Logging, audit, and monitoring
 
 Use two different logging styles:
 
@@ -560,7 +590,7 @@ Never log raw passwords, tokens, cookies, API keys, encryption keys, or private 
 
 ---
 
-## 18. Error handling strategy
+## 19. Error handling strategy
 
 The error handling layer separates public messages from internal diagnostic details.
 
@@ -598,7 +628,7 @@ Recommended public statuses:
 
 ---
 
-## 19. Backup, recovery, and incident response
+## 20. Backup, recovery, and incident response
 
 Backup rules:
 
@@ -620,7 +650,7 @@ Incident response basics:
 
 ---
 
-## 20. Memory management and resource safety
+## 21. Memory management and resource safety
 
 Use memory guards for large files, exports, imports, conversions, and batch operations.
 
@@ -643,7 +673,7 @@ Risk examples:
 
 ---
 
-## 21. Throughput and performance capacity management
+## 22. Throughput and performance capacity management
 
 Throughput controls help prevent accidental overload and abuse.
 
@@ -666,7 +696,7 @@ php bin/mnb-secure throughput:plan 80 150 25 500 900
 
 ---
 
-## 22. Vulnerability blocking matrix
+## 23. Vulnerability blocking matrix
 
 | Vulnerability | Main controls |
 | --- | --- |
@@ -688,7 +718,7 @@ php bin/mnb-secure throughput:plan 80 150 25 500 900
 
 ---
 
-## 23. Concept to file map
+## 24. Concept to file map
 
 | Concept | Main files/classes |
 | --- | --- |
@@ -714,7 +744,7 @@ php bin/mnb-secure throughput:plan 80 150 25 500 900
 
 ---
 
-## 24. Demos
+## 25. Demos
 
 Run all CLI demos:
 
@@ -760,7 +790,7 @@ Demo map:
 
 ---
 
-## 25. CLI commands
+## 26. CLI commands
 
 From package root:
 
@@ -775,7 +805,7 @@ php bin/mnb-secure throughput:plan 80 150 25 500 900
 
 ---
 
-## 26. Testing checklist
+## 27. Testing checklist
 
 Before using this library in production, verify:
 
@@ -799,7 +829,7 @@ Before using this library in production, verify:
 
 ---
 
-## 27. Penetration testing workflow
+## 28. Penetration testing workflow
 
 Only test systems you own or are authorized to test.
 
@@ -831,7 +861,17 @@ Retest result:
 
 ---
 
-## 28. Production checklist
+## 29. Public package safety note
+
+This library provides reusable security building blocks. It does not automatically make an application secure unless the application integrates the controls correctly, configures production settings safely, and tests the final deployment.
+
+For reverse-proxy deployments, configure `TRUSTED_PROXIES`; otherwise forwarded HTTPS headers are intentionally ignored.
+
+For database-backed cache, rate limiter, and token stores, the bundled SQL uses MySQL/MariaDB upsert syntax. Use the file/Redis drivers or add driver-specific SQL before relying on those stores with SQLite/PostgreSQL.
+
+---
+
+## 30. Production checklist
 
 Before deployment:
 
@@ -859,7 +899,7 @@ Before deployment:
 
 ---
 
-## 29. Starter integration template
+## 31. Starter integration template
 
 Use `templates/no-framework-app/` as a copy/paste reference for integrating the security core into a custom PHP app.
 
@@ -875,7 +915,7 @@ Typical flow:
 
 ---
 
-## 30. Package structure
+## 32. Package structure
 
 ```text
 mnb-secure-core/
@@ -883,11 +923,14 @@ mnb-secure-core/
 ├── bin/mnb-secure
 ├── composer.json
 ├── config/security.php
+├── database/
 ├── demos/
 ├── examples/
 ├── src/
 ├── storage/
-├── templates/no-framework-app/
 ├── tests/run-tests.php
+├── LICENSE
+├── CHANGELOG.md
+├── SECURITY.md
 └── README.md
 ```

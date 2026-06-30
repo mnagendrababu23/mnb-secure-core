@@ -106,7 +106,7 @@ switch ($command) {
         echo $response->body() . PHP_EOL;
         break;
     default:
-        echo "MNB Secure Core v1.0 CLI\n";
+        echo "MNB Secure Core v1.0.1 CLI\n";
         echo "Commands:\n";
         echo "  key:generate             Generate 64-char app key\n";
         echo "  check:production         Run production security readiness checks\n";

@@ -4,11 +4,13 @@ require __DIR__ . '/../autoload.php';
 use Mnb\SecurityCore\Auth\Csrf;
 use Mnb\SecurityCore\Auth\OpaqueTokenService;
 use Mnb\SecurityCore\Auth\PasswordHasher;
+use Mnb\SecurityCore\Auth\Stores\DatabaseTokenStore;
 use Mnb\SecurityCore\Auth\Stores\FileTokenStore;
 use Mnb\SecurityCore\Authz\Policies\StudentPolicy;
 use Mnb\SecurityCore\Authz\PolicyRegistry;
 use Mnb\SecurityCore\Authz\TenantContext;
 use Mnb\SecurityCore\Authz\TenantGuard;
+use Mnb\SecurityCore\Cache\DatabaseCache;
 use Mnb\SecurityCore\Cache\FileCache;
 use Mnb\SecurityCore\Data\DataClassifier;
 use Mnb\SecurityCore\Data\DataMasker;
@@ -28,12 +30,14 @@ use Mnb\SecurityCore\Files\FileUploadPolicy;
 use Mnb\SecurityCore\Files\LocalPrivateStorage;
 use Mnb\SecurityCore\Files\SecureFileManager;
 use Mnb\SecurityCore\Files\HeuristicMalwareScanner;
+use Mnb\SecurityCore\Http\Middleware\ApiTokenMiddleware;
 use Mnb\SecurityCore\Http\Middleware\HttpsMiddleware;
 use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
 use Mnb\SecurityCore\Http\MiddlewarePipeline;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Http\Response;
 use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
+use Mnb\SecurityCore\RateLimit\DatabaseRateLimiter;
 use Mnb\SecurityCore\RateLimit\FileRateLimiter;
 use Mnb\SecurityCore\Security\ProductionSecurityChecker;
 use Mnb\SecurityCore\Security\VulnerabilityMatrix;
@@ -111,6 +115,17 @@ $tokenStore = new FileTokenStore($base . '/tokens/tokens.json');
 $tokenService = new OpaqueTokenService($tokenStore);
 $issued = $tokenService->issue(99, ['profile.read'], 'device1', 'Phone', 60);
 ok($tokenService->validate($issued['plain_token']) !== null, 'opaque token validates');
+$apiTokenRequest = new Request('GET', '/api/profile', [], [], ['authorization' => 'Bearer ' . $issued['plain_token']], ['REMOTE_ADDR' => '127.0.0.1']);
+$apiTokenPipeline = new MiddlewarePipeline([new ApiTokenMiddleware($tokenService)]);
+$apiTokenResponse = $apiTokenPipeline->handle($apiTokenRequest, function (Request $request): Response {
+    return Response::json([
+        'user_id' => $request->attribute('auth_user_id'),
+        'scopes' => $request->attribute('auth_scopes'),
+    ]);
+});
+$apiTokenPayload = json_decode($apiTokenResponse->body(), true);
+ok($apiTokenPayload['user_id'] === 99 && $apiTokenPayload['scopes'] === ['profile.read'], 'api token middleware exposes auth context attributes');
+
 $tokenService->revoke($issued['plain_token']);
 ok($tokenService->validate($issued['plain_token']) === null, 'opaque token revokes');
 
@@ -153,6 +168,15 @@ $pipeline = new MiddlewarePipeline([new HttpsMiddleware(true)]);
 $response = $pipeline->handle($request, fn() => Response::text('ok'));
 ok($response->status() === 403, 'middleware pipeline blocks insecure request');
 
+$spoofedForwardedHttps = new Request('GET', '/', [], [], [], ['HTTPS' => 'off', 'HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => '203.0.113.10']);
+ok(!$spoofedForwardedHttps->isSecure(), 'request ignores spoofed forwarded HTTPS from untrusted clients');
+
+$trustedForwardedHttps = new Request('GET', '/', [], [], [], ['HTTPS' => 'off', 'HTTP_X_FORWARDED_PROTO' => 'https', 'REMOTE_ADDR' => '203.0.113.10'], ['203.0.113.0/24']);
+ok($trustedForwardedHttps->isSecure(), 'request trusts forwarded HTTPS only from trusted proxy ranges');
+
+$attributedRequest = $request->withAttribute('auth_user_id', 99);
+ok($request->attribute('auth_user_id') === null && $attributedRequest->attribute('auth_user_id') === 99, 'request attributes are immutable and available for auth context');
+
 $checker = new ProductionSecurityChecker([
     'app' => ['env' => 'production', 'debug' => true, 'force_https' => false, 'key' => 'weak', 'trusted_hosts' => []],
     'cookies' => ['secure' => false, 'http_only' => false],
@@ -194,6 +218,13 @@ ok(str_contains($selectPlan->bindings[2], '\\%') && str_contains($selectPlan->bi
 $unsafeIdentifierBlocked = false;
 try { SqlIdentifier::assert('students;DROP_TABLE'); } catch (InvalidArgumentException $e) { $unsafeIdentifierBlocked = true; }
 ok($unsafeIdentifierBlocked, 'SQL identifier guard blocks unsafe identifier');
+
+$fakePdo = new class extends PDO { public function __construct() {} };
+$dbStoreIdentifierBlocked = 0;
+foreach ([DatabaseCache::class, DatabaseRateLimiter::class, DatabaseTokenStore::class] as $storeClass) {
+    try { new $storeClass($fakePdo, 'unsafe_table;DROP'); } catch (InvalidArgumentException $e) { $dbStoreIdentifierBlocked++; }
+}
+ok($dbStoreIdentifierBlocked === 3, 'database-backed stores validate configured table identifiers');
 
 $massPlan = $builder->insert($studentTable, ['first_name' => 'Ravi', 'role_id' => 1, 'school_id' => 999], ['school_id' => 10, 'branch_id' => 5, 'academic_year_id' => 2026]);
 ok(!str_contains($massPlan->sql, 'role_id') && !in_array(999, $massPlan->bindings, true) && in_array(10, $massPlan->bindings, true), 'insert allow-list blocks mass assignment and enforces tenant');

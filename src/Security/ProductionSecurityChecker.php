@@ -59,6 +59,13 @@ class ProductionSecurityChecker
         if (($app['env'] ?? 'local') === 'production' && (($uploads['scanner']['driver'] ?? 'heuristic') === 'none')) {
             $issues[] = ['level' => 'medium', 'key' => 'upload_scanner_disabled', 'message' => 'Enable at least heuristic upload scanning in production.'];
         }
+        if (($app['env'] ?? 'local') === 'production') {
+            $scannerDriver = (string)($uploads['scanner']['driver'] ?? 'heuristic');
+            $usesExternalScanner = in_array($scannerDriver, ['clamav', 'composite'], true);
+            if ($usesExternalScanner && empty($uploads['scanner']['fail_closed'])) {
+                $issues[] = ['level' => 'high', 'key' => 'upload_scanner_fail_open', 'message' => 'Production ClamAV/composite upload scanning should fail closed when the scanner is unavailable.'];
+            }
+        }
         if (!empty($uploads['allowed_extensions']) && array_intersect((array)$uploads['allowed_extensions'], ['php', 'phtml', 'phar', 'exe', 'sh'])) {
             $issues[] = ['level' => 'critical', 'key' => 'executable_upload_extension_allowed', 'message' => 'Executable upload extensions must not be allowed.'];
         }

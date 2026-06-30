@@ -2,6 +2,7 @@
 namespace Mnb\SecurityCore\Cache;
 
 use Mnb\SecurityCore\Contracts\CacheInterface;
+use Mnb\SecurityCore\Database\SqlIdentifier;
 use PDO;
 
 class DatabaseCache implements CacheInterface
@@ -10,7 +11,9 @@ class DatabaseCache implements CacheInterface
         private PDO $pdo,
         private string $table = 'mnb_cache',
         private string $prefix = 'mnb:cache:'
-    ) {}
+    ) {
+        $this->table = SqlIdentifier::assert($this->table, 'cache table');
+    }
 
     public function installSchema(): void
     {

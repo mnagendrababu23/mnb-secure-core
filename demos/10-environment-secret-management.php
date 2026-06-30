@@ -18,6 +18,13 @@ $config = [
     'app' => ['env' => 'production', 'debug' => false, 'force_https' => true, 'key' => EnvLoader::get('APP_KEY'), 'trusted_hosts' => ['school.local']],
     'cookies' => ['secure' => true, 'http_only' => true],
     'paths' => ['private_storage' => demo_storage_path('private'), 'backups' => demo_storage_path('backups'), 'logs' => demo_storage_path('logs'), 'audit' => demo_storage_path('audit')],
+    'origin_protection' => [
+        'enabled' => true,
+        'block_direct_ip_host' => true,
+        'cdn_or_proxy_enabled' => true,
+        'require_cdn_or_proxy_in_production' => false,
+    ],
+    'uploads' => ['scanner' => ['driver' => 'heuristic']],
 ];
 $report = (new ProductionSecurityChecker($config))->check();
 
