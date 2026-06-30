@@ -30,11 +30,11 @@ class SecureFileManager
             throw new SecurityException('Invalid upload size');
         }
         $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-        if (!in_array($extension, $this->policy->allowedExtensions, true)) {
+        if (!$this->policy->allowsExtension($extension)) {
             throw new SecurityException('File extension is not allowed');
         }
         $mime = $this->detectMime($sourcePath);
-        if (!$this->mimeAllowed($mime)) {
+        if (!$this->policy->allowsMime($mime)) {
             throw new SecurityException('File MIME type is not allowed: ' . $mime);
         }
         $this->validateMimeExtensionPair($extension, $mime);
@@ -56,6 +56,7 @@ class SecureFileManager
             'mime' => $mime,
             'size' => $size,
             'extension' => $extension,
+            'profile' => $this->policy->profile,
         ];
     }
 
@@ -140,6 +141,56 @@ class SecureFileManager
         }
         if (in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'webp'], true) && @getimagesize($path) === false) {
             throw new SecurityException('Image signature is invalid');
+        }
+        if (in_array($extension, ['zip'], true)) {
+            $this->validateZipArchive($path);
+        }
+    }
+
+    private function validateZipArchive(string $path): void
+    {
+        if (!class_exists('ZipArchive')) {
+            if ($this->policy->strictMode) {
+                throw new SecurityException('ZIP archive validation requires the zip extension in strict mode');
+            }
+            return;
+        }
+
+        $zip = new \ZipArchive();
+        if ($zip->open($path) !== true) {
+            throw new SecurityException('ZIP archive could not be opened for validation');
+        }
+
+        try {
+            if ($zip->numFiles > $this->policy->maxArchiveEntries) {
+                throw new SecurityException('ZIP archive contains too many entries');
+            }
+
+            $totalUncompressedBytes = 0;
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $stat = $zip->statIndex($i);
+                if (!is_array($stat)) {
+                    throw new SecurityException('ZIP archive entry metadata could not be read');
+                }
+
+                $name = (string)($stat['name'] ?? '');
+                $normalized = str_replace('\\', '/', $name);
+                if ($normalized === '' || str_contains($normalized, '../') || str_starts_with($normalized, '/') || preg_match('/^[A-Za-z]:\\//', $normalized)) {
+                    throw new SecurityException('ZIP archive contains an unsafe file path');
+                }
+
+                $entryExtension = strtolower(pathinfo($normalized, PATHINFO_EXTENSION));
+                if ($entryExtension !== '' && in_array($entryExtension, $this->policy->blockedExtensions, true)) {
+                    throw new SecurityException('ZIP archive contains a blocked executable entry');
+                }
+
+                $totalUncompressedBytes += (int)($stat['size'] ?? 0);
+                if ($totalUncompressedBytes > $this->policy->maxArchiveUncompressedBytes) {
+                    throw new SecurityException('ZIP archive uncompressed size is too large');
+                }
+            }
+        } finally {
+            $zip->close();
         }
     }
 

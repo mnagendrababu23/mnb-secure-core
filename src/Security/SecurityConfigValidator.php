@@ -2,6 +2,7 @@
 namespace Mnb\SecurityCore\Security;
 
 use Mnb\SecurityCore\Core\StorageDriverResolver;
+use Mnb\SecurityCore\Files\UploadSecurityProfile;
 use Mnb\SecurityCore\Database\SqlIdentifier;
 use Throwable;
 
@@ -222,11 +223,31 @@ class SecurityConfigValidator
             return;
         }
 
+        $app = is_array($this->config['app'] ?? null) ? $this->config['app'] : [];
+        $isProduction = $this->isProduction($app);
+        $profile = $uploads['profile'] ?? 'custom';
+        $profileName = is_scalar($profile) ? UploadSecurityProfile::normalizeName((string)$profile) : null;
+        $customProfiles = is_array($uploads['profiles'] ?? null) ? $uploads['profiles'] : [];
+
+        if (!$this->isStringLike($profile)) {
+            $this->issue('high', 'invalid_upload_profile', 'uploads.profile', 'Upload profile must be a string.', UploadSecurityProfile::names(), $profile);
+        } elseif ($profileName !== 'custom' && !UploadSecurityProfile::exists($profileName, $customProfiles)) {
+            $this->issue('high', 'unknown_upload_profile', 'uploads.profile', 'Upload profile must be one of the built-in profiles or a custom profile key.', array_merge(['custom'], UploadSecurityProfile::names()), $profile);
+        }
+
+        $this->bool($uploads, 'strict_production', 'uploads.strict_production', required: false);
+        $this->bool($uploads, 'allow_archives_in_production', 'uploads.allow_archives_in_production', required: false);
+        $this->positiveInt($uploads, 'max_archive_entries', 'uploads.max_archive_entries', required: false);
+        $this->positiveInt($uploads, 'max_archive_uncompressed_bytes', 'uploads.max_archive_uncompressed_bytes', required: false);
+
         foreach (['allowed_extensions', 'allowed_mime_prefixes', 'blocked_extensions'] as $key) {
-            $this->stringList($uploads[$key] ?? [], 'uploads.' . $key, $key !== 'blocked_extensions');
+            if (array_key_exists($key, $uploads) || $profileName === 'custom') {
+                $this->stringList($uploads[$key] ?? [], 'uploads.' . $key, $key !== 'blocked_extensions');
+            }
         }
 
         $dangerous = ['php', 'phtml', 'phar', 'cgi', 'pl', 'sh', 'exe', 'com', 'bat', 'cmd', 'js', 'html', 'htm', 'svg'];
+        $archiveExtensions = ['zip', 'tar', 'gz', 'tgz', 'rar', '7z'];
         $allowedExtensions = array_map(fn($ext): string => strtolower(ltrim((string)$ext, '.')), is_array($uploads['allowed_extensions'] ?? null) ? $uploads['allowed_extensions'] : []);
         $dangerousAllowed = array_values(array_intersect($allowedExtensions, $dangerous));
         if ($dangerousAllowed !== []) {
@@ -244,6 +265,33 @@ class SecurityConfigValidator
         $this->bool($uploads, 'reject_executable_content', 'uploads.reject_executable_content');
         $this->positiveInt($uploads, 'max_original_name_length', 'uploads.max_original_name_length', required: false);
 
+        if (array_key_exists('profiles', $uploads)) {
+            if (!is_array($uploads['profiles'])) {
+                $this->issue('high', 'invalid_upload_profiles', 'uploads.profiles', 'Upload profiles must be an associative array.', 'array<string,array>', $uploads['profiles']);
+            } else {
+                foreach ($uploads['profiles'] as $name => $profileConfig) {
+                    if (!is_string($name) || !preg_match('/^[a-z0-9][a-z0-9_.:-]{0,80}$/', strtolower($name))) {
+                        $this->issue('high', 'invalid_upload_profile_name', 'uploads.profiles', 'Upload profile names must use safe identifier characters.', 'letters, numbers, dash, underscore, dot or colon', $name);
+                        continue;
+                    }
+                    if (!is_array($profileConfig)) {
+                        $this->issue('high', 'invalid_upload_profile_config_' . preg_replace('/[^a-z0-9_]+/i', '_', $name), 'uploads.profiles.' . $name, 'Upload profile config must be an array.', 'array', $profileConfig);
+                        continue;
+                    }
+                    $this->validateUploadProfileConfig($name, $profileConfig);
+                }
+            }
+        }
+
+        $archiveProfileSelected = $profileName === UploadSecurityProfile::ARCHIVES;
+        $archivesAllowedByLegacyList = array_intersect($allowedExtensions, $archiveExtensions) !== [];
+        if ($isProduction && ($archiveProfileSelected || $archivesAllowedByLegacyList) && empty($uploads['allow_archives_in_production'])) {
+            $this->issue('high', 'archives_allowed_in_production_without_opt_in', 'uploads', 'Archive uploads are high risk in production and must be explicitly opted in.', 'uploads.allow_archives_in_production=true', ['profile' => $profileName, 'allowed_extensions' => $allowedExtensions]);
+        }
+        if ($isProduction && empty($uploads['strict_production'])) {
+            $this->issue('medium', 'upload_strict_production_disabled', 'uploads.strict_production', 'Enable strict_production so production uploads always randomize names, deny double extensions, and reject executable content.', true, $uploads['strict_production'] ?? null);
+        }
+
         $scanner = $uploads['scanner'] ?? [];
         if (!is_array($scanner)) {
             $this->issue('high', 'invalid_upload_scanner_config', 'uploads.scanner', 'Upload scanner config must be an array.', 'array', $scanner);
@@ -259,6 +307,34 @@ class SecurityConfigValidator
         $this->bool($scanner, 'fail_closed', 'uploads.scanner.fail_closed', required: false);
         if (in_array((string)$driver, ['clamav', 'composite'], true) && empty($scanner['clamav_binary'])) {
             $this->issue('medium', 'missing_clamav_binary', 'uploads.scanner.clamav_binary', 'ClamAV/composite scanner should configure the clamscan binary path/name.', 'clamscan path/name', $scanner['clamav_binary'] ?? null);
+        }
+    }
+
+    /** @param array<string,mixed> $profileConfig */
+    private function validateUploadProfileConfig(string $name, array $profileConfig): void
+    {
+        $path = 'uploads.profiles.' . $name;
+        foreach (['allowed_extensions', 'allowed_mime_prefixes', 'blocked_extensions'] as $key) {
+            if (array_key_exists($key, $profileConfig)) {
+                $this->stringList($profileConfig[$key], $path . '.' . $key, false);
+            }
+        }
+        foreach (['deny_double_extensions', 'randomize_names', 'reject_executable_content', 'strict_mode'] as $key) {
+            if (array_key_exists($key, $profileConfig)) {
+                $this->bool($profileConfig, $key, $path . '.' . $key, required: false);
+            }
+        }
+        foreach (['max_bytes', 'max_original_name_length', 'max_archive_entries', 'max_archive_uncompressed_bytes'] as $key) {
+            if (array_key_exists($key, $profileConfig)) {
+                $this->positiveInt($profileConfig, $key, $path . '.' . $key, required: false);
+            }
+        }
+
+        $dangerous = ['php', 'phtml', 'phar', 'cgi', 'pl', 'sh', 'exe', 'com', 'bat', 'cmd', 'js', 'html', 'htm', 'svg'];
+        $allowedExtensions = array_map(fn($ext): string => strtolower(ltrim((string)$ext, '.')), is_array($profileConfig['allowed_extensions'] ?? null) ? $profileConfig['allowed_extensions'] : []);
+        $dangerousAllowed = array_values(array_intersect($allowedExtensions, $dangerous));
+        if ($dangerousAllowed !== []) {
+            $this->issue('critical', 'dangerous_upload_profile_extension_' . preg_replace('/[^a-z0-9_]+/i', '_', $name), $path . '.allowed_extensions', 'Upload profiles must not allow executable or scriptable extensions.', 'safe extensions only', $dangerousAllowed);
         }
     }
 

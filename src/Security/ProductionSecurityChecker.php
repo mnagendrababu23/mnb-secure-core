@@ -74,6 +74,15 @@ class ProductionSecurityChecker
             if ($usesExternalScanner && empty($uploads['scanner']['fail_closed'])) {
                 $issues[] = ['level' => 'high', 'key' => 'upload_scanner_fail_open', 'message' => 'Production ClamAV/composite upload scanning should fail closed when the scanner is unavailable.'];
             }
+            if (empty($uploads['strict_production'])) {
+                $issues[] = ['level' => 'medium', 'key' => 'upload_strict_production_disabled', 'message' => 'Enable strict production upload mode to force randomized names, double-extension blocking, and executable-content rejection.'];
+            }
+            $archiveExtensions = ['zip', 'tar', 'gz', 'tgz', 'rar', '7z'];
+            $selectedProfile = strtolower((string)($uploads['profile'] ?? 'custom'));
+            $archiveUploadEnabled = $selectedProfile === 'archives' || (!empty($uploads['allowed_extensions']) && array_intersect((array)$uploads['allowed_extensions'], $archiveExtensions));
+            if ($archiveUploadEnabled && empty($uploads['allow_archives_in_production'])) {
+                $issues[] = ['level' => 'high', 'key' => 'archives_allowed_without_production_opt_in', 'message' => 'Archive uploads are high risk in production and should require explicit opt-in.'];
+            }
         }
         if (!empty($uploads['allowed_extensions']) && array_intersect((array)$uploads['allowed_extensions'], ['php', 'phtml', 'phar', 'exe', 'sh'])) {
             $issues[] = ['level' => 'critical', 'key' => 'executable_upload_extension_allowed', 'message' => 'Executable upload extensions must not be allowed.'];

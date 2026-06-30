@@ -126,10 +126,20 @@ class SecurityKernel
         return new FileTokenStore(StorageDriverResolver::filePath($this->config['paths']['tokens'] ?? $defaultTokenFile, 'token store'));
     }
 
-    public function secureFileManager(?MalwareScannerInterface $scanner = null): SecureFileManager
+    public function uploadPolicy(?string $profile = null): FileUploadPolicy
+    {
+        return FileUploadPolicy::fromConfig(
+            is_array($this->config['uploads'] ?? null) ? $this->config['uploads'] : [],
+            (int)($this->config['limits']['upload_max_bytes'] ?? 10 * 1024 * 1024),
+            (string)($this->config['app']['env'] ?? 'local'),
+            $profile
+        );
+    }
+
+    public function secureFileManager(?MalwareScannerInterface $scanner = null, ?string $profile = null): SecureFileManager
     {
         $storage = new LocalPrivateStorage($this->config['paths']['private_storage']);
-        $policy = FileUploadPolicy::fromConfig($this->config['uploads'], $this->config['limits']['upload_max_bytes']);
+        $policy = $this->uploadPolicy($profile);
         return new SecureFileManager($storage, $policy, $this->config['paths']['quarantine'], $scanner ?: $this->malwareScanner());
     }
 

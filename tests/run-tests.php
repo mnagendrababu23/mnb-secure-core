@@ -33,6 +33,7 @@ use Mnb\SecurityCore\Exceptions\SecurityException;
 use Mnb\SecurityCore\Files\FileUploadPolicy;
 use Mnb\SecurityCore\Files\LocalPrivateStorage;
 use Mnb\SecurityCore\Files\SecureFileManager;
+use Mnb\SecurityCore\Files\UploadSecurityProfile;
 use Mnb\SecurityCore\Files\HeuristicMalwareScanner;
 use Mnb\SecurityCore\Http\Middleware\ApiTokenMiddleware;
 use Mnb\SecurityCore\Http\Middleware\HttpsMiddleware;
@@ -239,6 +240,27 @@ $blockedContent = false;
 try { $manager->storeFromPath($malicious, 'malicious.txt', 'test'); } catch (SecurityException $e) { $blockedContent = true; }
 ok($blockedContent, 'secure file upload blocks executable content patterns');
 
+$imagePolicy = FileUploadPolicy::forProfile(UploadSecurityProfile::IMAGES);
+ok($imagePolicy->profile === 'images' && $imagePolicy->allowsExtension('png') && !$imagePolicy->allowsExtension('pdf'), 'upload security profile creates image-only policy');
+
+$strictProductionPolicy = FileUploadPolicy::fromConfig([
+    'profile' => 'documents',
+    'strict_production' => true,
+    'deny_double_extensions' => false,
+    'randomize_names' => false,
+    'reject_executable_content' => false,
+], 20 * 1024 * 1024, 'production');
+ok($strictProductionPolicy->strictMode && $strictProductionPolicy->denyDoubleExtensions && $strictProductionPolicy->randomizeNames && $strictProductionPolicy->rejectExecutableContent, 'strict production upload mode forces safe upload settings');
+
+$imageManager = new SecureFileManager(new LocalPrivateStorage($base . '/private-images'), $imagePolicy, $base . '/quarantine-images');
+$png = $base . '/tiny.png';
+file_put_contents($png, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lRjF6wAAAABJRU5ErkJggg=='));
+$storedImage = $imageManager->storeFromPath($png, 'tiny.png', 'images');
+ok(($storedImage['profile'] ?? null) === 'images' && str_starts_with($storedImage['storage_path'], 'images/'), 'secure file manager stores uploads with selected profile metadata');
+
+$archivePolicy = FileUploadPolicy::forProfile(UploadSecurityProfile::ARCHIVES);
+ok($archivePolicy->allowsExtension('zip') && !$archivePolicy->allowsExtension('php'), 'archive upload profile allows archives but still blocks executable extensions');
+
 $headersPipeline = new MiddlewarePipeline([new SecurityHeadersMiddleware(['hsts' => true])]);
 $headersResponse = $headersPipeline->handle(new Request('GET', '/', [], [], [], ['HTTPS' => 'on']), fn() => Response::text('ok'));
 ok(isset($headersResponse->headers()['Content-Security-Policy']) && isset($headersResponse->headers()['Strict-Transport-Security']), 'security headers middleware applies CSP and HSTS');
@@ -306,6 +328,15 @@ ok(!$report['passed'] && count($report['issues']) >= 4, 'production checker catc
 $defaultConfig = require __DIR__ . '/../config/security.php';
 $configValidationReport = (new SecurityConfigValidator($defaultConfig))->validate();
 ok($configValidationReport['passed'] === true && array_key_exists('warnings', $configValidationReport), 'security config validator accepts default config shape with non-blocking warnings');
+
+$archiveProductionConfig = array_replace_recursive($defaultConfig, [
+    'app' => ['env' => 'production', 'debug' => false, 'force_https' => true, 'key' => str_repeat('a', 40), 'trusted_hosts' => ['app.example.com']],
+    'cookies' => ['secure' => true, 'http_only' => true],
+    'limits' => ['request_max_bytes' => 128 * 1024 * 1024, 'upload_max_bytes' => 25 * 1024 * 1024],
+    'uploads' => ['profile' => 'archives', 'strict_production' => true, 'allow_archives_in_production' => false],
+]);
+$archiveProductionReport = (new SecurityConfigValidator($archiveProductionConfig))->validate();
+ok(in_array('archives_allowed_in_production_without_opt_in', array_column($archiveProductionReport['issues'], 'key'), true), 'security config validator requires explicit production opt-in for archive upload profile');
 
 $invalidConfigReport = (new SecurityConfigValidator([
     'app' => ['env' => 'production', 'debug' => 'true', 'force_https' => false, 'key' => 'weak', 'trusted_hosts' => ['*'], 'trusted_proxies' => ['not-a-proxy', '*']],

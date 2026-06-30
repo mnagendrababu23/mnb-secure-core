@@ -33,6 +33,11 @@ return [
         'export' => ['max' => 10, 'seconds' => 3600, 'key_by' => ['user', 'route']],
     ],
     'uploads' => [
+        // Built-in profiles: default, images, documents, videos, archives, strict.
+        // Keep legacy allow-lists below for backward compatibility; set UPLOAD_PROFILE to use a preset.
+        'profile' => $_ENV['UPLOAD_PROFILE'] ?? 'custom',
+        'strict_production' => filter_var($_ENV['UPLOAD_STRICT_PRODUCTION'] ?? (($_ENV['APP_ENV'] ?? 'local') === 'production' ? true : false), FILTER_VALIDATE_BOOL),
+        'allow_archives_in_production' => filter_var($_ENV['UPLOAD_ALLOW_ARCHIVES_IN_PRODUCTION'] ?? false, FILTER_VALIDATE_BOOL),
         'allowed_extensions' => ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv'],
         'allowed_mime_prefixes' => ['image/', 'application/pdf', 'text/', 'application/vnd.', 'application/msword'],
         'blocked_extensions' => ['php', 'phtml', 'phar', 'cgi', 'pl', 'sh', 'exe', 'com', 'bat', 'cmd', 'js', 'html', 'htm', 'svg'],
@@ -40,6 +45,15 @@ return [
         'randomize_names' => true,
         'max_original_name_length' => 180,
         'reject_executable_content' => true,
+        'max_archive_entries' => (int)($_ENV['UPLOAD_MAX_ARCHIVE_ENTRIES'] ?? 500),
+        'max_archive_uncompressed_bytes' => (int)($_ENV['UPLOAD_MAX_ARCHIVE_UNCOMPRESSED_BYTES'] ?? 104857600),
+        'profiles' => [
+            'images' => ['max_bytes' => 5 * 1024 * 1024],
+            'documents' => ['max_bytes' => 15 * 1024 * 1024],
+            'videos' => ['max_bytes' => 100 * 1024 * 1024],
+            'archives' => ['max_bytes' => 25 * 1024 * 1024],
+            'strict' => ['max_bytes' => 5 * 1024 * 1024],
+        ],
         'scanner' => [
             // none, heuristic, clamav, composite
             'driver' => $_ENV['UPLOAD_SCANNER_DRIVER'] ?? 'heuristic',
