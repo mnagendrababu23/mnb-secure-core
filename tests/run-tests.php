@@ -42,6 +42,7 @@ use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
 use Mnb\SecurityCore\RateLimit\DatabaseRateLimiter;
 use Mnb\SecurityCore\RateLimit\FileRateLimiter;
 use Mnb\SecurityCore\Security\ProductionSecurityChecker;
+use Mnb\SecurityCore\Security\SecurityConfigValidator;
 use Mnb\SecurityCore\Security\VulnerabilityMatrix;
 use Mnb\SecurityCore\Pentest\PentestChecklist;
 use Mnb\SecurityCore\Pentest\PayloadLibrary;
@@ -220,6 +221,31 @@ $checker = new ProductionSecurityChecker([
 ]);
 $report = $checker->check();
 ok(!$report['passed'] && count($report['issues']) >= 4, 'production checker catches unsafe config');
+
+$defaultConfig = require __DIR__ . '/../config/security.php';
+$configValidationReport = (new SecurityConfigValidator($defaultConfig))->validate();
+ok($configValidationReport['passed'] === true && array_key_exists('warnings', $configValidationReport), 'security config validator accepts default config shape with non-blocking warnings');
+
+$invalidConfigReport = (new SecurityConfigValidator([
+    'app' => ['env' => 'production', 'debug' => 'true', 'force_https' => false, 'key' => 'weak', 'trusted_hosts' => ['*'], 'trusted_proxies' => ['not-a-proxy', '*']],
+    'cookies' => ['secure' => false, 'http_only' => true, 'same_site' => 'None'],
+    'paths' => ['private_storage' => '', 'quarantine' => '/tmp/q', 'cache' => '/tmp/cache', 'logs' => '/tmp/logs', 'audit' => '/tmp/audit', 'backups' => '/tmp/backups', 'tokens' => '/tmp/tokens.json'],
+    'limits' => ['request_max_bytes' => 10, 'upload_max_bytes' => 20, 'login' => ['max' => 0, 'seconds' => 60], 'api' => ['max' => 10, 'seconds' => 60], 'otp' => ['max' => 3, 'seconds' => 600], 'export' => ['max' => 10, 'seconds' => 3600]],
+    'uploads' => ['allowed_extensions' => ['jpg', 'php'], 'allowed_mime_prefixes' => ['image/'], 'blocked_extensions' => ['php'], 'deny_double_extensions' => true, 'randomize_names' => true, 'reject_executable_content' => true, 'scanner' => ['driver' => 'bad']],
+    'cache' => ['driver' => 'database', 'table' => 'unsafe;table'],
+    'rate_limiter' => ['driver' => 'file', 'table' => 'mnb_rate_limits'],
+    'token_store' => ['driver' => 'file', 'table' => 'mnb_api_tokens'],
+    'errors' => ['response_format' => 'xml'],
+]))->validate();
+$invalidKeys = array_column($invalidConfigReport['issues'], 'key');
+ok(
+    $invalidConfigReport['passed'] === false
+    && in_array('invalid_app_debug', $invalidKeys, true)
+    && in_array('invalid_trusted_proxy', $invalidKeys, true)
+    && in_array('dangerous_upload_extension_allowed', $invalidKeys, true)
+    && in_array('unsafe_sql_identifier_cache_table', $invalidKeys, true),
+    'security config validator catches unsafe types, proxy trust, uploads and table identifiers'
+);
 
 $audit = new TamperEvidentAuditLogger($base . '/audit/audit.log');
 $audit->record('fee.updated', ['user_id' => 1, 'token' => 'secret'], ['fee_id' => 5]);

@@ -5,6 +5,7 @@ require __DIR__ . '/../autoload.php';
 use Mnb\SecurityCore\Env\EnvLoader;
 use Mnb\SecurityCore\Env\SecretScanner;
 use Mnb\SecurityCore\Security\ProductionSecurityChecker;
+use Mnb\SecurityCore\Security\SecurityConfigValidator;
 use Mnb\SecurityCore\Security\VulnerabilityMatrix;
 use Mnb\SecurityCore\Pentest\PentestChecklist;
 use Mnb\SecurityCore\Pentest\PayloadLibrary;
@@ -32,6 +33,10 @@ switch ($command) {
     case 'key:generate':
         echo bin2hex(random_bytes(32)) . PHP_EOL;
         break;
+    case 'config:validate':
+        $report = (new SecurityConfigValidator($config))->validate();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($report['passed'] ? 0 : 1);
     case 'check:production':
         $report = (new ProductionSecurityChecker($config, $root))->check();
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
@@ -109,6 +114,7 @@ switch ($command) {
         echo "MNB Secure Core v1.0.1 CLI\n";
         echo "Commands:\n";
         echo "  key:generate             Generate 64-char app key\n";
+        echo "  config:validate          Validate security config shape, values, and safe combinations\n";
         echo "  check:production         Run production security readiness checks\n";
         echo "  secrets:scan             Scan project for accidental secrets\n";
         echo "  matrix:export            Export vulnerability blocking matrix\n";
