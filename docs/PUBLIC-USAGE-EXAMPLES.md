@@ -267,3 +267,98 @@ $middleware = $kernel->webhookSignatureMiddleware([
     'secret' => $_ENV['WEBHOOK_SECRET'],
 ]);
 ```
+
+## Authentication Strategy Engine
+
+```php
+$auth = $kernel->authenticationMiddleware('api_bearer');
+$response = (new MiddlewarePipeline([$auth]))->handle($request, $controller);
+```
+
+Optional bearer authentication allows guests but attaches an `AuthContext` either way:
+
+```php
+$auth = $kernel->authenticationMiddleware('optional_bearer');
+```
+
+A login flow can remain framework-independent by implementing `UserProviderInterface`:
+
+```php
+$result = $kernel->authWorkflow($userProvider)->login(
+    identifier: $email,
+    password: $password,
+    scopes: ['profile.read']
+);
+
+if ($result->failed()) {
+    return Response::json(['message' => 'Invalid credentials'], 401);
+}
+
+return Response::json([
+    'token' => $result->plainToken(),
+    'expires_at' => $result->metadata('expires_at'),
+]);
+```
+
+## Authorization Strategy Engine
+
+Use named authorization policies when a route needs roles, scopes, permissions, tenant ownership, trust-boundary checks, and field filtering in one decision.
+
+```php
+$decision = $kernel->authorizationRegistry()->decide(
+    policyName: 'students.update',
+    request: $request,
+    resource: ['id' => 44, 'school_id' => 10],
+    action: 'update',
+    resourceName: 'students',
+    dataClass: 'sensitive'
+);
+
+if ($decision->denied()) {
+    return Response::json(['message' => $decision->safeMessage()], $decision->statusCode());
+}
+```
+
+Middleware usage:
+
+```php
+$middleware = $kernel->authorizationMiddleware(
+    'students.update',
+    resourceResolver: fn (Request $request) => ['school_id' => 10],
+    action: 'update',
+    resourceName: 'students',
+    dataClass: 'sensitive'
+);
+```
+
+Field-level read filtering:
+
+```php
+$safe = $kernel->authorizationRegistry()->filterReadableFields(
+    'students.read',
+    $request,
+    $studentRecord
+);
+```
+
+Field-level write filtering:
+
+```php
+$clean = $kernel->authorizationRegistry()->filterWritableFields(
+    'students.update',
+    $request,
+    $request->body()
+);
+```
+
+Secure request receiving profiles can reference an authorization policy:
+
+```php
+'api_student_update' => [
+    'methods' => ['PATCH'],
+    'content_types' => ['application/json'],
+    'auth_strategy' => 'api_bearer',
+    'authorization' => 'students.update',
+    'input_validation' => true,
+]
+```

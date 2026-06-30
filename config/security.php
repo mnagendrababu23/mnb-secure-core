@@ -198,6 +198,150 @@ return [
     ],
 
 
+    'authentication' => [
+        'enabled' => filter_var($_ENV['AUTHENTICATION_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'defaults' => [
+            'failure_message' => 'Authentication required',
+            'audit' => true,
+            'required' => true,
+        ],
+        'strategies' => [
+            'api_bearer' => [
+                'type' => 'bearer',
+                'required' => true,
+                'rate_policy' => 'api',
+                'audit' => true,
+            ],
+            'optional_bearer' => [
+                'type' => 'bearer',
+                'required' => false,
+                'audit' => false,
+            ],
+            'admin_bearer' => [
+                'type' => 'bearer',
+                'required' => true,
+                'roles' => ['admin', 'super_admin'],
+                'rate_policy' => 'api',
+                'audit' => true,
+            ],
+            'web_session' => [
+                'type' => 'session',
+                'required' => true,
+                'roles' => [],
+                'audit' => true,
+            ],
+            'webhook_hmac' => [
+                'type' => 'signature',
+                'required' => true,
+                'scopes' => ['webhook:receive'],
+                'signature' => [
+                    'signature_header' => $_ENV['WEBHOOK_SIGNATURE_HEADER'] ?? 'X-Signature',
+                    'timestamp_header' => $_ENV['WEBHOOK_TIMESTAMP_HEADER'] ?? 'X-Timestamp',
+                    'algorithm' => $_ENV['WEBHOOK_SIGNATURE_ALGORITHM'] ?? 'sha256',
+                    'secret' => $_ENV['WEBHOOK_SECRET'] ?? '',
+                    'tolerance_seconds' => (int)($_ENV['WEBHOOK_TIMESTAMP_TOLERANCE'] ?? 300),
+                ],
+                'audit' => true,
+            ],
+            'internal_system' => [
+                'type' => 'bearer',
+                'required' => true,
+                'scopes' => ['system:*'],
+                'roles' => ['system', 'internal_system'],
+                'audit' => true,
+            ],
+        ],
+        'password_policy' => [
+            'min_length' => (int)($_ENV['PASSWORD_MIN_LENGTH'] ?? 12),
+            'max_length' => (int)($_ENV['PASSWORD_MAX_LENGTH'] ?? 128),
+            'require_mixed_case' => filter_var($_ENV['PASSWORD_REQUIRE_MIXED_CASE'] ?? false, FILTER_VALIDATE_BOOL),
+            'require_number' => filter_var($_ENV['PASSWORD_REQUIRE_NUMBER'] ?? false, FILTER_VALIDATE_BOOL),
+            'require_symbol' => filter_var($_ENV['PASSWORD_REQUIRE_SYMBOL'] ?? false, FILTER_VALIDATE_BOOL),
+            'block_common_passwords' => filter_var($_ENV['PASSWORD_BLOCK_COMMON'] ?? true, FILTER_VALIDATE_BOOL),
+            'block_user_context' => filter_var($_ENV['PASSWORD_BLOCK_USER_CONTEXT'] ?? true, FILTER_VALIDATE_BOOL),
+        ],
+        'login' => [
+            'rate_policy' => 'login',
+            'generic_failure_message' => 'Invalid credentials',
+            'audit_failures' => true,
+            'ttl_seconds' => (int)($_ENV['AUTH_TOKEN_TTL_SECONDS'] ?? 2592000),
+        ],
+    ],
+
+
+    'authorization' => [
+        'enabled' => filter_var($_ENV['AUTHORIZATION_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'deny_by_default' => filter_var($_ENV['AUTHORIZATION_DENY_BY_DEFAULT'] ?? true, FILTER_VALIDATE_BOOL),
+        'audit_denials' => filter_var($_ENV['AUTHORIZATION_AUDIT_DENIALS'] ?? true, FILTER_VALIDATE_BOOL),
+        'hide_denial_reasons' => filter_var($_ENV['AUTHORIZATION_HIDE_DENIAL_REASONS'] ?? true, FILTER_VALIDATE_BOOL),
+        'policies' => [
+            'public.read' => [
+                'resource' => 'public_pages',
+                'actions' => ['read'],
+                'data_classes' => ['public'],
+                'audit' => false,
+                'fields' => [
+                    'read' => ['*' => ['title', 'slug', 'body']],
+                ],
+            ],
+            'students.read' => [
+                'resource' => 'students',
+                'actions' => ['read'],
+                'roles' => ['school_admin', 'super_admin'],
+                'permissions' => ['student.view'],
+                'scopes' => ['students:read', 'student.view'],
+                'tenant_required' => true,
+                'data_classes' => ['internal', 'confidential', 'sensitive'],
+                'trust_boundary' => 'students.read',
+                'audit' => true,
+                'fields' => [
+                    'read' => [
+                        'school_admin' => ['id', 'name', 'email', 'parent_phone', 'school_id', 'branch_id'],
+                        'super_admin' => ['*'],
+                    ],
+                ],
+            ],
+            'students.update' => [
+                'resource' => 'students',
+                'actions' => ['update'],
+                'roles' => ['school_admin', 'super_admin'],
+                'permissions' => ['student.update'],
+                'scopes' => ['students:update', 'student.update'],
+                'tenant_required' => true,
+                'data_classes' => ['sensitive'],
+                'trust_boundary' => 'students.update',
+                'audit' => true,
+                'fields' => [
+                    'write' => [
+                        'school_admin' => ['name', 'email', 'parent_phone', 'branch_id'],
+                        'super_admin' => ['*'],
+                    ],
+                ],
+            ],
+            'students.delete' => [
+                'resource' => 'students',
+                'actions' => ['delete'],
+                'roles' => ['super_admin'],
+                'permissions' => ['student.delete'],
+                'scopes' => ['students:delete', 'student.delete'],
+                'tenant_required' => true,
+                'data_classes' => ['sensitive'],
+                'trust_boundary' => 'students.delete',
+                'audit' => true,
+            ],
+            'backup.run' => [
+                'resource' => 'backups',
+                'actions' => ['backup'],
+                'roles' => ['internal_system', 'system'],
+                'scopes' => ['system:backup', 'system:*'],
+                'data_classes' => ['highly_sensitive'],
+                'trust_boundary' => 'backup.run',
+                'audit' => true,
+            ],
+        ],
+    ],
+
+
     'request_receiving' => [
         'enabled' => filter_var($_ENV['REQUEST_RECEIVING_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
         'reject_body_on_get' => true,
@@ -275,6 +419,7 @@ return [
                 'csrf' => false,
                 'input_validation' => true,
                 'trust_boundary' => null,
+                'authorization' => null,
             ],
             'admin' => [
                 'methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
@@ -283,6 +428,7 @@ return [
                 'rate_policy' => 'api',
                 'auth' => 'bearer',
                 'required_roles' => ['admin', 'super_admin'],
+                'authorization' => 'students.read',
                 'input_validation' => true,
                 'auto_audit' => true,
             ],

@@ -22,6 +22,8 @@ class ProductionSecurityChecker
         $cors = $this->config['cors'] ?? [];
         $requestValidation = $this->config['request_validation'] ?? [];
         $requestReceiving = $this->config['request_receiving'] ?? [];
+        $authentication = $this->config['authentication'] ?? [];
+        $authorization = $this->config['authorization'] ?? [];
         $trustBoundaries = $this->config['trust_boundaries'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
@@ -87,6 +89,52 @@ class ProductionSecurityChecker
                     $issues[] = ['level' => 'medium', 'key' => 'request_validation_no_policies', 'message' => 'Define default or route-specific request validation policies for public write endpoints.'];
                 }
             }
+            if (is_array($authentication)) {
+                if (array_key_exists('enabled', $authentication) && empty($authentication['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'authentication_disabled', 'message' => 'Authentication strategies should be enabled in production for protected API, admin, session, webhook, and internal routes.'];
+                }
+                if (empty($authentication['strategies']) || !is_array($authentication['strategies'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'authentication_strategies_missing', 'message' => 'Define named authentication strategies such as api_bearer, admin_bearer, web_session, webhook_hmac, and internal_system.'];
+                } else {
+                    foreach ($authentication['strategies'] as $strategyName => $strategy) {
+                        if (!is_array($strategy)) { continue; }
+                        if (str_contains((string)$strategyName, 'admin') && (empty($strategy['required']) || (($strategy['type'] ?? 'bearer') === 'none'))) {
+                            $issues[] = ['level' => 'high', 'key' => 'admin_authentication_strategy_not_required', 'message' => 'Admin authentication strategy ' . (string)$strategyName . ' must require credentials.'];
+                        }
+                        if (($strategy['type'] ?? null) === 'signature') {
+                            $signature = is_array($strategy['signature'] ?? null) ? $strategy['signature'] : (is_array($requestReceiving['webhook'] ?? null) ? $requestReceiving['webhook'] : []);
+                            if (empty($signature['secret'])) {
+                                $issues[] = ['level' => 'high', 'key' => 'signature_authentication_secret_missing', 'message' => 'Signature authentication strategy ' . (string)$strategyName . ' requires a webhook/signature secret.'];
+                            }
+                        }
+                    }
+                }
+                $passwordPolicy = is_array($authentication['password_policy'] ?? null) ? $authentication['password_policy'] : [];
+                if ((int)($passwordPolicy['min_length'] ?? 0) < 12) {
+                    $issues[] = ['level' => 'medium', 'key' => 'password_policy_min_length_low', 'message' => 'Production password policy should require at least 12 characters.'];
+                }
+            }
+            if (is_array($authorization)) {
+                if (array_key_exists('enabled', $authorization) && empty($authorization['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'authorization_disabled', 'message' => 'Authorization strategy enforcement should be enabled in production for protected resources.'];
+                }
+                if (array_key_exists('deny_by_default', $authorization) && empty($authorization['deny_by_default'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'authorization_not_deny_by_default', 'message' => 'Authorization should be deny-by-default in production.'];
+                }
+                if (empty($authorization['policies']) || !is_array($authorization['policies'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'authorization_policies_missing', 'message' => 'Define authorization policies for protected actions, resources, tenant scope, and field access.'];
+                } else {
+                    foreach ($authorization['policies'] as $policyName => $policy) {
+                        if (!is_array($policy)) { continue; }
+                        if (str_contains((string)$policyName, 'delete') && empty($policy['audit'])) {
+                            $issues[] = ['level' => 'medium', 'key' => 'destructive_authorization_policy_not_audited', 'message' => 'Destructive authorization policy ' . (string)$policyName . ' should enable audit logging.'];
+                        }
+                        if (!empty($policy['tenant_required']) && empty($policy['resource'])) {
+                            $issues[] = ['level' => 'medium', 'key' => 'tenant_authorization_policy_without_resource', 'message' => 'Tenant-required authorization policy ' . (string)$policyName . ' should declare a resource.'];
+                        }
+                    }
+                }
+            }
             if (is_array($requestReceiving)) {
                 if (array_key_exists('enabled', $requestReceiving) && empty($requestReceiving['enabled'])) {
                     $issues[] = ['level' => 'high', 'key' => 'request_receiving_disabled', 'message' => 'Secure request receiving profiles should be enabled in production.'];
@@ -106,8 +154,8 @@ class ProductionSecurityChecker
                     if (!empty($profile['content_types']) && empty($profile['methods'])) {
                         $issues[] = ['level' => 'medium', 'key' => 'request_receiving_profile_missing_methods', 'message' => 'Request receiving profile ' . (string)$profileName . ' should declare allowed HTTP methods.'];
                     }
-                    if (($profile['auth'] ?? null) === null && str_contains((string)$profileName, 'admin')) {
-                        $issues[] = ['level' => 'high', 'key' => 'admin_receiving_profile_without_auth', 'message' => 'Admin request receiving profiles should require auth.'];
+                    if (($profile['auth'] ?? null) === null && empty($profile['auth_strategy']) && str_contains((string)$profileName, 'admin')) {
+                        $issues[] = ['level' => 'high', 'key' => 'admin_receiving_profile_without_auth', 'message' => 'Admin request receiving profiles should require auth or an auth_strategy.'];
                     }
                 }
             }

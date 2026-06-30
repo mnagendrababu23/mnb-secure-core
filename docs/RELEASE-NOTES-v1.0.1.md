@@ -137,3 +137,42 @@ New controls:
 - named receiving profiles for public, API, admin, upload, webhook, and internal-system routes
 
 Existing direct middleware usage remains supported.
+
+### Authentication Strategy Engine
+
+- Added named authentication strategies for bearer, optional bearer, session, webhook signature, admin, and internal-system routes.
+- Added authentication middleware, registry, result object, password policy, user provider contract, and auth workflow service.
+- Integrated `auth_strategy` into request receiving profiles.
+- Added authentication config validation and production readiness warnings.
+
+### Authorization Strategy Engine
+
+v1.0.1 now includes a unified authorization strategy engine:
+
+- named authorization policies
+- unified allow/deny decision object
+- RBAC role checks
+- permission checks
+- scope checks
+- tenant/resource ownership checks
+- optional trust-boundary integration
+- field-level read/write filtering
+- safe audit events for allowed/denied decisions
+- middleware and kernel helpers
+
+New public API:
+
+```php
+$decision = $kernel->authorizationRegistry()->decide(
+    policyName: 'students.update',
+    request: $request,
+    resource: ['id' => 44, 'school_id' => 10],
+    action: 'update',
+    resourceName: 'students',
+    dataClass: 'sensitive'
+);
+
+$middleware = $kernel->authorizationMiddleware('students.update');
+```
+
+Existing direct guards and trust-boundary APIs remain supported.

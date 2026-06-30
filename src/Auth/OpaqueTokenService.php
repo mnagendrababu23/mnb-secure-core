@@ -12,7 +12,7 @@ class OpaqueTokenService
         private ?SecurityAuditTrail $audit = null
     ) {}
 
-    public function issue(int|string $userId, array $scopes = [], ?string $deviceId = null, ?string $deviceName = null, int $ttlSeconds = 2592000): array
+    public function issue(int|string $userId, array $scopes = [], ?string $deviceId = null, ?string $deviceName = null, int $ttlSeconds = 2592000, array $permissions = [], array $roles = []): array
     {
         $plain = bin2hex(random_bytes(32));
         $hash = $this->hash($plain);
@@ -20,6 +20,8 @@ class OpaqueTokenService
             'user_id' => $userId,
             'token_hash' => $hash,
             'scopes' => $scopes,
+            'permissions' => array_values(array_filter(array_map('strval', $permissions))),
+            'roles' => array_values(array_filter(array_map('strval', $roles))),
             'device_id' => $deviceId,
             'device_name' => $deviceName,
             'expires_at' => time() + $ttlSeconds,

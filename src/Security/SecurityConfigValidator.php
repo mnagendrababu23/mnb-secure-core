@@ -34,6 +34,8 @@ class SecurityConfigValidator
         $this->validateCors();
         $this->validateSecurityHeaders();
         $this->validateRequestValidation();
+        $this->validateAuthentication();
+        $this->validateAuthorization();
         $this->validateRequestReceiving();
         $this->validateTrustBoundaries();
         $this->validateSuggestions();
@@ -783,6 +785,172 @@ class SecurityConfigValidator
 
 
 
+    private function validateAuthentication(): void
+    {
+        $auth = $this->section('authentication', false);
+        if ($auth === null) {
+            return;
+        }
+        $this->bool($auth, 'enabled', 'authentication.enabled', required: false);
+        if (isset($auth['defaults'])) {
+            if (!is_array($auth['defaults'])) {
+                $this->issue('high', 'invalid_authentication_defaults', 'authentication.defaults', 'Authentication defaults must be an array.', 'array', $auth['defaults']);
+            } else {
+                $this->validateAuthenticationStrategy('authentication.defaults', $auth['defaults'], allowMissingType: true);
+            }
+        }
+        if (!isset($auth['strategies']) || !is_array($auth['strategies']) || $auth['strategies'] === []) {
+            $this->issue('medium', 'missing_authentication_strategies', 'authentication.strategies', 'Define named authentication strategies such as api_bearer, optional_bearer, admin_bearer, web_session, webhook_hmac, and internal_system.', 'non-empty strategies array', $auth['strategies'] ?? null);
+        } else {
+            foreach ($auth['strategies'] as $name => $strategy) {
+                if (!is_string($name) || !preg_match('/^[a-z][a-z0-9_.:-]{1,95}$/', $name)) {
+                    $this->issue('high', 'invalid_authentication_strategy_name', 'authentication.strategies', 'Authentication strategy names must be safe slugs.', 'safe strategy slug', $name);
+                    continue;
+                }
+                if (!is_array($strategy)) {
+                    $this->issue('high', 'invalid_authentication_strategy', 'authentication.strategies.' . $name, 'Authentication strategy must be an array.', 'array', $strategy);
+                    continue;
+                }
+                $this->validateAuthenticationStrategy('authentication.strategies.' . $name, $strategy);
+                if ($this->isProduction($this->config['app'] ?? []) && str_contains($name, 'admin') && (($strategy['type'] ?? 'bearer') === 'none' || !($strategy['required'] ?? true))) {
+                    $this->issue('high', 'unsafe_admin_authentication_strategy', 'authentication.strategies.' . $name, 'Admin authentication strategies must require credentials in production.', 'required auth strategy', $strategy);
+                }
+            }
+        }
+        if (isset($auth['password_policy'])) {
+            if (!is_array($auth['password_policy'])) {
+                $this->issue('high', 'invalid_password_policy', 'authentication.password_policy', 'Password policy must be an array.', 'array', $auth['password_policy']);
+            } else {
+                $policy = $auth['password_policy'];
+                $this->intRange($policy, 'min_length', 'authentication.password_policy.min_length', 8, 256, required: false);
+                $this->intRange($policy, 'max_length', 'authentication.password_policy.max_length', 8, 1024, required: false);
+                foreach (['require_mixed_case', 'require_number', 'require_symbol', 'block_common_passwords', 'block_user_context'] as $key) {
+                    $this->bool($policy, $key, 'authentication.password_policy.' . $key, required: false);
+                }
+                if (isset($policy['min_length'], $policy['max_length']) && (int)$policy['min_length'] > (int)$policy['max_length']) {
+                    $this->issue('high', 'invalid_password_policy_lengths', 'authentication.password_policy', 'Password min_length must be less than or equal to max_length.', 'min <= max', $policy);
+                }
+            }
+        }
+        if (isset($auth['login'])) {
+            if (!is_array($auth['login'])) {
+                $this->issue('high', 'invalid_authentication_login', 'authentication.login', 'Authentication login config must be an array.', 'array', $auth['login']);
+            } else {
+                if (isset($auth['login']['rate_policy']) && (!$this->isStringLike($auth['login']['rate_policy']) || trim((string)$auth['login']['rate_policy']) === '')) {
+                    $this->issue('medium', 'invalid_login_rate_policy', 'authentication.login.rate_policy', 'Login rate policy must be a non-empty string.', 'rate policy name', $auth['login']['rate_policy']);
+                }
+                $this->intRange($auth['login'], 'ttl_seconds', 'authentication.login.ttl_seconds', 60, 315360000, required: false);
+            }
+        }
+    }
+
+    /** @param array<string,mixed> $strategy */
+    private function validateAuthenticationStrategy(string $path, array $strategy, bool $allowMissingType = false): void
+    {
+        foreach (['required', 'audit'] as $key) {
+            $this->bool($strategy, $key, $path . '.' . $key, required: false);
+        }
+        if (isset($strategy['type'])) {
+            $type = (string)$strategy['type'];
+            if (!in_array($type, ['none', 'bearer', 'optional_bearer', 'session', 'signature'], true)) {
+                $this->issue('high', 'invalid_authentication_strategy_type', $path . '.type', 'Authentication strategy type must be none, bearer, optional_bearer, session, or signature.', 'none|bearer|optional_bearer|session|signature', $type);
+            }
+        } elseif (!$allowMissingType) {
+            $this->issue('medium', 'missing_authentication_strategy_type', $path . '.type', 'Authentication strategy should declare a type.', 'auth strategy type', null);
+        }
+        foreach (['scopes', 'roles', 'permissions'] as $key) {
+            if (isset($strategy[$key])) {
+                $this->stringList($strategy[$key], $path . '.' . $key, false);
+            }
+        }
+        foreach (['rate_policy', 'failure_message'] as $key) {
+            if (isset($strategy[$key]) && $strategy[$key] !== null && (!$this->isStringLike($strategy[$key]) || preg_match('/[\r\n]/', (string)$strategy[$key]))) {
+                $this->issue('medium', 'invalid_authentication_' . $key, $path . '.' . $key, $key . ' must be a safe single-line string when provided.', 'safe string', $strategy[$key]);
+            }
+        }
+        if (($strategy['type'] ?? null) === 'signature') {
+            $signature = is_array($strategy['signature'] ?? null) ? $strategy['signature'] : (is_array($this->config['request_receiving']['webhook'] ?? null) ? $this->config['request_receiving']['webhook'] : []);
+            if ($this->isProduction($this->config['app'] ?? []) && empty($signature['secret'])) {
+                $this->issue('high', 'missing_authentication_signature_secret', $path . '.signature.secret', 'Signature authentication strategies require a secret in production.', 'non-empty secret', null);
+            }
+        }
+    }
+
+
+
+    private function validateAuthorization(): void
+    {
+        $authz = $this->section('authorization', false);
+        if ($authz === null) {
+            return;
+        }
+        foreach (['enabled', 'deny_by_default', 'audit_denials', 'hide_denial_reasons'] as $key) {
+            $this->bool($authz, $key, 'authorization.' . $key, required: false);
+        }
+        if (!isset($authz['policies']) || !is_array($authz['policies']) || $authz['policies'] === []) {
+            $this->issue('medium', 'missing_authorization_policies', 'authorization.policies', 'Define named authorization policies for protected routes and resources.', 'non-empty policy array', $authz['policies'] ?? null);
+            return;
+        }
+        $validClasses = ['public', 'internal', 'confidential', 'sensitive', 'highly_sensitive'];
+        foreach ($authz['policies'] as $name => $policy) {
+            if (!is_string($name) || !preg_match('/^[a-z][a-z0-9_.:-]{1,95}$/', $name)) {
+                $this->issue('high', 'invalid_authorization_policy_name', 'authorization.policies', 'Authorization policy names must be safe slugs.', 'safe policy slug', $name);
+                continue;
+            }
+            if (!is_array($policy)) {
+                $this->issue('high', 'invalid_authorization_policy', 'authorization.policies.' . $name, 'Authorization policy must be an array.', 'array', $policy);
+                continue;
+            }
+            $path = 'authorization.policies.' . $name;
+            if (isset($policy['resource']) && $policy['resource'] !== null && (!$this->isStringLike($policy['resource']) || !preg_match('/^[A-Za-z_][A-Za-z0-9_:-]*$/', (string)$policy['resource']))) {
+                $this->issue('high', 'invalid_authorization_resource', $path . '.resource', 'Authorization policy resource must be a safe resource name.', 'safe resource name', $policy['resource']);
+            }
+            if (!$this->stringList($policy['actions'] ?? [], $path . '.actions')) {
+                continue;
+            }
+            foreach ((array)($policy['actions'] ?? []) as $action) {
+                if (!$this->isStringLike($action) || !preg_match('/^[A-Za-z][A-Za-z0-9_.:-]*$/', (string)$action)) {
+                    $this->issue('high', 'invalid_authorization_action', $path . '.actions', 'Authorization actions must be safe action names.', 'safe action', $action);
+                }
+            }
+            foreach (['roles', 'permissions', 'scopes', 'data_classes'] as $listKey) {
+                if (isset($policy[$listKey])) {
+                    $this->stringList($policy[$listKey], $path . '.' . $listKey, false);
+                }
+            }
+            foreach ((array)($policy['data_classes'] ?? []) as $class) {
+                if (!in_array((string)$class, $validClasses, true) && (string)$class !== '*') {
+                    $this->issue('high', 'invalid_authorization_data_class', $path . '.data_classes', 'Authorization policy uses an unknown data class.', implode('|', $validClasses), $class);
+                }
+            }
+            foreach (['tenant_required', 'audit'] as $boolKey) {
+                $this->bool($policy, $boolKey, $path . '.' . $boolKey, required: false);
+            }
+            if (isset($policy['trust_boundary']) && $policy['trust_boundary'] !== null && (!$this->isStringLike($policy['trust_boundary']) || preg_match('/[\r\n]/', (string)$policy['trust_boundary']))) {
+                $this->issue('medium', 'invalid_authorization_trust_boundary', $path . '.trust_boundary', 'trust_boundary must be a safe single-line string.', 'safe policy name', $policy['trust_boundary']);
+            }
+            if (isset($policy['fields'])) {
+                if (!is_array($policy['fields'])) {
+                    $this->issue('high', 'invalid_authorization_fields', $path . '.fields', 'Authorization fields must be an array.', 'array', $policy['fields']);
+                } else {
+                    foreach (['read', 'write'] as $mode) {
+                        if (!isset($policy['fields'][$mode])) { continue; }
+                        if (!is_array($policy['fields'][$mode])) {
+                            $this->issue('high', 'invalid_authorization_field_mode', $path . '.fields.' . $mode, 'Field authorization mode must be an array.', 'array', $policy['fields'][$mode]);
+                            continue;
+                        }
+                        foreach ($policy['fields'][$mode] as $principal => $fields) {
+                            if (!is_string($principal) || preg_match('/[\r\n]/', $principal)) {
+                                $this->issue('high', 'invalid_authorization_field_principal', $path . '.fields.' . $mode, 'Field authorization principal must be a safe string.', 'role/scope/permission principal', $principal);
+                            }
+                            $this->stringList($fields, $path . '.fields.' . $mode . '.' . (string)$principal, false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private function validateRequestReceiving(): void
     {
         $receiving = $this->section('request_receiving', false);
@@ -795,7 +963,14 @@ class SecurityConfigValidator
         $this->intRange($receiving, 'json_max_bytes', 'request_receiving.json_max_bytes', 1, 104857600, required: false);
         $this->bool($receiving, 'json_require_object', 'request_receiving.json_require_object', required: false);
         if (isset($receiving['blocked_methods'])) {
-            $this->validateHttpMethodList($receiving['blocked_methods'], 'request_receiving.blocked_methods');
+            if ($this->stringList($receiving['blocked_methods'], 'request_receiving.blocked_methods', false)) {
+                foreach ((array)$receiving['blocked_methods'] as $method) {
+                    $method = strtoupper(trim((string)$method));
+                    if (!preg_match('/^[A-Z]{3,12}$/', $method)) {
+                        $this->issue('medium', 'invalid_blocked_http_method', 'request_receiving.blocked_methods', 'Blocked HTTP methods must be safe method tokens.', 'HTTP method token', $method);
+                    }
+                }
+            }
         }
         if (isset($receiving['request_id'])) {
             if (!is_array($receiving['request_id'])) {
@@ -885,7 +1060,7 @@ class SecurityConfigValidator
                 $this->issue('high', 'invalid_request_receiving_auth', $path . '.auth', 'auth must be bearer, csrf, signature, none, or null.', 'bearer|csrf|signature|none|null', $auth);
             }
         }
-        foreach (['trust_boundary', 'upload_profile', 'route_name', 'action', 'data_class', 'resource'] as $key) {
+        foreach (['trust_boundary', 'authorization', 'authorization_action', 'authorization_resource', 'authorization_data_class', 'upload_profile', 'route_name', 'action', 'data_class', 'resource', 'auth_strategy'] as $key) {
             if (isset($profile[$key]) && $profile[$key] !== null && (!$this->isStringLike($profile[$key]) || preg_match('/[\r\n]/', (string)$profile[$key]))) {
                 $this->issue('medium', 'invalid_request_receiving_' . $key, $path . '.' . $key, $key . ' must be a safe string when provided.', 'safe string', $profile[$key]);
             }

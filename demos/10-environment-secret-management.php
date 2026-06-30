@@ -24,7 +24,28 @@ $config = [
         'cdn_or_proxy_enabled' => true,
         'require_cdn_or_proxy_in_production' => false,
     ],
-    'uploads' => ['scanner' => ['driver' => 'heuristic']],
+    'security_headers' => ['hsts' => ['enabled' => true], 'csp' => ['enabled' => true], 'permissions_policy' => ['preset' => 'strict']],
+    'request_validation' => ['enabled' => true, 'sanitize' => true, 'default' => ['methods' => ['POST']]],
+    'authentication' => [
+        'enabled' => true,
+        'strategies' => ['api_bearer' => ['type' => 'bearer', 'required' => true]],
+        'password_policy' => ['min_length' => 12, 'max_length' => 128],
+    ],
+    'authorization' => [
+        'enabled' => true,
+        'deny_by_default' => true,
+        'policies' => ['public.read' => ['resource' => 'public_pages', 'actions' => ['read'], 'data_classes' => ['public']]],
+    ],
+    'request_receiving' => [
+        'enabled' => true,
+        'profiles' => ['api_authenticated' => ['methods' => ['GET'], 'auth' => 'bearer', 'auth_strategy' => 'api_bearer']],
+    ],
+    'trust_boundaries' => [
+        'enabled' => true,
+        'deny_unclassified_fields' => true,
+        'rules' => ['public.read' => ['zones' => ['public'], 'data_classes' => ['public'], 'actions' => ['read']]],
+    ],
+    'uploads' => ['strict_production' => true, 'scanner' => ['driver' => 'heuristic']],
 ];
 $report = (new ProductionSecurityChecker($config))->check();
 

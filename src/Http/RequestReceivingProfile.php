@@ -84,6 +84,7 @@ class RequestReceivingProfile
     public function suspiciousDetection(): bool { return $this->suspiciousDetection; }
     public function inputValidation(): bool { return $this->inputValidation; }
     public function autoAudit(): bool { return $this->autoAudit; }
+    public function authorization(): ?string { $value = $this->option('authorization'); return is_string($value) && trim($value) !== '' ? trim($value) : null; }
     public function trustBoundary(): ?string { return $this->trustBoundary; }
     public function uploadProfile(): ?string { return $this->uploadProfile; }
     public function option(string $key, mixed $default = null): mixed { return $this->options[$key] ?? $default; }
@@ -111,6 +112,7 @@ class RequestReceivingProfile
             'suspicious_detection' => $this->suspiciousDetection,
             'input_validation' => $this->inputValidation,
             'auto_audit' => $this->autoAudit,
+            'authorization' => $this->authorization(),
             'trust_boundary' => $this->trustBoundary,
             'upload_profile' => $this->uploadProfile,
         ];

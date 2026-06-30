@@ -4,7 +4,17 @@ namespace Mnb\SecurityCore\Core;
 use Mnb\SecurityCore\Auth\Stores\DatabaseTokenStore;
 use Mnb\SecurityCore\Auth\Csrf;
 use Mnb\SecurityCore\Auth\OpaqueTokenService;
+use Mnb\SecurityCore\Auth\AuthenticationRegistry;
+use Mnb\SecurityCore\Auth\AuthenticationStrategy;
+use Mnb\SecurityCore\Auth\AuthWorkflowService;
+use Mnb\SecurityCore\Auth\PasswordHasher;
+use Mnb\SecurityCore\Auth\PasswordPolicy;
+use Mnb\SecurityCore\Auth\UserProviderInterface;
+use Mnb\SecurityCore\Authorization\AuthorizationPolicy;
+use Mnb\SecurityCore\Authorization\AuthorizationRegistry;
+use Mnb\SecurityCore\Http\Middleware\AuthorizationMiddleware;
 use Mnb\SecurityCore\Http\Middleware\ApiTokenMiddleware;
+use Mnb\SecurityCore\Http\Middleware\AuthenticationMiddleware;
 use Mnb\SecurityCore\Http\Middleware\ContentTypeMiddleware;
 use Mnb\SecurityCore\Http\Middleware\CsrfMiddleware;
 use Mnb\SecurityCore\Http\Middleware\HttpsMiddleware;
@@ -319,6 +329,30 @@ class SecurityKernel
         );
     }
 
+    public function authorizationRegistry(?SecurityAuditTrail $audit = null): AuthorizationRegistry
+    {
+        return AuthorizationRegistry::fromConfig($this->config, $audit ?: $this->auditTrail(), $this->trustBoundaryRegistry($audit ?: $this->auditTrail()));
+    }
+
+    public function authorizationPolicy(string $name): AuthorizationPolicy
+    {
+        return $this->authorizationRegistry()->get($name);
+    }
+
+    public function authorizationMiddleware(string $policyName, mixed $resourceResolver = null, ?string $action = null, ?string $resourceName = null, ?string $dataClass = null, ?SecurityAuditTrail $audit = null): AuthorizationMiddleware
+    {
+        $config = is_array($this->config['authorization'] ?? null) ? $this->config['authorization'] : [];
+        return new AuthorizationMiddleware(
+            $this->authorizationRegistry($audit),
+            $policyName,
+            $resourceResolver,
+            $action,
+            $resourceName,
+            $dataClass,
+            (bool)($config['hide_denial_reasons'] ?? true)
+        );
+    }
+
     public function suggestionEngine(array $customRules = []): AutoSuggestionEngine
     {
         $suggestionConfig = is_array($this->config['suggestions'] ?? null) ? $this->config['suggestions'] : [];
@@ -326,6 +360,44 @@ class SecurityKernel
         return new AutoSuggestionEngine(array_merge($rules, $customRules));
     }
 
+
+    public function passwordHasher(): PasswordHasher
+    {
+        return new PasswordHasher();
+    }
+
+    public function passwordPolicy(array $override = []): PasswordPolicy
+    {
+        $auth = is_array($this->config['authentication'] ?? null) ? $this->config['authentication'] : [];
+        $policy = is_array($auth['password_policy'] ?? null) ? $auth['password_policy'] : [];
+        return new PasswordPolicy(array_replace($policy, $override));
+    }
+
+    public function authenticationRegistry(): AuthenticationRegistry
+    {
+        return AuthenticationRegistry::fromConfig($this->config);
+    }
+
+    public function authenticationStrategy(string $name): AuthenticationStrategy
+    {
+        return $this->authenticationRegistry()->get($name);
+    }
+
+    public function authenticationMiddleware(string $strategyName = 'api_bearer', ?SecurityAuditTrail $audit = null): AuthenticationMiddleware
+    {
+        $strategy = $this->authenticationStrategy($strategyName);
+        $signature = $strategy->type() === AuthenticationStrategy::TYPE_SIGNATURE
+            ? $this->webhookSignatureVerifier(is_array($strategy->option('signature')) ? $strategy->option('signature') : [])
+            : null;
+        return new AuthenticationMiddleware($strategy, $this->opaqueTokenService(null, $audit ?: $this->auditTrail()), $signature, $audit ?: $this->auditTrail());
+    }
+
+    public function authWorkflow(UserProviderInterface $users, ?OpaqueTokenService $tokens = null, ?SecurityAuditTrail $audit = null, array $override = []): AuthWorkflowService
+    {
+        $auth = is_array($this->config['authentication'] ?? null) ? $this->config['authentication'] : [];
+        $login = is_array($auth['login'] ?? null) ? $auth['login'] : [];
+        return new AuthWorkflowService($users, $this->passwordHasher(), $tokens ?: $this->opaqueTokenService(null, $audit), $audit ?: $this->auditTrail(), $this->passwordPolicy(), array_replace($login, $override));
+    }
 
     public function opaqueTokenService(?TokenStoreInterface $store = null, ?SecurityAuditTrail $audit = null): OpaqueTokenService
     {
@@ -455,14 +527,30 @@ class SecurityKernel
         if ($profile->autoAudit()) {
             $middleware[] = $this->autoAuditMiddleware($audit instanceof SecurityAuditTrail ? $audit : null);
         }
-        if ($profile->csrf() || $profile->auth() === 'csrf') {
-            $middleware[] = new CsrfMiddleware(new Csrf((string)($profile->option('csrf_session_key') ?? '_csrf_token')));
+        $authStrategy = $profile->option('auth_strategy');
+        if (is_string($authStrategy) && trim($authStrategy) !== '') {
+            $middleware[] = $this->authenticationMiddleware(trim($authStrategy), $audit instanceof SecurityAuditTrail ? $audit : null);
+        } else {
+            if ($profile->csrf() || $profile->auth() === 'csrf') {
+                $middleware[] = new CsrfMiddleware(new Csrf((string)($profile->option('csrf_session_key') ?? '_csrf_token')));
+            }
+            if ($profile->auth() === 'bearer') {
+                $middleware[] = new ApiTokenMiddleware($this->opaqueTokenService(null, $audit instanceof SecurityAuditTrail ? $audit : null));
+            }
+            if ($profile->auth() === 'signature') {
+                $middleware[] = $this->webhookSignatureMiddleware(is_array($profile->option('webhook')) ? $profile->option('webhook') : []);
+            }
         }
-        if ($profile->auth() === 'bearer') {
-            $middleware[] = new ApiTokenMiddleware($this->opaqueTokenService(null, $audit instanceof SecurityAuditTrail ? $audit : null));
-        }
-        if ($profile->auth() === 'signature') {
-            $middleware[] = $this->webhookSignatureMiddleware(is_array($profile->option('webhook')) ? $profile->option('webhook') : []);
+        $authorization = $profile->option('authorization');
+        if (is_string($authorization) && trim($authorization) !== '') {
+            $middleware[] = $this->authorizationMiddleware(
+                trim($authorization),
+                $options['authorization_resource_resolver'] ?? $options['resource_resolver'] ?? null,
+                is_string($profile->option('authorization_action')) ? $profile->option('authorization_action') : $profile->option('action'),
+                is_string($profile->option('authorization_resource')) ? $profile->option('authorization_resource') : $profile->option('resource'),
+                is_string($profile->option('authorization_data_class')) ? $profile->option('authorization_data_class') : $profile->option('data_class'),
+                $audit instanceof SecurityAuditTrail ? $audit : null
+            );
         }
         if ($profile->trustBoundary() !== null) {
             $middleware[] = $this->trustBoundaryMiddleware(

@@ -1216,3 +1216,95 @@ For full examples, see:
 demos/20-secure-request-receiving-strategy.php
 docs/PUBLIC-USAGE-EXAMPLES.md
 ```
+
+## Authentication Strategy Engine
+
+`mnb-secure-core v1.0.1` includes a named authentication strategy layer that centralizes bearer tokens, optional bearer auth, session auth, webhook signature auth, admin auth, internal-system auth, password policy checks, and safe audit logging.
+
+```php
+$middleware = $kernel->authenticationMiddleware('api_bearer');
+```
+
+Use it inside the secure request receiving front door:
+
+```php
+$response = $kernel->secureRequestReceiver('api_authenticated')->handle(
+    $request,
+    fn (Request $request) => Response::json([
+        'user_id' => $request->attribute('auth')->id(),
+        'strategy' => $request->attribute('auth_strategy'),
+    ])
+);
+```
+
+Configure strategies in `config/security.php`:
+
+```php
+'authentication' => [
+    'enabled' => true,
+    'strategies' => [
+        'api_bearer' => ['type' => 'bearer', 'required' => true],
+        'optional_bearer' => ['type' => 'bearer', 'required' => false],
+        'admin_bearer' => ['type' => 'bearer', 'required' => true, 'roles' => ['admin', 'super_admin']],
+        'web_session' => ['type' => 'session', 'required' => true],
+        'webhook_hmac' => ['type' => 'signature', 'required' => true],
+        'internal_system' => ['type' => 'bearer', 'required' => true, 'scopes' => ['system:*']],
+    ],
+],
+```
+
+Framework-independent login workflows can use `AuthWorkflowService` with your own `UserProviderInterface` implementation:
+
+```php
+$result = $kernel->authWorkflow($userProvider)->login(
+    identifier: $request->input('email'),
+    password: $request->input('password'),
+    scopes: ['profile.read', 'uploads.write']
+);
+```
+
+The workflow returns a safe `AuthenticationResult`; plain API tokens are returned only when a token is issued and should be shown once.
+
+
+## Authorization Strategy Engine
+
+`v1.0.1` includes a unified authorization strategy engine for roles, scopes, permissions, tenant/resource ownership, trust boundaries, field-level read/write filtering, and audit decisions.
+
+```php
+$decision = $kernel->authorizationRegistry()->decide(
+    policyName: 'students.update',
+    request: $request,
+    resource: ['id' => 44, 'school_id' => 10],
+    action: 'update',
+    resourceName: 'students',
+    dataClass: 'sensitive'
+);
+
+if ($decision->denied()) {
+    return Response::json(['message' => $decision->safeMessage()], $decision->statusCode());
+}
+```
+
+Middleware:
+
+```php
+$pipeline = new MiddlewarePipeline([
+    $kernel->authenticationMiddleware('api_bearer'),
+    $kernel->authorizationMiddleware(
+        'students.update',
+        resourceResolver: fn (Request $request) => ['school_id' => 10],
+        action: 'update',
+        resourceName: 'students',
+        dataClass: 'sensitive'
+    ),
+]);
+```
+
+Field filtering:
+
+```php
+$safeRead = $kernel->authorizationRegistry()->filterReadableFields('students.read', $request, $student);
+$safeWrite = $kernel->authorizationRegistry()->filterWritableFields('students.update', $request, $request->body());
+```
+
+Existing `Auth\PermissionGuard`, `Authz\PermissionGuard`, tenant guards, trust boundaries, and database policies remain available.

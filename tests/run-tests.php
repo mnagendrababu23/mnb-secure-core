@@ -2,6 +2,16 @@
 require __DIR__ . '/../autoload.php';
 
 use Mnb\SecurityCore\Auth\AuthContext;
+use Mnb\SecurityCore\Auth\AuthenticationRegistry;
+use Mnb\SecurityCore\Auth\AuthenticationStrategy;
+use Mnb\SecurityCore\Auth\AuthWorkflowService;
+use Mnb\SecurityCore\Auth\PasswordPolicy;
+use Mnb\SecurityCore\Auth\UserProviderInterface;
+use Mnb\SecurityCore\Authorization\AuthorizationDecision;
+use Mnb\SecurityCore\Authorization\AuthorizationPolicy;
+use Mnb\SecurityCore\Authorization\AuthorizationRegistry;
+use Mnb\SecurityCore\Authorization\ResourceResolverInterface;
+use Mnb\SecurityCore\Http\Middleware\AuthorizationMiddleware;
 use Mnb\SecurityCore\Auth\Csrf;
 use Mnb\SecurityCore\Auth\OpaqueTokenService;
 use Mnb\SecurityCore\Auth\PasswordHasher;
@@ -36,6 +46,7 @@ use Mnb\SecurityCore\Files\SecureFileManager;
 use Mnb\SecurityCore\Files\UploadSecurityProfile;
 use Mnb\SecurityCore\Files\HeuristicMalwareScanner;
 use Mnb\SecurityCore\Http\Middleware\ApiTokenMiddleware;
+use Mnb\SecurityCore\Http\Middleware\AuthenticationMiddleware;
 use Mnb\SecurityCore\Http\Middleware\AutoAuditMiddleware;
 use Mnb\SecurityCore\Http\Middleware\CorsMiddleware;
 use Mnb\SecurityCore\Http\Middleware\InputValidationMiddleware;
@@ -1098,6 +1109,144 @@ $pentestPayloadsThroughput = (new PayloadLibrary())->get('throughput');
 ok(count($pentestPayloadsThroughput) >= 3, 'pentest payload library includes throughput overload scenarios');
 $verificationMatrix = (new VerificationMatrix())->all();
 ok(isset($verificationMatrix['Throughput and Performance Capacity Management']), 'verification matrix maps throughput management concept');
+
+
+
+$passwordPolicy = new PasswordPolicy(['min_length' => 12, 'block_common_passwords' => true, 'block_user_context' => true]);
+$passwordPolicyFail = $passwordPolicy->validate('password', ['email' => 'ravi@example.com']);
+$passwordPolicyPass = $passwordPolicy->validate('SafeUniquePassphrase42!', ['email' => 'ravi@example.com']);
+ok($passwordPolicyFail->failed() && $passwordPolicyPass->passed(), 'password policy blocks common weak passwords and accepts strong passphrases');
+
+$authRegistry = new AuthenticationRegistry([
+    'api_bearer' => ['type' => 'bearer', 'required' => true, 'scopes' => ['profile.read']],
+    'optional_bearer' => ['type' => 'bearer', 'required' => false],
+    'admin_bearer' => ['type' => 'bearer', 'required' => true, 'roles' => ['admin']],
+]);
+ok($authRegistry->get('api_bearer')->type() === AuthenticationStrategy::TYPE_BEARER && $authRegistry->get('optional_bearer')->required() === false, 'authentication registry registers bearer and optional strategies');
+
+$authTokenStore = new FileTokenStore($base . '/auth-strategy/tokens.json');
+$authAudit = new SecurityAuditTrail(new TamperEvidentAuditLogger($base . '/audit/auth-strategy.log'));
+$authTokenService = new OpaqueTokenService($authTokenStore, $authAudit);
+$issuedAuthToken = $authTokenService->issue(701, ['profile.read'], ttlSeconds: 3600);
+$authMiddleware = new AuthenticationMiddleware($authRegistry->get('api_bearer'), $authTokenService, null, $authAudit);
+$authRequest = new Request('GET', '/api/profile', [], [], [], ['REMOTE_ADDR' => '127.0.0.1', 'HTTP_AUTHORIZATION' => 'Bearer ' . $issuedAuthToken['plain_token']]);
+$authMiddlewareResponse = (new MiddlewarePipeline([$authMiddleware]))->handle($authRequest, fn(Request $request) => Response::json(['user_id' => $request->attribute('auth')->id(), 'strategy' => $request->attribute('auth_strategy')]));
+$authMiddlewareBody = json_decode($authMiddlewareResponse->body(), true);
+ok($authMiddlewareResponse->status() === 200 && $authMiddlewareBody['user_id'] === 701 && $authMiddlewareBody['strategy'] === 'api_bearer', 'authentication middleware validates bearer token and attaches auth context');
+
+$adminDeniedMiddleware = new AuthenticationMiddleware($authRegistry->get('admin_bearer'), $authTokenService, null, $authAudit);
+$adminDeniedResponse = (new MiddlewarePipeline([$adminDeniedMiddleware]))->handle($authRequest, fn() => Response::json(['ok' => true]));
+ok($adminDeniedResponse->status() === 403, 'authentication middleware enforces role requirements');
+
+$optionalMiddleware = new AuthenticationMiddleware($authRegistry->get('optional_bearer'), $authTokenService, null, $authAudit);
+$optionalResponse = (new MiddlewarePipeline([$optionalMiddleware]))->handle(new Request('GET', '/public'), fn(Request $request) => Response::json(['guest' => !$request->attribute('auth')->isAuthenticated()]));
+ok($optionalResponse->status() === 200 && json_decode($optionalResponse->body(), true)['guest'] === true, 'optional bearer strategy allows guests while attaching auth context');
+
+$userProvider = new class($hasher) implements UserProviderInterface {
+    private array $user;
+    public function __construct(private PasswordHasher $hasher) {
+        $this->user = [
+            'id' => 801,
+            'email' => 'admin@example.com',
+            'password_hash' => $this->hasher->hash('CorrectHorseBatteryStaple!'),
+            'active' => true,
+            'roles' => ['admin'],
+            'permissions' => ['profile.read'],
+            'scopes' => ['profile.read'],
+        ];
+    }
+    public function findByIdentifier(string $identifier): ?array { return strtolower($identifier) === 'admin@example.com' ? $this->user : null; }
+    public function passwordHash(array $user): string { return (string)$user['password_hash']; }
+    public function userId(array $user): int|string { return $user['id']; }
+    public function roles(array $user): array { return $user['roles']; }
+    public function permissions(array $user): array { return $user['permissions']; }
+    public function scopes(array $user): array { return $user['scopes']; }
+    public function isActive(array $user): bool { return !empty($user['active']); }
+};
+$workflow = new AuthWorkflowService($userProvider, $hasher, $authTokenService, $authAudit, $passwordPolicy, ['ttl_seconds' => 3600]);
+$loginSuccess = $workflow->login('admin@example.com', 'CorrectHorseBatteryStaple!', ['uploads.write'], context: ['ip' => '127.0.0.1']);
+$loginFailure = $workflow->login('admin@example.com', 'wrong-password', context: ['ip' => '127.0.0.1']);
+ok($loginSuccess->success() && $loginSuccess->plainToken() !== null && $loginSuccess->auth()?->hasRole('admin') && $loginFailure->failed(), 'auth workflow service logs in users safely and issues opaque tokens');
+
+$authConfigReport = (new SecurityConfigValidator([
+    'authentication' => [
+        'enabled' => true,
+        'strategies' => ['bad' => ['type' => 'magic']],
+        'password_policy' => ['min_length' => 6, 'max_length' => 4],
+    ],
+]))->validate();
+ok(!$authConfigReport['passed'], 'security config validator catches invalid authentication strategies and password policy');
+
+
+$authorizationAudit = new SecurityAuditTrail(new TamperEvidentAuditLogger($base . '/audit/authorization-strategy.log'));
+$authorizationRegistry = new AuthorizationRegistry([
+    'students.read' => [
+        'resource' => 'students',
+        'actions' => ['read'],
+        'roles' => ['school_admin', 'super_admin'],
+        'permissions' => ['student.view'],
+        'scopes' => ['students:read'],
+        'tenant_required' => true,
+        'data_classes' => ['sensitive'],
+        'trust_boundary' => 'students.read',
+        'audit' => true,
+        'fields' => [
+            'read' => [
+                'school_admin' => ['id', 'name', 'parent_phone', 'school_id'],
+                'super_admin' => ['*'],
+            ],
+        ],
+    ],
+    'students.update' => [
+        'resource' => 'students',
+        'actions' => ['update'],
+        'roles' => ['school_admin', 'super_admin'],
+        'permissions' => ['student.update'],
+        'scopes' => ['students:update'],
+        'tenant_required' => true,
+        'data_classes' => ['sensitive'],
+        'audit' => true,
+        'fields' => [
+            'write' => [
+                'school_admin' => ['name', 'parent_phone'],
+                'super_admin' => ['*'],
+            ],
+        ],
+    ],
+], ['deny_by_default' => true, 'audit_denials' => true, 'hide_denial_reasons' => false], $authorizationAudit, $trustRegistry);
+$authzRequest = $schoolAdminRequest->withAttribute(AuthContext::ATTRIBUTE, new AuthContext(true, 10, ['students:read', 'students:update', 'school:*'], ['student.view', 'student.update'], ['school_admin']));
+$authzAllowed = $authorizationRegistry->decide('students.read', $authzRequest, ['id' => 5, 'school_id' => 10, 'parent_phone' => '999'], 'read', 'students', 'sensitive');
+$authzCrossTenant = $authorizationRegistry->decide('students.read', $authzRequest, ['id' => 5, 'school_id' => 99], 'read', 'students', 'sensitive');
+ok($authzAllowed->allowed() && $authzCrossTenant->denied() && $authzCrossTenant->code() === 'tenant.denied', 'authorization registry unifies roles scopes permissions tenant and trust boundary decisions');
+
+$readFiltered = $authorizationRegistry->filterReadableFields('students.read', $authzRequest, ['id' => 5, 'name' => 'Ravi', 'parent_phone' => '999', 'password_hash' => 'hash']);
+$writeFiltered = $authorizationRegistry->filterWritableFields('students.update', $authzRequest, ['name' => 'Ravi', 'parent_phone' => '999', 'school_id' => 10, 'password_hash' => 'hash']);
+ok(isset($readFiltered['parent_phone']) && !isset($readFiltered['password_hash']) && isset($writeFiltered['name']) && !isset($writeFiltered['school_id']), 'authorization registry filters readable and writable fields by policy');
+
+$authzMiddleware = new AuthorizationMiddleware($authorizationRegistry, 'students.update', fn(Request $request): array => ['id' => 5, 'school_id' => 10], action: 'update', resourceName: 'students', dataClass: 'sensitive', hideReason: false);
+$authzMiddlewareResponse = (new MiddlewarePipeline([$authzMiddleware]))->handle($authzRequest, fn(Request $request) => Response::json(['policy' => $request->attribute('authorization_policy'), 'allowed' => $request->attribute('authorization_decision')->allowed()]));
+ok($authzMiddlewareResponse->status() === 200 && json_decode($authzMiddlewareResponse->body(), true)['policy'] === 'students.update', 'authorization middleware attaches decisions to allowed requests');
+
+$authzDeniedMiddleware = new AuthorizationMiddleware($authorizationRegistry, 'students.update', fn(Request $request): array => ['id' => 5, 'school_id' => 99], action: 'update', resourceName: 'students', dataClass: 'sensitive', hideReason: false);
+$authzDeniedResponse = (new MiddlewarePipeline([$authzDeniedMiddleware]))->handle($authzRequest, fn() => Response::json(['ok' => true]));
+ok($authzDeniedResponse->status() === 403 && str_contains($authzDeniedResponse->body(), 'tenant.denied'), 'authorization middleware blocks denied resource actions safely');
+
+$authzAuditEntries = (new TamperEvidentAuditLogger($base . '/audit/authorization-strategy.log'))->read(null, 'authorization');
+ok(count($authzAuditEntries) >= 2 && !str_contains(json_encode($authzAuditEntries), 'parent_phone'), 'authorization strategy writes safe audit decisions without leaking resource payload');
+
+$authzConfigReport = (new SecurityConfigValidator([
+    'authorization' => [
+        'enabled' => true,
+        'policies' => [
+            'bad policy' => ['actions' => ['read']],
+            'students.read' => ['resource' => 'students', 'actions' => ['read'], 'data_classes' => ['secret']],
+        ],
+    ],
+]))->validate();
+ok(!$authzConfigReport['passed'], 'security config validator catches invalid authorization policies');
+
+$authzSuggestions = (new AutoSuggestionEngine())->suggestFromCode('PermissionGuard::requirePermission($request, "student.update"); TenantGuard;');
+ok(count(array_filter($authzSuggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_authorization_strategy' || ($item['id'] ?? '') === 'authorization_strategy')) >= 1, 'auto suggestion engine recommends authorization strategy for manual permission code');
 
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

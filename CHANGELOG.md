@@ -76,3 +76,31 @@ Added a named request receiving engine that composes existing controls in a safe
 - Added request receiving config profiles for public, API, admin, upload, webhook, and internal-system routes.
 - Added config and production-readiness validation for request receiving profiles.
 - Added demo 20 and tests for named profiles, method/content-type checks, JSON parsing, suspicious request blocking, and webhook signatures.
+
+## v1.0.1 - Authentication Strategy Engine
+
+Added a central authentication strategy layer while preserving existing token/session/webhook primitives.
+
+- Added named authentication strategies for bearer, optional bearer, session, webhook signature, admin, and internal-system routes.
+- Added `AuthenticationMiddleware`, `AuthenticationRegistry`, `AuthenticationStrategy`, and `AuthenticationResult`.
+- Added `AuthWorkflowService` and `UserProviderInterface` for safe framework-independent login/register flows.
+- Added `PasswordPolicy` and `PasswordPolicyResult` for password policy checks.
+- Added `AuthAuditEvents` constants for consistent authentication event names.
+- Extended `OpaqueTokenService::issue()` to optionally store roles and permissions in token records.
+- Extended `SessionGuard::login()` to persist roles, scopes, and tenant metadata for `AuthContext::fromSession()`.
+- Integrated `auth_strategy` support into secure request receiving profiles.
+- Added configuration and production-readiness validation for authentication strategies and password policy.
+
+## v1.0.1 - Authorization Strategy Engine
+
+Added a unified authorization layer while preserving existing `Auth\PermissionGuard`, `Authz\PermissionGuard`, tenant guards, trust boundaries, and database policies.
+
+- Added `AuthorizationPolicy`, `AuthorizationDecision`, `AuthorizationContext`, `AuthorizationRegistry`, `FieldAuthorization`, `PolicyExplainer`, and `AuthorizationAuditEvents`.
+- Added `AuthorizationMiddleware` for route/resource/action checks before controller logic.
+- Added kernel helpers: `authorizationRegistry()`, `authorizationPolicy()`, and `authorizationMiddleware()`.
+- Added deny-by-default authorization config with role, scope, permission, tenant, data-class, trust-boundary, and field-level rules.
+- Added field-level read/write filtering for authorization policies.
+- Added safe structured authorization audit events without logging raw sensitive resource payloads.
+- Integrated `authorization` into secure request receiving profile options.
+- Added config validation and production readiness warnings for authorization policies.
+- Added demo `22-authorization-strategy-engine.php` and tests for decisions, middleware, audit, field filtering, validation, and suggestions.
