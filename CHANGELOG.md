@@ -162,3 +162,16 @@ Added a security-aware caching strategy layer around the existing file, Redis, a
 - Added `SecretRedactor`, `KeyDeriver`, environment validation, rotation reports, and expanded `SecretScanner` reporting.
 - Added kernel helpers and CLI commands: `secrets:inventory`, `secrets:audit`, `secrets:rotate-plan`, `secrets:env-check`, and improved `secrets:scan`.
 - Added config validation and production readiness checks for secret provider, redaction, derivation, definitions, rotation, and scanning.
+
+### v1.0.1 — Improvement 24: Logging, Audit, and Monitoring Engine
+
+Added a centralized logging, audit integrity, metrics, alerting, and retention layer while preserving existing tamper-evident audit logging and auto audit behavior.
+
+- Added JSONL/file log channels with final log redaction.
+- Added `Logger`, `LogRecord`, log handlers, and `LogDataProtector`.
+- Added audit chain verification and audit export helpers.
+- Added file-based metrics registry, alert rules, alert manager, and alert channels.
+- Added monitoring summary and trace context helpers.
+- Added log retention/purge manager.
+- Added CLI commands: `audit:verify`, `audit:export`, `logs:purge`, `monitor:summary`, `monitor:alerts`.
+- Added config validation, production readiness checks, demo, tests, and public examples.

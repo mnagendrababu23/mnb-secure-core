@@ -28,6 +28,7 @@ class SecurityConfigValidator
         $this->validateCookies();
         $this->validatePaths();
         $this->validateAudit();
+        $this->validateLoggingMonitoring();
         $this->validateLimits();
         $this->validateUploads();
         $this->validateStores();
@@ -285,6 +286,102 @@ class SecurityConfigValidator
         $paths = is_array($this->config['paths'] ?? null) ? $this->config['paths'] : [];
         if (!empty($audit['file']) && !empty($paths['private_storage']) && str_starts_with((string)$audit['file'], (string)$paths['private_storage'])) {
             $this->issue('medium', 'audit_file_inside_private_storage', 'audit.file', 'Audit logs should be stored in a dedicated audit/log path, not mixed with private uploaded files.', 'dedicated audit path', $audit['file']);
+        }
+    }
+
+
+    private function validateLoggingMonitoring(): void
+    {
+        $logging = $this->section('logging', false);
+        if ($logging !== null) {
+            $this->bool($logging, 'enabled', 'logging.enabled', false);
+            if (isset($logging['default_channel']) && (!$this->isStringLike($logging['default_channel']) || !$this->safeName((string)$logging['default_channel']))) {
+                $this->issue('medium', 'invalid_default_log_channel', 'logging.default_channel', 'Default log channel must be a safe name.', 'app', $logging['default_channel']);
+            }
+            $redaction = is_array($logging['redaction'] ?? null) ? $logging['redaction'] : [];
+            if ($redaction !== []) {
+                $this->bool($redaction, 'enabled', 'logging.redaction.enabled', false);
+                if (array_key_exists('enabled', $redaction) && empty($redaction['enabled']) && $this->isProduction($this->config['app'] ?? [])) {
+                    $this->issue('high', 'logging_redaction_disabled', 'logging.redaction.enabled', 'Log redaction should stay enabled in production.', 'true', false);
+                }
+            }
+            $channels = is_array($logging['channels'] ?? null) ? $logging['channels'] : [];
+            if ($channels === [] && $this->isProduction($this->config['app'] ?? [])) {
+                $this->issue('medium', 'logging_channels_missing', 'logging.channels', 'Define app/security/audit log channels for production observability.', 'channels', null);
+            }
+            foreach ($channels as $name => $channel) {
+                $path = 'logging.channels.' . (string)$name;
+                if (!$this->safeName((string)$name)) {
+                    $this->issue('high', 'invalid_log_channel_name', $path, 'Log channel names must be safe identifiers.', 'safe channel name', $name);
+                }
+                if (!is_array($channel)) {
+                    $this->issue('high', 'invalid_log_channel', $path, 'Log channel config must be an array.', 'array', $channel);
+                    continue;
+                }
+                if (isset($channel['level']) && (!$this->isStringLike($channel['level']) || !in_array((string)$channel['level'], ['debug','info','notice','warning','error','critical','alert','emergency'], true))) {
+                    $this->issue('medium', 'invalid_log_level', $path . '.level', 'Log level must be a known severity.', 'info|warning|error', $channel['level']);
+                }
+                if (isset($channel['handler']) && (!$this->isStringLike($channel['handler']) || !in_array((string)$channel['handler'], ['file','json_file'], true))) {
+                    $this->issue('medium', 'invalid_log_handler', $path . '.handler', 'Public package log handler must be file or json_file.', 'file|json_file', $channel['handler']);
+                }
+                if (isset($channel['path']) && !$this->isStringLike($channel['path'])) {
+                    $this->issue('medium', 'invalid_log_path', $path . '.path', 'Log path must be a string.', 'path string', $channel['path']);
+                }
+            }
+            $retention = is_array($logging['retention'] ?? null) ? $logging['retention'] : [];
+            foreach (['app_days','security_days','audit_days','debug_days'] as $key) {
+                if (array_key_exists($key, $retention)) {
+                    $this->numberRange($retention, $key, 'logging.retention.' . $key, 1, 3650, false);
+                }
+            }
+        }
+
+        $monitoring = $this->section('monitoring', false);
+        if ($monitoring === null) {
+            if ($this->isProduction($this->config['app'] ?? [])) {
+                $this->issue('medium', 'monitoring_section_missing', 'monitoring', 'Define monitoring metrics and alert rules for production security visibility.', 'monitoring config', null);
+            }
+            return;
+        }
+        $this->bool($monitoring, 'enabled', 'monitoring.enabled', false);
+        if (array_key_exists('enabled', $monitoring) && empty($monitoring['enabled']) && $this->isProduction($this->config['app'] ?? [])) {
+            $this->issue('medium', 'monitoring_disabled', 'monitoring.enabled', 'Monitoring should stay enabled in production.', 'true', false);
+        }
+        $metrics = is_array($monitoring['metrics'] ?? null) ? $monitoring['metrics'] : [];
+        if ($metrics !== []) {
+            $this->bool($metrics, 'enabled', 'monitoring.metrics.enabled', false);
+            if (isset($metrics['driver']) && (!$this->isStringLike($metrics['driver']) || !in_array((string)$metrics['driver'], ['file','memory','none'], true))) {
+                $this->issue('medium', 'invalid_metrics_driver', 'monitoring.metrics.driver', 'Metrics driver should be file, memory, or none.', 'file|memory|none', $metrics['driver']);
+            }
+        }
+        $alerts = is_array($monitoring['alerts'] ?? null) ? $monitoring['alerts'] : [];
+        if ($alerts !== []) {
+            $this->bool($alerts, 'enabled', 'monitoring.alerts.enabled', false);
+            if (isset($alerts['channels']) && !$this->stringList($alerts['channels'], 'monitoring.alerts.channels', false)) {
+                // issue emitted by stringList
+            }
+            if (isset($alerts['webhook_url']) && (string)$alerts['webhook_url'] !== '' && !$this->looksLikeUrl((string)$alerts['webhook_url'])) {
+                $this->issue('medium', 'invalid_alert_webhook_url', 'monitoring.alerts.webhook_url', 'Alert webhook URL must be a valid http(s) URL.', 'https://example.com/webhook', $alerts['webhook_url']);
+            }
+            $rules = is_array($alerts['rules'] ?? null) ? $alerts['rules'] : [];
+            foreach ($rules as $name => $rule) {
+                $path = 'monitoring.alerts.rules.' . (string)$name;
+                if (!$this->safeName((string)$name)) {
+                    $this->issue('high', 'invalid_alert_rule_name', $path, 'Alert rule names must be safe identifiers.', 'safe rule name', $name);
+                }
+                if (!is_array($rule)) {
+                    $this->issue('high', 'invalid_alert_rule', $path, 'Alert rule config must be an array.', 'array', $rule);
+                    continue;
+                }
+                if (empty($rule['event']) || !$this->isStringLike($rule['event'])) {
+                    $this->issue('medium', 'alert_rule_event_missing', $path . '.event', 'Alert rule should define an event name.', 'auth.login.failure', $rule['event'] ?? null);
+                }
+                $this->numberRange($rule, 'threshold', $path . '.threshold', 1, 1000000, false);
+                $this->numberRange($rule, 'window_seconds', $path . '.window_seconds', 1, 86400, false);
+                if (isset($rule['severity']) && (!$this->isStringLike($rule['severity']) || !in_array((string)$rule['severity'], ['low','medium','high','critical','info','warning','error'], true))) {
+                    $this->issue('medium', 'invalid_alert_severity', $path . '.severity', 'Alert severity should be a known security level.', 'high|critical', $rule['severity']);
+                }
+            }
         }
     }
 

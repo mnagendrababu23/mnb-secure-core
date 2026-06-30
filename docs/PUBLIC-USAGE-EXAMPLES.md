@@ -455,3 +455,17 @@ php bin/mnb-secure secrets:rotate-plan
 php bin/mnb-secure secrets:env-check
 php bin/mnb-secure secrets:scan
 ```
+
+## Logging, Audit, and Monitoring
+
+```php
+$kernel = new \Mnb\SecurityCore\Core\SecurityKernel($config);
+
+$kernel->logger('app')->info('Profile updated', ['user_id' => 15]);
+$kernel->securityLogger()->warning('Suspicious request', ['ip' => $request->ip()]);
+
+$verify = $kernel->auditIntegrityVerifier()->verify();
+$kernel->metricsRegistry()->increment('auth_failures_total', ['route' => 'login']);
+$alerts = $kernel->alertManager()->recordEvent('auth.login.failure', ['ip' => $request->ip()]);
+$summary = $kernel->monitoringSummary()->toArray();
+```

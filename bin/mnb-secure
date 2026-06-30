@@ -82,6 +82,35 @@ switch ($command) {
         $report = $kernel->environmentValidator()->validate();
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit($report['passed'] ? 0 : 1);
+
+    case 'audit:verify':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->auditIntegrityVerifier()->verify();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'audit:export':
+        $kernel = new SecurityKernel($config);
+        $category = $argv[2] ?? null;
+        $limit = isset($argv[3]) ? (int)$argv[3] : null;
+        $report = $kernel->auditExporter()->export($category !== '' ? $category : null, $limit);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'logs:purge':
+        $kernel = new SecurityKernel($config);
+        $channel = $argv[2] ?? null;
+        $report = $kernel->logRetentionManager()->purge($channel !== '' ? $channel : null);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'monitor:summary':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->monitoringSummary()->toArray();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'monitor:alerts':
+        $kernel = new SecurityKernel($config);
+        $report = $kernel->alertManager()->summary();
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
     case 'matrix:export':
         echo json_encode((new VulnerabilityMatrix())->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
@@ -156,6 +185,16 @@ switch ($command) {
         echo "  doctor                   Run full security, package, runtime, storage, and scanner diagnostics\n";
         echo "  bootstrap:first-token    Issue first file/db/redis-backed API token: user_id scopes ttl [--write-demo-user]\n";
         echo "  secrets:scan             Scan project for accidental secrets\n";
+        echo "  audit:verify            Verify tamper-evident audit hash chain
+";
+        echo "  audit:export            Export audit events as JSON: [category] [limit]
+";
+        echo "  logs:purge              Purge old log/audit files by retention policy: [channel]
+";
+        echo "  monitor:summary         Summarize audit integrity, metrics, and alerts
+";
+        echo "  monitor:alerts          Show monitoring alert rules and event count
+";
         echo "  matrix:export            Export vulnerability blocking matrix\n";
         echo "  pentest:checklist        Export pentest checklist\n";
         echo "  pentest:payloads         Export safe pentest payload library\n";

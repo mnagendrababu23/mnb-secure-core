@@ -197,3 +197,17 @@ Added policy-based secure caching with tenant/user-aware keys, safe serializatio
 ### Improvement 23 — Environment and Secret Management Engine
 
 Added provider-backed secret reads, secret definitions, redaction, inventory/health reports, purpose-based key derivation, environment validation, rotation reports, improved secret scanning, kernel helpers, and CLI commands for secret audit, inventory, rotation plans, and environment checks.
+
+## Improvement 24 — Logging, Audit, and Monitoring Engine
+
+This release adds centralized logging and monitoring helpers around existing audit functionality:
+
+- JSONL log records and log handlers
+- final log data protection/redaction
+- audit integrity verifier and audit exporter
+- metrics registry
+- alert rules, alert manager, file/webhook alert channels
+- trace context helper
+- log retention manager
+- monitoring summary reports
+- CLI commands for audit verification, audit export, log purge, and monitoring summary

@@ -95,6 +95,21 @@ use Mnb\SecurityCore\Logging\SecurityAuditTrail;
 use Mnb\SecurityCore\Logging\NullSecurityAuditTrail;
 use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
 use Mnb\SecurityCore\Logging\AutoAuditLogger;
+use Mnb\SecurityCore\Logging\AuditExporter;
+use Mnb\SecurityCore\Logging\AuditIntegrityVerifier;
+use Mnb\SecurityCore\Logging\FileLogHandler;
+use Mnb\SecurityCore\Logging\JsonLogHandler;
+use Mnb\SecurityCore\Logging\LogDataProtector;
+use Mnb\SecurityCore\Logging\LogHandlerInterface;
+use Mnb\SecurityCore\Logging\Logger;
+use Mnb\SecurityCore\Logging\LogRetentionManager;
+use Mnb\SecurityCore\Logging\LogRetentionPolicy;
+use Mnb\SecurityCore\Monitoring\AlertManager;
+use Mnb\SecurityCore\Monitoring\AlertRule;
+use Mnb\SecurityCore\Monitoring\FileAlertChannel;
+use Mnb\SecurityCore\Monitoring\MetricsRegistry;
+use Mnb\SecurityCore\Monitoring\MonitoringSummary;
+use Mnb\SecurityCore\Monitoring\WebhookAlertChannel;
 use Mnb\SecurityCore\Contracts\LoggerInterface;
 use Mnb\SecurityCore\Data\DataProtectionRegistry;
 use Mnb\SecurityCore\Data\ExportPolicy;
@@ -855,6 +870,108 @@ class SecurityKernel
         }
 
         return $middleware;
+    }
+
+    public function logDataProtector(): LogDataProtector
+    {
+        $logging = is_array($this->config['logging']['redaction'] ?? null) ? $this->config['logging']['redaction'] : [];
+        return new LogDataProtector($this->secretRedactor(), $logging);
+    }
+
+    public function logHandler(?string $channel = null): LogHandlerInterface
+    {
+        $logging = is_array($this->config['logging'] ?? null) ? $this->config['logging'] : [];
+        $channelName = $channel ?: (string)($logging['default_channel'] ?? 'app');
+        $channels = is_array($logging['channels'] ?? null) ? $logging['channels'] : [];
+        $channelConfig = is_array($channels[$channelName] ?? null) ? $channels[$channelName] : [];
+        $logPath = (string)($this->config['paths']['logs'] ?? dirname(__DIR__, 2) . '/storage/logs');
+        $path = (string)($channelConfig['path'] ?? ($logPath . '/' . $channelName . '.jsonl'));
+        $handler = (string)($channelConfig['handler'] ?? 'json_file');
+        return match ($handler) {
+            'file' => new FileLogHandler($path, $this->logDataProtector()),
+            default => new JsonLogHandler($path, $this->logDataProtector()),
+        };
+    }
+
+    public function logger(?string $channel = null): Logger
+    {
+        $logging = is_array($this->config['logging'] ?? null) ? $this->config['logging'] : [];
+        $channelName = $channel ?: (string)($logging['default_channel'] ?? 'app');
+        $channels = is_array($logging['channels'] ?? null) ? $logging['channels'] : [];
+        $channelConfig = is_array($channels[$channelName] ?? null) ? $channels[$channelName] : [];
+        return new Logger([$this->logHandler($channelName)], $channelName, (string)($channelConfig['level'] ?? 'info'));
+    }
+
+    public function securityLogger(): Logger
+    {
+        return $this->logger('security');
+    }
+
+    public function auditIntegrityVerifier(): AuditIntegrityVerifier
+    {
+        $audit = is_array($this->config['audit'] ?? null) ? $this->config['audit'] : [];
+        return new AuditIntegrityVerifier((string)($audit['file'] ?? dirname(__DIR__, 2) . '/storage/audit/security-audit.log'));
+    }
+
+    public function auditExporter(): AuditExporter
+    {
+        $audit = is_array($this->config['audit'] ?? null) ? $this->config['audit'] : [];
+        return new AuditExporter((string)($audit['file'] ?? dirname(__DIR__, 2) . '/storage/audit/security-audit.log'));
+    }
+
+    public function logRetentionPolicy(): LogRetentionPolicy
+    {
+        return LogRetentionPolicy::fromConfig($this->config);
+    }
+
+    public function logRetentionManager(): LogRetentionManager
+    {
+        return new LogRetentionManager(
+            $this->logRetentionPolicy(),
+            (string)($this->config['paths']['logs'] ?? dirname(__DIR__, 2) . '/storage/logs'),
+            (string)($this->config['paths']['audit'] ?? dirname(__DIR__, 2) . '/storage/audit')
+        );
+    }
+
+    public function metricsRegistry(): MetricsRegistry
+    {
+        $monitoring = is_array($this->config['monitoring'] ?? null) ? $this->config['monitoring'] : [];
+        $metrics = is_array($monitoring['metrics'] ?? null) ? $monitoring['metrics'] : [];
+        $path = (string)($metrics['path'] ?? (($this->config['paths']['logs'] ?? dirname(__DIR__, 2) . '/storage/logs') . '/metrics.json'));
+        return new MetricsRegistry(!empty($metrics['enabled']) ? $path : null);
+    }
+
+    public function alertManager(): AlertManager
+    {
+        $monitoring = is_array($this->config['monitoring'] ?? null) ? $this->config['monitoring'] : [];
+        $alerts = is_array($monitoring['alerts'] ?? null) ? $monitoring['alerts'] : [];
+        $rules = [];
+        foreach ((is_array($alerts['rules'] ?? null) ? $alerts['rules'] : []) as $name => $rule) {
+            if (is_array($rule)) {
+                $rules[] = AlertRule::fromArray((string)$name, $rule);
+            }
+        }
+        $logPath = (string)($this->config['paths']['logs'] ?? dirname(__DIR__, 2) . '/storage/logs');
+        $channels = [];
+        foreach ((array)($alerts['channels'] ?? ['file']) as $channel) {
+            if ($channel === 'webhook' && !empty($alerts['webhook_url'])) {
+                $channels[] = new WebhookAlertChannel((string)$alerts['webhook_url']);
+                continue;
+            }
+            if ($channel === 'file') {
+                $channels[] = new FileAlertChannel((string)($alerts['file'] ?? ($logPath . '/security-alerts.jsonl')));
+            }
+        }
+        if ($channels === []) {
+            $channels[] = new FileAlertChannel($logPath . '/security-alerts.jsonl');
+        }
+        $eventFile = (string)($alerts['event_file'] ?? ($logPath . '/monitoring-events.jsonl'));
+        return new AlertManager($rules, $channels, !empty($alerts['enabled']) ? $eventFile : null);
+    }
+
+    public function monitoringSummary(): MonitoringSummary
+    {
+        return new MonitoringSummary($this->auditExporter(), $this->auditIntegrityVerifier(), $this->metricsRegistry(), $this->alertManager());
     }
 
     public function pdo(): PDO

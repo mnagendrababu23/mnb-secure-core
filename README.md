@@ -1464,3 +1464,33 @@ php bin/mnb-secure secrets:rotate-plan
 php bin/mnb-secure secrets:env-check
 php bin/mnb-secure secrets:scan
 ```
+
+## Logging, Audit, and Monitoring Engine
+
+`mnb-secure-core v1.0.1` includes a centralized observability layer for operational logs, tamper-evident audit checks, metrics, alerting, and retention.
+
+```php
+$kernel = new \Mnb\SecurityCore\Core\SecurityKernel($config);
+
+$kernel->logger('security')->warning('Suspicious activity', [
+    'user_id' => 15,
+    'ip' => '127.0.0.1',
+]);
+
+$integrity = $kernel->auditIntegrityVerifier()->verify();
+$kernel->metricsRegistry()->increment('authorization_denials_total', ['policy' => 'students.update']);
+$alerts = $kernel->alertManager()->recordEvent('authorization.access.denied', ['policy' => 'students.update']);
+$summary = $kernel->monitoringSummary()->toArray();
+```
+
+CLI helpers:
+
+```bash
+php bin/mnb-secure audit:verify
+php bin/mnb-secure audit:export
+php bin/mnb-secure logs:purge
+php bin/mnb-secure monitor:summary
+php bin/mnb-secure monitor:alerts
+```
+
+The engine keeps existing `TamperEvidentAuditLogger`, `SecurityAuditTrail`, `AutoAuditLogger`, and `SecurityMonitor` behavior compatible while adding JSONL log channels, redaction, metrics, alert thresholds, retention cleanup, and audit-chain verification.

@@ -101,6 +101,20 @@ use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
 use Mnb\SecurityCore\Logging\SecurityAuditEvent;
 use Mnb\SecurityCore\Logging\SecurityAuditTrail;
 use Mnb\SecurityCore\Logging\AutoAuditLogger;
+use Mnb\SecurityCore\Logging\LogRecord;
+use Mnb\SecurityCore\Logging\Logger;
+use Mnb\SecurityCore\Logging\JsonLogHandler;
+use Mnb\SecurityCore\Logging\LogDataProtector;
+use Mnb\SecurityCore\Logging\AuditIntegrityVerifier;
+use Mnb\SecurityCore\Logging\LogRetentionPolicy;
+use Mnb\SecurityCore\Logging\LogRetentionManager;
+use Mnb\SecurityCore\Logging\AuditExporter;
+use Mnb\SecurityCore\Monitoring\AlertRule;
+use Mnb\SecurityCore\Monitoring\AlertManager;
+use Mnb\SecurityCore\Monitoring\FileAlertChannel;
+use Mnb\SecurityCore\Monitoring\MetricsRegistry;
+use Mnb\SecurityCore\Monitoring\MonitoringSummary;
+use Mnb\SecurityCore\Monitoring\TraceContext;
 use Mnb\SecurityCore\RateLimit\DatabaseRateLimiter;
 use Mnb\SecurityCore\RateLimit\FileRateLimiter;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicy;
@@ -1584,6 +1598,76 @@ ok(count(array_filter($secretSuggestions, fn(array $item): bool => ($item['id'] 
 
 $secretInvalidReport = (new SecurityConfigValidator(['app' => ['env' => 'production'], 'secrets' => ['enabled' => false, 'definitions' => ['bad name!' => ['env' => 'bad-env']]]]))->validate();
 ok(!$secretInvalidReport['passed'], 'security config validator catches unsafe secret management configuration');
+
+
+
+$logDir = $base . '/logging-engine';
+@mkdir($logDir, 0777, true);
+$logFile = $logDir . '/security.jsonl';
+$protector = new LogDataProtector(new SecretRedactor('[redacted]', 0));
+$logger = new Logger([new JsonLogHandler($logFile, $protector)], 'security', 'info');
+$logger->warning('Suspicious token=abc123', ['api_key' => 'secret-value', 'public' => 'ok']);
+$logLine = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES)[0] ?? '';
+ok(str_contains($logLine, '[redacted]') && !str_contains($logLine, 'secret-value') && str_contains($logLine, 'security'), 'logger writes redacted JSONL records by channel');
+
+$auditFile = $logDir . '/audit.log';
+$auditTrail = new SecurityAuditTrail(new TamperEvidentAuditLogger($auditFile));
+$auditTrail->record(SecurityAuditEvent::login(SecurityAuditEvent::OUTCOME_FAILURE, ['user_id' => 15], ['ip' => '127.0.0.1']));
+$verifier = new AuditIntegrityVerifier($auditFile);
+$verifyReport = $verifier->verify();
+ok($verifyReport['passed'] && $verifyReport['entries'] === 1, 'audit integrity verifier validates tamper-evident chain');
+file_put_contents($auditFile, str_replace('failure', 'success', file_get_contents($auditFile)));
+ok(!$verifier->verify()['passed'], 'audit integrity verifier detects tampering');
+
+$auditFile2 = $logDir . '/audit-export.log';
+$auditTrail2 = new SecurityAuditTrail(new TamperEvidentAuditLogger($auditFile2));
+$auditTrail2->record(SecurityAuditEvent::token('rejected', SecurityAuditEvent::OUTCOME_FAILURE));
+$export = (new AuditExporter($auditFile2))->export('token');
+ok($export['count'] === 1 && ($export['entries'][0]['category'] ?? '') === 'token', 'audit exporter reads filtered audit events');
+
+$metrics = new MetricsRegistry($logDir . '/metrics.json');
+$metrics->increment('auth_failures_total', ['policy' => 'login']);
+$metrics->increment('auth_failures_total', ['policy' => 'login']);
+ok($metrics->get('auth_failures_total', ['policy' => 'login']) === 2.0, 'metrics registry increments labeled counters');
+
+$alertFile = $logDir . '/alerts.jsonl';
+$alertEvents = $logDir . '/events.jsonl';
+$alertManager = new AlertManager([new AlertRule('failed_login_spike', 'auth.login.failure', 2, 300, 'high')], [new FileAlertChannel($alertFile)], $alertEvents);
+$firstAlerts = $alertManager->recordEvent('auth.login.failure', ['user_id' => 15]);
+$secondAlerts = $alertManager->recordEvent('auth.login.failure', ['user_id' => 15]);
+ok(count($firstAlerts) === 0 && count($secondAlerts) === 1 && is_file($alertFile), 'alert manager triggers threshold alerts');
+
+$oldFile = $logDir . '/old.log';
+file_put_contents($oldFile, 'old');
+touch($oldFile, time() - 86400 * 10);
+$retention = new LogRetentionManager(new LogRetentionPolicy(['app' => 1, 'security' => 1, 'audit' => 30, 'debug' => 1]), $logDir, $logDir);
+$purgeReport = $retention->purge('app');
+ok($purgeReport['deleted_count'] >= 1 && !is_file($oldFile), 'log retention manager purges old log files');
+
+$monitoringSummary = new MonitoringSummary(new AuditExporter($auditFile2), new AuditIntegrityVerifier($auditFile2), $metrics, $alertManager);
+$summary = $monitoringSummary->toArray();
+ok($summary['passed'] && ($summary['audit']['integrity']['passed'] ?? false) && isset($summary['metrics']['counters']), 'monitoring summary combines audit integrity metrics and alerts');
+
+$traceRequest = (new Request('GET', '/trace', [], [], ['x-request-id' => 'req-123']))->withAttribute('auth_user_id', 15);
+$trace = TraceContext::fromRequest($traceRequest)->toArray();
+ok($trace['request_id'] === 'req-123' && $trace['user_id'] === '15', 'trace context extracts request and actor metadata');
+
+$lmConfig = array_replace_recursive(require __DIR__ . '/../config/security.php', [
+    'app' => ['env' => 'testing', 'key' => str_repeat('L', 40)],
+    'secrets' => ['definitions' => ['app.key' => ['env' => 'APP_KEY', 'required' => false, 'min_length' => 32, 'purpose' => 'test']]],
+    'paths' => ['logs' => $logDir, 'audit' => $logDir],
+    'audit' => ['file' => $auditFile2],
+]);
+$lmKernel = new SecurityKernel($lmConfig);
+$lmKernel->logger('security')->warning('Auth denied password=hidden', ['token' => 'abc123']);
+$lmKernel->metricsRegistry()->increment('authorization_denials_total');
+ok($lmKernel->monitoringSummary()->toArray()['passed'] && $lmKernel->auditIntegrityVerifier()->verify()['passed'], 'security kernel exposes logging audit and monitoring helpers');
+
+$lmInvalidReport = (new SecurityConfigValidator(['app' => ['env' => 'production'], 'logging' => ['enabled' => false, 'channels' => ['bad channel!' => ['level' => 'wrong']]], 'monitoring' => ['enabled' => false, 'alerts' => ['rules' => ['bad rule!' => ['threshold' => 0]]]]]))->validate();
+ok(!$lmInvalidReport['passed'], 'security config validator catches unsafe logging and monitoring configuration');
+
+$lmSuggestions = (new AutoSuggestionEngine())->suggestFromCode('error_log($message); file_put_contents("audit.log", $data); TamperEvidentAuditLogger');
+ok(count(array_filter($lmSuggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_logging_monitoring_engine' || ($item['id'] ?? '') === 'logging_monitoring_engine')) >= 1, 'auto suggestion engine recommends logging audit and monitoring engine');
 
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

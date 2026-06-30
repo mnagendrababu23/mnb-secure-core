@@ -30,7 +30,40 @@ class ProductionSecurityChecker
         $fileSecurity = $this->config['file_security'] ?? [];
         $caching = $this->config['caching'] ?? [];
         $secrets = $this->config['secrets'] ?? [];
+        $logging = $this->config['logging'] ?? [];
+        $monitoring = $this->config['monitoring'] ?? [];
 
+
+
+        if (($app['env'] ?? 'local') === 'production') {
+            if (is_array($logging)) {
+                if (array_key_exists('enabled', $logging) && empty($logging['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'logging_disabled', 'message' => 'Central logging should be enabled in production.'];
+                }
+                $redaction = is_array($logging['redaction'] ?? null) ? $logging['redaction'] : [];
+                if (array_key_exists('enabled', $redaction) && empty($redaction['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'log_redaction_disabled', 'message' => 'Log redaction should remain enabled before writing operational, security, and audit logs.'];
+                }
+                $channels = is_array($logging['channels'] ?? null) ? $logging['channels'] : [];
+                foreach (['app', 'security', 'audit'] as $requiredChannel) {
+                    if (!isset($channels[$requiredChannel])) {
+                        $issues[] = ['level' => 'medium', 'key' => 'log_channel_missing', 'message' => 'Production logging should define ' . $requiredChannel . ' channel.'];
+                    }
+                }
+            }
+            if (is_array($monitoring)) {
+                if (array_key_exists('enabled', $monitoring) && empty($monitoring['enabled'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'monitoring_disabled', 'message' => 'Security monitoring should be enabled in production.'];
+                }
+                $alerts = is_array($monitoring['alerts'] ?? null) ? $monitoring['alerts'] : [];
+                if (array_key_exists('enabled', $alerts) && empty($alerts['enabled'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'security_alerts_disabled', 'message' => 'Security alerting should be enabled for failed logins, authz denials, malware uploads, and audit integrity failures.'];
+                }
+                if (empty($alerts['rules']) || !is_array($alerts['rules'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'monitoring_alert_rules_missing', 'message' => 'Define monitoring alert rules for security spikes and critical events.'];
+                }
+            }
+        }
 
         if (($app['env'] ?? 'local') === 'production' && is_array($secrets)) {
             if (array_key_exists('enabled', $secrets) && empty($secrets['enabled'])) {

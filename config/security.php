@@ -136,6 +136,83 @@ return [
         ],
     ],
 
+
+    'logging' => [
+        'enabled' => filter_var($_ENV['LOGGING_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'default_channel' => $_ENV['LOGGING_DEFAULT_CHANNEL'] ?? 'app',
+        'redaction' => [
+            'enabled' => filter_var($_ENV['LOGGING_REDACTION_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'use_secret_redactor' => true,
+            'use_data_protection' => true,
+        ],
+        'channels' => [
+            'app' => [
+                'level' => $_ENV['LOG_LEVEL'] ?? 'info',
+                'handler' => 'json_file',
+                'path' => $_ENV['APP_LOG_FILE'] ?? (__DIR__ . '/../storage/logs/app.jsonl'),
+            ],
+            'security' => [
+                'level' => $_ENV['SECURITY_LOG_LEVEL'] ?? 'warning',
+                'handler' => 'json_file',
+                'path' => $_ENV['SECURITY_LOG_FILE'] ?? (__DIR__ . '/../storage/logs/security.jsonl'),
+            ],
+            'audit' => [
+                'level' => 'info',
+                'handler' => 'json_file',
+                'path' => $_ENV['AUDIT_MIRROR_LOG_FILE'] ?? (__DIR__ . '/../storage/logs/audit.jsonl'),
+            ],
+        ],
+        'retention' => [
+            'app_days' => (int)($_ENV['LOG_RETENTION_APP_DAYS'] ?? 14),
+            'security_days' => (int)($_ENV['LOG_RETENTION_SECURITY_DAYS'] ?? 90),
+            'audit_days' => (int)($_ENV['LOG_RETENTION_AUDIT_DAYS'] ?? 365),
+            'debug_days' => (int)($_ENV['LOG_RETENTION_DEBUG_DAYS'] ?? 7),
+        ],
+    ],
+
+    'monitoring' => [
+        'enabled' => filter_var($_ENV['MONITORING_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'metrics' => [
+            'enabled' => filter_var($_ENV['MONITORING_METRICS_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'driver' => $_ENV['MONITORING_METRICS_DRIVER'] ?? 'file',
+            'path' => $_ENV['MONITORING_METRICS_FILE'] ?? (__DIR__ . '/../storage/logs/metrics.json'),
+        ],
+        'alerts' => [
+            'enabled' => filter_var($_ENV['MONITORING_ALERTS_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'channels' => array_values(array_filter(array_map('trim', explode(',', $_ENV['MONITORING_ALERT_CHANNELS'] ?? 'file')))),
+            'file' => $_ENV['MONITORING_ALERT_FILE'] ?? (__DIR__ . '/../storage/logs/security-alerts.jsonl'),
+            'event_file' => $_ENV['MONITORING_EVENT_FILE'] ?? (__DIR__ . '/../storage/logs/monitoring-events.jsonl'),
+            'webhook_url' => $_ENV['MONITORING_ALERT_WEBHOOK_URL'] ?? '',
+            'rules' => [
+                'failed_login_spike' => [
+                    'event' => 'auth.login.failure',
+                    'threshold' => (int)($_ENV['ALERT_FAILED_LOGIN_THRESHOLD'] ?? 10),
+                    'window_seconds' => 300,
+                    'severity' => 'high',
+                ],
+                'authorization_denial_spike' => [
+                    'event' => 'authorization.access.denied',
+                    'threshold' => (int)($_ENV['ALERT_AUTHZ_DENIAL_THRESHOLD'] ?? 20),
+                    'window_seconds' => 600,
+                    'severity' => 'high',
+                ],
+                'malware_upload_detected' => [
+                    'event' => 'file.upload.rejected',
+                    'threshold' => 1,
+                    'window_seconds' => 60,
+                    'severity' => 'critical',
+                    'match' => ['context.reason' => 'malware'],
+                ],
+                'audit_chain_broken' => [
+                    'event' => 'audit.integrity.failed',
+                    'threshold' => 1,
+                    'window_seconds' => 60,
+                    'severity' => 'critical',
+                ],
+            ],
+        ],
+    ],
+
     'limits' => [
         'request_max_bytes' => 5 * 1024 * 1024,
         'upload_max_bytes' => 10 * 1024 * 1024,
