@@ -1,0 +1,48 @@
+name: Feature request
+description: Suggest a safe, backward-compatible improvement
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests should preserve v1.0.1 compatibility unless a maintainer explicitly decides otherwise.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Auth / tokens / permissions
+        - Request trust / proxy / origin protection
+        - Rate limiting
+        - Upload security
+        - Security headers / CSP / HSTS
+        - Audit logging
+        - Database security
+        - CLI / doctor / config validator
+        - Documentation / examples
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What real-world use case is currently hard or unsafe?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Include API/config examples if useful.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Backward compatibility notes
+      description: Would this change existing behavior, public methods, config keys, or demos?
+      placeholder: This should be additive only.
+    validations:
+      required: true

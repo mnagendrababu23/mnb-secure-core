@@ -25,3 +25,13 @@ All notable changes to `mnb-secure-core` are documented here.
 - No namespaces, class names, or existing public methods were removed.
 - `Request::fromGlobals()` accepts an optional trusted-proxies array while existing zero-argument usage remains valid.
 - `Request` now includes optional `withAttribute()` / `attribute()` helpers for downstream auth context without breaking existing request handling.
+
+### v1.0.1 Release Readiness Pack
+
+- Added GitHub pull request template with compatibility, security, and verification checklist.
+- Added issue templates for bug reports, feature requests, and configuration questions.
+- Added GitHub issue template config that redirects vulnerability reports to private security reporting.
+- Added pre-merge checklist for the `v1.0.1-public-hardening` branch.
+- Added v1.0.1 release notes and public usage examples.
+- Extended CI to run `config:validate` and `doctor` diagnostics with a temporary safe CI `.env`.
+

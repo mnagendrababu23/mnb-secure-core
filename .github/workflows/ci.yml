@@ -33,3 +33,22 @@ jobs:
 
       - name: Run demos
         run: php demos/run-all-demos.php
+
+      - name: Create CI env for diagnostics
+        run: |
+          cat > .env <<'EOF'
+          APP_ENV=ci
+          APP_DEBUG=false
+          APP_KEY=0123456789012345678901234567890123456789
+          APP_URL=https://example.test
+          FORCE_HTTPS=false
+          TRUSTED_HOSTS=localhost,example.test
+          SESSION_SECURE=false
+          EOF
+
+      - name: Validate security config
+        run: php bin/mnb-secure config:validate
+
+      - name: Run doctor diagnostics
+        run: php bin/mnb-secure doctor
+

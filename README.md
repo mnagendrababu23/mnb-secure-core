@@ -1006,3 +1006,16 @@ mnb-secure-core/
 ├── SECURITY.md
 └── README.md
 ```
+
+## Release readiness and public support
+
+For public GitHub releases, use the included release readiness docs and templates:
+
+- `docs/PRE-MERGE-CHECKLIST.md` — final checks before merging the v1.0.1 branch into `main`.
+- `docs/RELEASE-NOTES-v1.0.1.md` — release notes for the public v1.0.1 hardening release.
+- `docs/PUBLIC-USAGE-EXAMPLES.md` — copy-friendly examples for common integration flows.
+- `.github/PULL_REQUEST_TEMPLATE.md` — PR review checklist for compatibility and security.
+- `.github/ISSUE_TEMPLATE/` — bug, feature, and configuration question templates.
+
+Security vulnerabilities should be reported privately using `SECURITY.md`, not through public GitHub issues.
+
