@@ -1067,6 +1067,52 @@ $codeHints = $kernel->suggestionEngine()->suggestFromCode($phpCode);
 
 The engine suggests relevant v1.0.1 helpers such as auto audit, CORS policy, request trust, security headers, rate policies, auth context, upload profiles, and doctor checks.
 
+
+## 35. Request input validation and sanitization
+
+Use request validation before controller/business logic to normalize safe text, reject invalid submissions, and drop unexpected fields.
+
+```php
+$pipeline = new MiddlewarePipeline([
+    $kernel->requestTrustMiddleware(),
+    $kernel->corsMiddleware(),
+    $kernel->securityHeadersMiddleware(),
+    $kernel->inputValidationMiddleware([
+        'register' => [
+            'methods' => ['POST'],
+            'path' => '/register',
+            'body' => [
+                'allowed_fields' => ['name', 'email', 'password'],
+                'strict' => true,
+                'sanitize_rules' => [
+                    'name' => 'trim|strip_tags|collapse_spaces|max_length:120',
+                    'email' => 'trim|email',
+                ],
+                'rules' => [
+                    'name' => 'required|string|min:2|max:120',
+                    'email' => 'required|email|max:190',
+                    'password' => 'required|string|min:8|max:128',
+                ],
+            ],
+        ],
+    ]),
+    $kernel->autoAuditMiddleware(),
+]);
+```
+
+After validation, controllers can use sanitized input normally:
+
+```php
+$name = $request->input('name');
+$email = $request->validated('email');
+```
+
+Available validator rules include `required`, `nullable`, `sometimes`, `email`, `integer`, `numeric`, `boolean`, `string`, `array`, `min`, `max`, `between`, `size`, `in`, `not_in`, `regex`, `alpha`, `alpha_num`, `slug`, `url`, `ip`, `uuid`, `date`, `json`, `confirmed`, `same`, `different`, `required_if`, and `required_without`.
+
+Available sanitizer rules include `trim`, `strip_tags`, `strip_control_chars`, `collapse_spaces`, `lower`, `upper`, `email`, `url`, `int`, `float`, `bool`, `only_digits`, `slug`, `filename`, `null_if_empty`, and `max_length:N`.
+
+This layer is for request normalization and validation. It does not replace output escaping, prepared SQL, CSP, CSRF, upload scanning, or business-rule authorization.
+
 ---
 
 ## Release readiness and public support

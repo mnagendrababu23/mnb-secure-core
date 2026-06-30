@@ -86,6 +86,43 @@ return array_replace_recursive($base, [
         'cross_origin_resource_policy' => $_ENV['CROSS_ORIGIN_RESOURCE_POLICY'] ?? 'same-origin',
         'cross_origin_embedder_policy' => $_ENV['CROSS_ORIGIN_EMBEDDER_POLICY'] ?? null,
     ],
+
+    'request_validation' => [
+        'enabled' => filter_var($_ENV['REQUEST_VALIDATION_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'sanitize' => filter_var($_ENV['REQUEST_SANITIZE_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'throw' => false,
+        'error_status' => 422,
+        'message' => 'Validation failed',
+        'max_depth' => (int)($_ENV['REQUEST_VALIDATION_MAX_DEPTH'] ?? 10),
+        'max_string_length' => (int)($_ENV['REQUEST_VALIDATION_MAX_STRING_LENGTH'] ?? 10000),
+        'blocked_keys' => ['__proto__', 'prototype', 'constructor'],
+        'default' => [
+            'methods' => ['POST', 'PUT', 'PATCH'],
+            'body' => [
+                'sanitize' => true,
+                'sanitize_rules' => ['*' => 'trim|strip_control_chars'],
+            ],
+            'query' => [
+                'sanitize' => true,
+                'sanitize_rules' => ['*' => 'trim|strip_control_chars'],
+            ],
+        ],
+        // Define route-specific validation in applications:
+        // 'routes' => [
+        //     'register' => [
+        //         'methods' => ['POST'],
+        //         'path' => '/register',
+        //         'body' => [
+        //             'allowed_fields' => ['name', 'email', 'password'],
+        //             'strict' => true,
+        //             'sanitize_rules' => ['name' => 'trim|strip_tags|collapse_spaces|max_length:120', 'email' => 'trim|email'],
+        //             'rules' => ['name' => 'required|string|min:2|max:120', 'email' => 'required|email|max:190', 'password' => 'required|string|min:8|max:128'],
+        //         ],
+        //     ],
+        // ],
+        'routes' => [],
+    ],
+
     'suggestions' => [
         'enabled' => filter_var($_ENV['SUGGESTIONS_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
         'max_results' => (int)($_ENV['SUGGESTIONS_MAX_RESULTS'] ?? 8),

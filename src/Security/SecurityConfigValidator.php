@@ -33,6 +33,7 @@ class SecurityConfigValidator
         $this->validateRedis();
         $this->validateCors();
         $this->validateSecurityHeaders();
+        $this->validateRequestValidation();
         $this->validateSuggestions();
         $this->validateOriginProtection();
         $this->validateErrors();
@@ -644,6 +645,135 @@ class SecurityConfigValidator
                 }
                 if (isset($permissions['directives']) && !is_array($permissions['directives'])) {
                     $this->issue('medium', 'invalid_permissions_policy_directives', 'security_headers.permissions_policy.directives', 'Permissions-Policy directives must be an associative array.', 'array', $permissions['directives']);
+                }
+            }
+        }
+    }
+
+
+    private function validateRequestValidation(): void
+    {
+        $validation = $this->section('request_validation', false);
+        if ($validation === null) {
+            return;
+        }
+
+        foreach (['enabled', 'sanitize', 'throw'] as $key) {
+            $this->bool($validation, $key, 'request_validation.' . $key, required: false);
+        }
+        $this->intRange($validation, 'error_status', 'request_validation.error_status', 400, 599, required: false);
+        $this->intRange($validation, 'max_depth', 'request_validation.max_depth', 1, 50, required: false);
+        $this->intRange($validation, 'max_string_length', 'request_validation.max_string_length', 1, 1048576, required: false);
+        if (isset($validation['blocked_keys'])) {
+            $this->stringList($validation['blocked_keys'], 'request_validation.blocked_keys', false);
+        }
+        if (isset($validation['message']) && !$this->isStringLike($validation['message'])) {
+            $this->issue('medium', 'invalid_request_validation_message', 'request_validation.message', 'Validation error message should be a string.', 'string', $validation['message']);
+        }
+
+        foreach (['default', 'routes'] as $key) {
+            if (!array_key_exists($key, $validation)) {
+                continue;
+            }
+            if (!is_array($validation[$key])) {
+                $this->issue('high', 'invalid_request_validation_' . $key, 'request_validation.' . $key, 'Request validation policies must be arrays.', 'array', $validation[$key]);
+                continue;
+            }
+        }
+
+        if (isset($validation['default']) && is_array($validation['default'])) {
+            $this->validateInputPolicy('request_validation.default', $validation['default']);
+        }
+        if (isset($validation['routes']) && is_array($validation['routes'])) {
+            foreach ($validation['routes'] as $name => $policy) {
+                if (!is_string($name) && !is_int($name)) {
+                    $this->issue('medium', 'invalid_request_validation_route_key', 'request_validation.routes', 'Route validation keys should be route names or numeric entries.', 'string|int', $name);
+                    continue;
+                }
+                if (!is_array($policy)) {
+                    $this->issue('high', 'invalid_request_validation_route_policy', 'request_validation.routes.' . (string)$name, 'Each route validation policy must be an array.', 'array', $policy);
+                    continue;
+                }
+                $this->validateInputPolicy('request_validation.routes.' . (string)$name, $policy);
+            }
+        }
+    }
+
+    /** @param array<string,mixed> $policy */
+    private function validateInputPolicy(string $path, array $policy): void
+    {
+        if (isset($policy['methods'])) {
+            $methods = is_array($policy['methods']) ? $policy['methods'] : explode(',', (string)$policy['methods']);
+            foreach ($methods as $method) {
+                $method = strtoupper(trim((string)$method));
+                if (!in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'], true)) {
+                    $this->issue('medium', 'invalid_request_validation_method', $path . '.methods', 'Validation policy method should be a known HTTP method.', 'HTTP method', $method);
+                    break;
+                }
+            }
+        }
+        foreach (['path', 'path_pattern'] as $key) {
+            if (isset($policy[$key]) && (!$this->isStringLike($policy[$key]) || trim((string)$policy[$key]) === '')) {
+                $this->issue('medium', 'invalid_request_validation_' . $key, $path . '.' . $key, $key . ' should be a non-empty string.', 'string', $policy[$key]);
+            }
+        }
+        if (isset($policy['path_pattern'])) {
+            set_error_handler(static fn(): bool => true);
+            try {
+                $validPattern = preg_match((string)$policy['path_pattern'], '/test') !== false;
+            } finally {
+                restore_error_handler();
+            }
+            if (!$validPattern) {
+                $this->issue('medium', 'invalid_request_validation_path_pattern', $path . '.path_pattern', 'path_pattern must be a valid PHP regex.', 'valid regex', $policy['path_pattern']);
+            }
+        }
+        foreach (['sanitize', 'throw'] as $key) {
+            $this->bool($policy, $key, $path . '.' . $key, required: false);
+        }
+        $this->intRange($policy, 'max_depth', $path . '.max_depth', 1, 50, required: false);
+        $this->intRange($policy, 'max_string_length', $path . '.max_string_length', 1, 1048576, required: false);
+        if (isset($policy['blocked_keys'])) {
+            $this->stringList($policy['blocked_keys'], $path . '.blocked_keys', false);
+        }
+
+        foreach (['query', 'body', 'all'] as $location) {
+            if (!isset($policy[$location])) {
+                continue;
+            }
+            if (!is_array($policy[$location])) {
+                $this->issue('high', 'invalid_request_validation_location_' . $location, $path . '.' . $location, 'Input validation location config must be an array.', 'array', $policy[$location]);
+                continue;
+            }
+            $this->validateInputLocationPolicy($path . '.' . $location, $policy[$location]);
+        }
+    }
+
+    /** @param array<string,mixed> $location */
+    private function validateInputLocationPolicy(string $path, array $location): void
+    {
+        foreach (['sanitize', 'strict'] as $key) {
+            $this->bool($location, $key, $path . '.' . $key, required: false);
+        }
+        if (isset($location['allowed_fields'])) {
+            $this->stringList($location['allowed_fields'], $path . '.allowed_fields', false);
+        }
+        foreach (['rules', 'sanitize_rules'] as $key) {
+            if (!isset($location[$key])) {
+                continue;
+            }
+            if (!is_array($location[$key])) {
+                $this->issue('high', 'invalid_' . str_replace('.', '_', $path) . '_' . $key, $path . '.' . $key, $key . ' must be an associative array.', 'array<string,string|array>', $location[$key]);
+                continue;
+            }
+            foreach ($location[$key] as $field => $rule) {
+                if (!is_string($field) || trim($field) === '' || preg_match('/[\r\n]/', $field)) {
+                    $this->issue('medium', 'invalid_input_rule_field', $path . '.' . $key, 'Input rule field names must be safe strings.', 'field name', $field);
+                    break;
+                }
+                if (!is_string($rule) && !is_array($rule)) {
+                    $this->issue('medium', 'invalid_input_rule_value', $path . '.' . $key . '.' . $field, 'Input rules must be pipe-delimited strings or arrays.', 'string|array', $rule);
+                    break;
                 }
             }
         }

@@ -44,3 +44,13 @@ All notable changes to `mnb-secure-core` are documented here.
 - Added v1.0.1 release notes and public usage examples.
 - Extended CI to run `config:validate` and `doctor` diagnostics with a temporary safe CI `.env`.
 
+
+
+### v1.0.1 Request Input Validation and Sanitization Add-on
+
+- Expanded `InputValidator` with common request validation rules while preserving existing `validate(array $data, array $rules)` usage.
+- Added `InputSanitizer` for safe text normalization, blocked-key removal, strict field allow-listing, and recursive depth/string-length limits.
+- Added `InputValidationMiddleware` for route/path/method-based query/body validation before controllers run.
+- Added request helpers: `queryParams()`, `body()`, `validated()`, `withQuery()`, and `withBody()`.
+- Added kernel helpers: `inputValidator()`, `inputSanitizer()`, and `inputValidationMiddleware()`.
+- Added config/env settings and production/config validation for request validation policies.

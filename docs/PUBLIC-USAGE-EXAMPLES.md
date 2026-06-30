@@ -133,3 +133,36 @@ Additional v1.0.1 additions include:
 - Improved `CorsMiddleware` and `CorsPolicy` with credential-safe origin reflection, preflight validation, exposed headers, origin patterns, max-age, and private-network opt-in.
 - `AutoSuggestionEngine` for suggestions from typed words or pasted PHP code snippets.
 - Kernel helpers: `autoAuditLogger()`, `autoAuditMiddleware()`, `corsMiddleware()`, and `suggestionEngine()`.
+
+## 10. Validate and sanitize request input
+
+```php
+$validation = $kernel->inputValidationMiddleware([
+    'register' => [
+        'methods' => ['POST'],
+        'path' => '/register',
+        'body' => [
+            'allowed_fields' => ['name', 'email', 'password'],
+            'strict' => true,
+            'sanitize_rules' => [
+                'name' => 'trim|strip_tags|collapse_spaces|max_length:120',
+                'email' => 'trim|email',
+            ],
+            'rules' => [
+                'name' => 'required|string|min:2|max:120',
+                'email' => 'required|email|max:190',
+                'password' => 'required|string|min:8|max:128',
+            ],
+        ],
+    ],
+]);
+```
+
+Use it before controllers so handlers receive normalized input:
+
+```php
+$name = $request->input('name');
+$email = $request->validated('email');
+```
+
+This layer complements, but does not replace, prepared SQL, output escaping, CSRF protection, CSP, authorization, and business-rule checks.

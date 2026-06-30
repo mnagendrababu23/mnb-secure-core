@@ -86,3 +86,14 @@ Additional v1.0.1 additions include:
 - Improved `CorsMiddleware` and `CorsPolicy` with credential-safe origin reflection, preflight validation, exposed headers, origin patterns, max-age, and private-network opt-in.
 - `AutoSuggestionEngine` for suggestions from typed words or pasted PHP code snippets.
 - Kernel helpers: `autoAuditLogger()`, `autoAuditMiddleware()`, `corsMiddleware()`, and `suggestionEngine()`.
+
+## Request input validation and sanitization add-on
+
+Additional v1.0.1 additions include:
+
+- Expanded `InputValidator` with common request rules for body/query validation.
+- Added `InputSanitizer` for safe normalization, blocked-key removal, allow-listed fields, max depth, and max string length.
+- Added `InputValidationMiddleware` for route/path/method-based validation before controllers run.
+- Added request helpers for sanitized/validated data: `queryParams()`, `body()`, `validated()`, `withQuery()`, and `withBody()`.
+- Added kernel helpers: `inputValidator()`, `inputSanitizer()`, and `inputValidationMiddleware()`.
+- Added config/env and production/config validator checks for request validation policy safety.

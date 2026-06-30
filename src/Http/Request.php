@@ -39,6 +39,23 @@ class Request
     public function path(): string { return $this->path; }
     public function query(string $key, mixed $default = null): mixed { return $this->query[$key] ?? $default; }
     public function input(string $key, mixed $default = null): mixed { return $this->body[$key] ?? $default; }
+    /** @return array<string,mixed> */
+    public function queryParams(): array { return $this->query; }
+    /** @return array<string,mixed> */
+    public function body(): array { return $this->body; }
+    public function validated(string $key, mixed $default = null): mixed
+    {
+        $validated = $this->attribute('validated_input', []);
+        if (!is_array($validated)) {
+            return $default;
+        }
+        foreach (['body', 'query', 'all'] as $location) {
+            if (isset($validated[$location]) && is_array($validated[$location]) && array_key_exists($key, $validated[$location])) {
+                return $validated[$location][$key];
+            }
+        }
+        return $default;
+    }
     public function all(): array { return array_merge($this->query, $this->body); }
     public function header(string $name, mixed $default = null): mixed { return $this->headers[strtolower($name)] ?? $default; }
 
@@ -121,6 +138,23 @@ class Request
     public function isFromTrustedProxy(): bool
     {
         return RequestTrust::isTrustedProxy($this->remoteIp(), $this->trustedProxies);
+    }
+
+
+    /** @param array<string,mixed> $query */
+    public function withQuery(array $query): self
+    {
+        $clone = clone $this;
+        $clone->query = $query;
+        return $clone;
+    }
+
+    /** @param array<string,mixed> $body */
+    public function withBody(array $body): self
+    {
+        $clone = clone $this;
+        $clone->body = $body;
+        return $clone;
     }
 
     public function attribute(string $key, mixed $default = null): mixed

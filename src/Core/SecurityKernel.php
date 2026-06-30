@@ -30,6 +30,7 @@ use Mnb\SecurityCore\Http\Middleware\AutoAuditMiddleware;
 use Mnb\SecurityCore\Http\Middleware\CorsMiddleware;
 use Mnb\SecurityCore\Http\Middleware\RequestTrustMiddleware;
 use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
+use Mnb\SecurityCore\Http\Middleware\InputValidationMiddleware;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
@@ -40,6 +41,8 @@ use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
 use Mnb\SecurityCore\Logging\AutoAuditLogger;
 use Mnb\SecurityCore\Contracts\LoggerInterface;
 use Mnb\SecurityCore\Suggestions\AutoSuggestionEngine;
+use Mnb\SecurityCore\Validation\InputSanitizer;
+use Mnb\SecurityCore\Validation\InputValidator;
 use Mnb\SecurityCore\Security\ServerIdentityHider;
 use PDO;
 
@@ -242,6 +245,25 @@ class SecurityKernel
     public function securityHeadersMiddleware(?callable $nonceResolver = null): SecurityHeadersMiddleware
     {
         return new SecurityHeadersMiddleware($this->config['security_headers'] ?? [], $nonceResolver);
+    }
+
+    public function inputValidator(): InputValidator
+    {
+        return new InputValidator();
+    }
+
+    public function inputSanitizer(): InputSanitizer
+    {
+        return new InputSanitizer();
+    }
+
+    public function inputValidationMiddleware(array $routePolicies = []): InputValidationMiddleware
+    {
+        $config = is_array($this->config['request_validation'] ?? null) ? $this->config['request_validation'] : [];
+        if ($routePolicies !== []) {
+            $config['routes'] = array_merge(is_array($config['routes'] ?? null) ? $config['routes'] : [], $routePolicies);
+        }
+        return new InputValidationMiddleware($config, $this->inputValidator(), $this->inputSanitizer());
     }
 
     public function suggestionEngine(array $customRules = []): AutoSuggestionEngine

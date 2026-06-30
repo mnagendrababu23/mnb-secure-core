@@ -20,6 +20,7 @@ class ProductionSecurityChecker
         $audit = $this->config['audit'] ?? [];
         $securityHeaders = $this->config['security_headers'] ?? [];
         $cors = $this->config['cors'] ?? [];
+        $requestValidation = $this->config['request_validation'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -72,6 +73,17 @@ class ProductionSecurityChecker
             $preset = is_array($permissions) ? strtolower((string)($permissions['preset'] ?? 'strict')) : strtolower((string)$permissions);
             if (in_array($preset, ['none', 'disabled', 'off'], true)) {
                 $issues[] = ['level' => 'medium', 'key' => 'permissions_policy_disabled', 'message' => 'Permissions-Policy should restrict browser features in production.'];
+            }
+            if (is_array($requestValidation)) {
+                if (array_key_exists('enabled', $requestValidation) && empty($requestValidation['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'request_validation_disabled', 'message' => 'Request input validation should be enabled in production before controller/business logic runs.'];
+                }
+                if (array_key_exists('sanitize', $requestValidation) && empty($requestValidation['sanitize'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'request_sanitization_disabled', 'message' => 'Request input sanitization should be enabled in production for safe normalization and blocked key removal.'];
+                }
+                if (empty($requestValidation['default']) && empty($requestValidation['routes'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'request_validation_no_policies', 'message' => 'Define default or route-specific request validation policies for public write endpoints.'];
+                }
             }
         }
         if (empty($cookies['http_only'])) {

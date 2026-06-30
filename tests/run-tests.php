@@ -38,6 +38,7 @@ use Mnb\SecurityCore\Files\HeuristicMalwareScanner;
 use Mnb\SecurityCore\Http\Middleware\ApiTokenMiddleware;
 use Mnb\SecurityCore\Http\Middleware\AutoAuditMiddleware;
 use Mnb\SecurityCore\Http\Middleware\CorsMiddleware;
+use Mnb\SecurityCore\Http\Middleware\InputValidationMiddleware;
 use Mnb\SecurityCore\Http\Middleware\HttpsMiddleware;
 use Mnb\SecurityCore\Http\Middleware\RateLimitMiddleware;
 use Mnb\SecurityCore\Http\Middleware\RateLimitPolicyMiddleware;
@@ -87,6 +88,8 @@ use Mnb\SecurityCore\Throughput\ThroughputMonitor;
 use Mnb\SecurityCore\Throughput\ThroughputPlanner;
 use Mnb\SecurityCore\Http\Middleware\ThroughputMiddleware;
 use Mnb\SecurityCore\Suggestions\AutoSuggestionEngine;
+use Mnb\SecurityCore\Validation\InputSanitizer;
+use Mnb\SecurityCore\Validation\InputValidator;
 
 $base = sys_get_temp_dir() . '/mnb_secure_core_v1_0_tests_' . getmypid();
 @mkdir($base, 0777, true);
@@ -346,6 +349,73 @@ ok(!$corsConfigReport['passed'] && count(array_filter($corsConfigReport['errors'
 $suggestions = (new AutoSuggestionEngine())->suggest('cors audit login upload doctor', 5);
 $codeSuggestions = (new AutoSuggestionEngine())->suggestFromCode('<?php $kernel = new SecurityKernel($config); $m = new ApiTokenMiddleware($tokens);', 5);
 ok(count($suggestions) >= 3 && $suggestions[0]['confidence'] > 0 && count(array_filter($codeSuggestions, fn($item) => ($item['id'] ?? '') === 'missing_request_trust')) === 1, 'auto suggestion engine returns suggestions from typed words and user code');
+
+$validator = new InputValidator();
+$sanitizer = new InputSanitizer();
+$cleanInput = $sanitizer->sanitize([
+    'name' => '  <b>Nagendra</b>  ',
+    'email' => ' ADMIN@EXAMPLE.COM ',
+    'role' => 'admin',
+    '__proto__' => 'polluted',
+], [
+    'name' => 'trim|strip_tags|collapse_spaces|max_length:40',
+    'email' => 'trim|email',
+]);
+$validatedInput = $validator->validate($cleanInput, [
+    'name' => 'required|string|min:2|max:40',
+    'email' => 'required|email|max:190',
+    'role' => 'required|in:admin,user',
+]);
+ok($validatedInput['name'] === 'Nagendra' && $validatedInput['email'] === 'admin@example.com' && !array_key_exists('__proto__', $validatedInput), 'input sanitizer cleans strings and blocks unsafe keys before validation');
+
+$inputValidationMiddleware = new InputValidationMiddleware([
+    'routes' => [
+        'register' => [
+            'methods' => ['POST'],
+            'path' => '/register',
+            'body' => [
+                'allowed_fields' => ['name', 'email', 'password'],
+                'strict' => true,
+                'sanitize_rules' => ['name' => 'trim|strip_tags|collapse_spaces', 'email' => 'trim|email'],
+                'rules' => ['name' => 'required|string|min:2|max:40', 'email' => 'required|email|max:190', 'password' => 'required|string|min:8|max:128'],
+            ],
+        ],
+    ],
+]);
+$validInputRequest = new Request('POST', '/register', [], ['name' => ' <b>Admin User</b> ', 'email' => ' ADMIN@EXAMPLE.COM ', 'password' => 'secret-pass', 'extra' => 'remove'], [], ['REMOTE_ADDR' => '127.0.0.1']);
+$validInputResponse = (new MiddlewarePipeline([$inputValidationMiddleware]))->handle($validInputRequest, function (Request $request): Response {
+    return Response::json([
+        'name' => $request->input('name'),
+        'email' => $request->input('email'),
+        'extra' => $request->input('extra', null),
+        'validated_name' => $request->validated('name'),
+    ]);
+});
+$validInputPayload = json_decode($validInputResponse->body(), true);
+$invalidInputResponse = (new MiddlewarePipeline([$inputValidationMiddleware]))->handle(new Request('POST', '/register', [], ['name' => 'A', 'email' => 'bad', 'password' => 'short'], [], ['REMOTE_ADDR' => '127.0.0.1']), fn() => Response::text('should not pass'));
+ok($validInputResponse->status() === 200 && $validInputPayload['name'] === 'Admin User' && $validInputPayload['email'] === 'admin@example.com' && $validInputPayload['extra'] === null && $validInputPayload['validated_name'] === 'Admin User' && $invalidInputResponse->status() === 422, 'request input validation middleware sanitizes valid input and blocks invalid submissions');
+
+$inputKernelConfig = require __DIR__ . '/../config/security.php';
+$inputKernelConfig['paths']['cache'] = $base . '/input-kernel-cache';
+$inputKernelConfig['paths']['tokens'] = $base . '/input-kernel-tokens.json';
+$inputKernelConfig['paths']['private_storage'] = $base . '/input-private';
+$inputKernelConfig['paths']['quarantine'] = $base . '/input-quarantine';
+$inputKernelConfig['paths']['audit'] = $base . '/input-audit';
+$inputKernelConfig['paths']['logs'] = $base . '/input-logs';
+$inputKernel = new SecurityKernel($inputKernelConfig);
+$kernelValidationMiddleware = $inputKernel->inputValidationMiddleware([
+    'profile.update' => [
+        'methods' => ['PATCH'],
+        'path' => '/api/profile',
+        'body' => [
+            'sanitize_rules' => ['display_name' => 'trim|strip_tags|collapse_spaces'],
+            'rules' => ['display_name' => 'required|string|min:2|max:40'],
+        ],
+    ],
+]);
+$kernelInputRequest = (new Request('PATCH', '/api/profile', [], ['display_name' => ' <i>Core User</i> '], [], ['REMOTE_ADDR' => '127.0.0.1']))->withAttribute('route_name', 'profile.update');
+$kernelInputResponse = (new MiddlewarePipeline([$kernelValidationMiddleware]))->handle($kernelInputRequest, fn(Request $request) => Response::json(['display_name' => $request->input('display_name')]));
+ok($kernelInputResponse->status() === 200 && json_decode($kernelInputResponse->body(), true)['display_name'] === 'Core User', 'security kernel builds request input validation middleware with route policies');
 
 $request = new Request('GET', '/', [], [], [], ['HTTPS' => 'off']);
 $pipeline = new MiddlewarePipeline([new HttpsMiddleware(true)]);
