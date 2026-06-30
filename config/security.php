@@ -1352,6 +1352,7 @@ return [
 
 
     'throughput' => [
+        'enabled' => true,
         'target_rps' => (float)(getenv('THROUGHPUT_TARGET_RPS') ?: 50),
         'warning_latency_ms' => (int)(getenv('THROUGHPUT_WARNING_LATENCY_MS') ?: 750),
         'critical_latency_ms' => (int)(getenv('THROUGHPUT_CRITICAL_LATENCY_MS') ?: 2000),
@@ -1360,6 +1361,104 @@ return [
         'sample_window_seconds' => (int)(getenv('THROUGHPUT_SAMPLE_WINDOW_SECONDS') ?: 60),
         'emit_headers' => true,
         'block_critical_latency' => false,
+        'profiles' => [
+            'api_request' => [
+                'enabled' => true,
+                'target_rps' => 100,
+                'warning_latency_ms' => 500,
+                'critical_latency_ms' => 1500,
+                'max_concurrency' => 50,
+                'degrade_on_overload' => true,
+            ],
+            'login' => [
+                'enabled' => true,
+                'target_rps' => 25,
+                'warning_latency_ms' => 500,
+                'critical_latency_ms' => 1200,
+                'max_concurrency' => 10,
+                'degrade_on_overload' => false,
+            ],
+            'file_scan' => [
+                'enabled' => true,
+                'target_rps' => 10,
+                'warning_latency_ms' => 5000,
+                'critical_latency_ms' => 15000,
+                'max_concurrency' => 3,
+                'require_queue_above_ms' => 5000,
+            ],
+            'database_export' => [
+                'enabled' => true,
+                'target_rps' => 5,
+                'warning_latency_ms' => 3000,
+                'critical_latency_ms' => 10000,
+                'max_concurrency' => 2,
+                'require_queue' => true,
+            ],
+            'webhook_dispatch' => [
+                'enabled' => true,
+                'target_rps' => 20,
+                'warning_latency_ms' => 1000,
+                'critical_latency_ms' => 3000,
+                'max_concurrency' => 5,
+            ],
+            'backup_create' => [
+                'enabled' => true,
+                'target_rps' => 1,
+                'warning_latency_ms' => 10000,
+                'critical_latency_ms' => 60000,
+                'max_concurrency' => 1,
+                'require_queue' => true,
+            ],
+        ],
+        'concurrency' => [
+            'enabled' => true,
+            'store' => getenv('THROUGHPUT_CONCURRENCY_STORE') ?: 'file',
+            'lock_path' => getenv('THROUGHPUT_CONCURRENCY_LOCK_PATH') ?: __DIR__ . '/../storage/cache/concurrency',
+            'token_ttl_seconds' => (int)(getenv('THROUGHPUT_CONCURRENCY_TOKEN_TTL') ?: 120),
+            'fail_closed' => true,
+        ],
+        'adaptive_throttle' => [
+            'enabled' => true,
+            'overload_p95_ratio' => 1.0,
+            'queue_depth_ratio' => 1.0,
+            'return_status' => 429,
+            'retry_after_seconds' => 30,
+        ],
+        'queue_pressure' => [
+            'enabled' => true,
+            'warning_depth' => 1000,
+            'critical_depth' => 5000,
+            'warning_oldest_job_seconds' => 300,
+            'critical_oldest_job_seconds' => 1800,
+        ],
+        'slo' => [
+            'enabled' => true,
+            'minimum_pass_percent' => 95,
+            'objectives' => [
+                'api_request' => [
+                    'p95_ms' => 750,
+                    'p99_ms' => 2000,
+                    'error_rate_percent' => 1,
+                ],
+                'database_export' => [
+                    'queue_drain_seconds' => 600,
+                    'sync_execution_allowed' => false,
+                ],
+            ],
+        ],
+        'degradation' => [
+            'enabled' => true,
+            'allow_cache_fallback' => true,
+            'allow_queue_deferral' => true,
+            'disable_non_critical_features' => true,
+            'protected_features' => ['login', 'csrf', 'audit', 'security_alerts', 'authorization', 'rate_limiting'],
+        ],
+        'release_gate' => [
+            'enabled' => true,
+            'block_on_critical_capacity' => true,
+            'block_on_failed_slo' => true,
+            'block_on_missing_profiles' => false,
+        ],
     ],
 
     'pentest' => [

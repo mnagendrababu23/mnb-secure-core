@@ -117,6 +117,24 @@ use Mnb\SecurityCore\Memory\TemporaryFileManager;
 use Mnb\SecurityCore\Memory\TempStorageSweeper;
 use Mnb\SecurityCore\Memory\MemoryLeakDetector;
 use Mnb\SecurityCore\Memory\WorkerMemorySupervisor;
+use Mnb\SecurityCore\Throughput\AdaptiveThrottle;
+use Mnb\SecurityCore\Throughput\BackpressureController;
+use Mnb\SecurityCore\Throughput\BottleneckDetector;
+use Mnb\SecurityCore\Throughput\CapacityRiskAnalyzer;
+use Mnb\SecurityCore\Throughput\ConcurrencyLimiter;
+use Mnb\SecurityCore\Throughput\DegradationPolicy;
+use Mnb\SecurityCore\Throughput\FeatureLoadShedder;
+use Mnb\SecurityCore\Throughput\LoadTestProfile;
+use Mnb\SecurityCore\Throughput\PerformanceReleaseGate;
+use Mnb\SecurityCore\Throughput\PerformanceSampleStore;
+use Mnb\SecurityCore\Throughput\PerformanceSlo;
+use Mnb\SecurityCore\Throughput\QueueBacklogPolicy;
+use Mnb\SecurityCore\Throughput\QueueCapacityPlanner;
+use Mnb\SecurityCore\Throughput\QueuePressureMonitor;
+use Mnb\SecurityCore\Throughput\SafeLoadSimulator;
+use Mnb\SecurityCore\Throughput\SlowOperationClassifier;
+use Mnb\SecurityCore\Throughput\SloEvaluator;
+use Mnb\SecurityCore\Throughput\ThroughputPolicy;
 use Mnb\SecurityCore\Logging\FileLogger;
 use Mnb\SecurityCore\Logging\SecurityAuditTrail;
 use Mnb\SecurityCore\Logging\NullSecurityAuditTrail;
@@ -581,6 +599,92 @@ class SecurityKernel
     public function workerMemorySupervisor(string $profile = 'queue_worker'): WorkerMemorySupervisor
     {
         return new WorkerMemorySupervisor($this->memoryPolicy()->profile($profile), $this->memoryLeakDetector());
+    }
+
+    public function throughputPolicy(): ThroughputPolicy
+    {
+        return ThroughputPolicy::fromConfig($this->config);
+    }
+
+    public function concurrencyLimiter(): ConcurrencyLimiter
+    {
+        return ConcurrencyLimiter::fromConfig($this->config, $this->throughputPolicy());
+    }
+
+    public function adaptiveThrottle(): AdaptiveThrottle
+    {
+        return AdaptiveThrottle::fromConfig($this->config, $this->throughputPolicy());
+    }
+
+    public function degradationPolicy(): DegradationPolicy
+    {
+        return DegradationPolicy::fromConfig($this->config);
+    }
+
+    public function backpressureController(): BackpressureController
+    {
+        return new BackpressureController($this->adaptiveThrottle(), $this->degradationPolicy());
+    }
+
+    public function queueBacklogPolicy(): QueueBacklogPolicy
+    {
+        return QueueBacklogPolicy::fromConfig($this->config);
+    }
+
+    public function queuePressureMonitor(): QueuePressureMonitor
+    {
+        return new QueuePressureMonitor($this->queueBacklogPolicy());
+    }
+
+    public function queueCapacityPlanner(): QueueCapacityPlanner
+    {
+        return new QueueCapacityPlanner();
+    }
+
+    public function performanceSampleStore(): PerformanceSampleStore
+    {
+        $throughput = is_array($this->config['throughput'] ?? null) ? $this->config['throughput'] : [];
+        return new PerformanceSampleStore((int)($throughput['sample_window_seconds'] ?? 60));
+    }
+
+    public function performanceSlo(): PerformanceSlo
+    {
+        return PerformanceSlo::fromConfig($this->config);
+    }
+
+    public function sloEvaluator(): SloEvaluator
+    {
+        return new SloEvaluator($this->performanceSlo());
+    }
+
+    public function featureLoadShedder(): FeatureLoadShedder
+    {
+        return new FeatureLoadShedder($this->degradationPolicy());
+    }
+
+    public function capacityRiskAnalyzer(): CapacityRiskAnalyzer
+    {
+        return new CapacityRiskAnalyzer(new BottleneckDetector());
+    }
+
+    public function slowOperationClassifier(): SlowOperationClassifier
+    {
+        return new SlowOperationClassifier();
+    }
+
+    public function safeLoadSimulator(): SafeLoadSimulator
+    {
+        return new SafeLoadSimulator($this->throughputPolicy(), $this->capacityRiskAnalyzer());
+    }
+
+    public function loadTestProfile(string $profile, float $targetRps, float $averageLatencyMs, int $durationSeconds = 60): LoadTestProfile
+    {
+        return new LoadTestProfile($profile, $targetRps, $averageLatencyMs, $durationSeconds);
+    }
+
+    public function performanceReleaseGate(): PerformanceReleaseGate
+    {
+        return PerformanceReleaseGate::fromConfig($this->config);
     }
 
     public function serverIdentityHider(): ServerIdentityHider

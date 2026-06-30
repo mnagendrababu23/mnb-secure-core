@@ -176,6 +176,28 @@ return array_replace_recursive($base, [
         ],
     ],
 
+    'throughput' => [
+        'enabled' => true,
+        'target_rps' => (float)($_ENV['THROUGHPUT_TARGET_RPS'] ?? 100),
+        'warning_latency_ms' => (int)($_ENV['THROUGHPUT_WARNING_LATENCY_MS'] ?? 500),
+        'critical_latency_ms' => (int)($_ENV['THROUGHPUT_CRITICAL_LATENCY_MS'] ?? 1500),
+        'max_concurrency' => (int)($_ENV['THROUGHPUT_MAX_CONCURRENCY'] ?? 50),
+        'concurrency' => [
+            'enabled' => true,
+            'store' => 'file',
+            'fail_closed' => true,
+        ],
+        'adaptive_throttle' => [
+            'enabled' => true,
+            'retry_after_seconds' => 30,
+        ],
+        'release_gate' => [
+            'enabled' => true,
+            'block_on_critical_capacity' => true,
+            'block_on_failed_slo' => true,
+        ],
+    ],
+
     'security_headers' => [
         'enabled' => true,
         'hsts' => [

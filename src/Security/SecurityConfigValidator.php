@@ -2288,6 +2288,7 @@ class SecurityConfigValidator
         if ($throughput === null) {
             return;
         }
+        $this->bool($throughput, 'enabled', 'throughput.enabled', required: false);
         $this->positiveNumber($throughput, 'target_rps', 'throughput.target_rps', required: false);
         foreach (['warning_latency_ms', 'critical_latency_ms', 'max_concurrency', 'queue_warning_depth', 'sample_window_seconds'] as $key) {
             $this->positiveInt($throughput, $key, 'throughput.' . $key, required: false);
@@ -2297,6 +2298,60 @@ class SecurityConfigValidator
         }
         $this->bool($throughput, 'emit_headers', 'throughput.emit_headers', required: false);
         $this->bool($throughput, 'block_critical_latency', 'throughput.block_critical_latency', required: false);
+
+        $profiles = is_array($throughput['profiles'] ?? null) ? $throughput['profiles'] : [];
+        foreach ($profiles as $name => $profile) {
+            $path = 'throughput.profiles.' . (string)$name;
+            if (!$this->safeName((string)$name)) {
+                $this->issue('medium', 'invalid_throughput_profile_name', $path, 'Throughput profile names should be safe identifiers.', 'safe profile name', $name);
+            }
+            if (!is_array($profile)) {
+                $this->issue('high', 'invalid_throughput_profile', $path, 'Throughput profile must be an array.', 'array', $profile);
+                continue;
+            }
+            $this->bool($profile, 'enabled', $path . '.enabled', required: false);
+            $this->bool($profile, 'require_queue', $path . '.require_queue', required: false);
+            $this->bool($profile, 'degrade_on_overload', $path . '.degrade_on_overload', required: false);
+            $this->positiveNumber($profile, 'target_rps', $path . '.target_rps', required: false);
+            foreach (['warning_latency_ms', 'critical_latency_ms', 'max_concurrency', 'require_queue_above_ms'] as $key) {
+                if (isset($profile[$key])) { $this->positiveInt($profile, $key, $path . '.' . $key, required: false); }
+            }
+            if (isset($profile['warning_latency_ms'], $profile['critical_latency_ms']) && (int)$profile['warning_latency_ms'] > (int)$profile['critical_latency_ms']) {
+                $this->issue('high', 'invalid_throughput_profile_latency_order', $path, 'Profile warning latency should be lower than or equal to critical latency.', 'warning <= critical', ['warning_latency_ms' => $profile['warning_latency_ms'], 'critical_latency_ms' => $profile['critical_latency_ms']]);
+            }
+        }
+
+        $concurrency = is_array($throughput['concurrency'] ?? null) ? $throughput['concurrency'] : [];
+        if ($concurrency !== []) {
+            $this->bool($concurrency, 'enabled', 'throughput.concurrency.enabled', required: false);
+            $this->bool($concurrency, 'fail_closed', 'throughput.concurrency.fail_closed', required: false);
+            if (isset($concurrency['store']) && (!is_string($concurrency['store']) || !in_array($concurrency['store'], ['file', 'memory'], true))) {
+                $this->issue('medium', 'invalid_concurrency_store', 'throughput.concurrency.store', 'Concurrency store should be file or memory.', 'file|memory', $concurrency['store']);
+            }
+            if (isset($concurrency['token_ttl_seconds'])) { $this->positiveInt($concurrency, 'token_ttl_seconds', 'throughput.concurrency.token_ttl_seconds', required: false); }
+        }
+
+        $adaptive = is_array($throughput['adaptive_throttle'] ?? null) ? $throughput['adaptive_throttle'] : [];
+        if ($adaptive !== []) {
+            $this->bool($adaptive, 'enabled', 'throughput.adaptive_throttle.enabled', required: false);
+            if (isset($adaptive['retry_after_seconds'])) { $this->positiveInt($adaptive, 'retry_after_seconds', 'throughput.adaptive_throttle.retry_after_seconds', required: false); }
+        }
+        $queue = is_array($throughput['queue_pressure'] ?? null) ? $throughput['queue_pressure'] : [];
+        foreach (['warning_depth', 'critical_depth', 'warning_oldest_job_seconds', 'critical_oldest_job_seconds'] as $key) {
+            if (isset($queue[$key])) { $this->positiveInt($queue, $key, 'throughput.queue_pressure.' . $key, required: false); }
+        }
+        if (isset($queue['warning_depth'], $queue['critical_depth']) && (int)$queue['warning_depth'] > (int)$queue['critical_depth']) {
+            $this->issue('high', 'invalid_queue_pressure_depth_order', 'throughput.queue_pressure', 'Queue warning depth should be lower than or equal to critical depth.', 'warning <= critical', ['warning_depth' => $queue['warning_depth'], 'critical_depth' => $queue['critical_depth']]);
+        }
+        $degradation = is_array($throughput['degradation'] ?? null) ? $throughput['degradation'] : [];
+        foreach (['enabled', 'allow_cache_fallback', 'allow_queue_deferral', 'disable_non_critical_features'] as $key) {
+            if (isset($degradation[$key])) { $this->bool($degradation, $key, 'throughput.degradation.' . $key, required: false); }
+        }
+        if (isset($degradation['protected_features'])) { $this->stringList($degradation['protected_features'], 'throughput.degradation.protected_features', false); }
+        $releaseGate = is_array($throughput['release_gate'] ?? null) ? $throughput['release_gate'] : [];
+        foreach (['enabled', 'block_on_critical_capacity', 'block_on_failed_slo', 'block_on_missing_profiles'] as $key) {
+            if (isset($releaseGate[$key])) { $this->bool($releaseGate, $key, 'throughput.release_gate.' . $key, required: false); }
+        }
     }
 
     private function validatePentest(): void

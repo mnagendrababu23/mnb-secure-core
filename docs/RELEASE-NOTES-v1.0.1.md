@@ -324,3 +324,33 @@ php bin/mnb-secure errors:check-production
 Adds policy-driven memory/resource protection for large requests, upload scans, database/audit exports, and long-running workers.
 
 New capabilities include operation memory profiles, allocation decisions, safe stream reader/writer guards, bounded buffers, payload size/depth guards, output buffer limits, resource scopes, temporary file budgets, temp cleanup planning, memory leak detection, worker restart recommendations, CLI diagnostics, and vulnerability matrix coverage for `memory_exhaustion`, `large_payload_dos`, `deep_json_dos`, `unbounded_buffering`, `unsafe_bulk_export`, `resource_leak`, `temporary_file_exhaustion`, `worker_memory_leak`, `unsafe_stream_read`, and `unsafe_stream_write`.
+
+## Upgrade 32 — Throughput Governance and Performance Capacity Engine
+
+MNB Secure Core v1.0.1 adds the Throughput Governance and Performance Capacity Engine, strengthening performance safety with operation-specific throughput profiles, latency budgets, concurrency limiting, adaptive throttling, queue pressure monitoring, SLO evaluation, degradation policy, safe load simulation, capacity risk reporting, performance release gates, audit events, CLI diagnostics, and vulnerability matrix coverage for performance denial-of-service and capacity exhaustion risks.
+
+### Highlights
+
+- Operation-specific profiles for API requests, login, file scans, database exports, webhooks, and backups.
+- Latency budgets with warning, critical, queue, degrade, throttle, and reject decisions.
+- Concurrency limiter with in-memory and file-backed stores.
+- Queue pressure reporting with drain-time estimation and worker recommendations.
+- Performance SLO evaluation for p95/p99 latency, error rate, queue drain, and sync execution rules.
+- Degradation policy to protect login, CSRF, audit, security alerts, authorization, and rate limiting while deferring non-critical features.
+- Capacity risk analyzer and safe load simulator for local capacity planning.
+- Performance release gate to block failed SLO or critical capacity risk releases.
+
+### New CLI commands
+
+```bash
+php bin/mnb-secure throughput:policy
+php bin/mnb-secure throughput:profile api_request
+php bin/mnb-secure throughput:budget api_request 1200 1
+php bin/mnb-secure throughput:concurrency api_request
+php bin/mnb-secure throughput:throttle api_request 1800 55
+php bin/mnb-secure throughput:queue 1200 10 250
+php bin/mnb-secure throughput:slo
+php bin/mnb-secure throughput:capacity-risk
+php bin/mnb-secure throughput:simulate api_request 100 750
+php bin/mnb-secure performance:release-gate
+```

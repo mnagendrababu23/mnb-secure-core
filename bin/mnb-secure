@@ -35,6 +35,7 @@ use Mnb\SecurityCore\Memory\PayloadSizeGuard;
 use Mnb\SecurityCore\Memory\DecodedPayloadGuard;
 use Mnb\SecurityCore\Throughput\ThroughputConfig;
 use Mnb\SecurityCore\Throughput\ThroughputPlanner;
+use Mnb\SecurityCore\Throughput\LoadTestProfile;
 use Mnb\SecurityCore\Quickstart\FirstTokenBootstrapper;
 use Mnb\SecurityCore\Core\SecurityKernel;
 
@@ -463,6 +464,88 @@ switch ($command) {
         $averageJobMs = (float)($argv[6] ?? 1000);
         echo json_encode(ThroughputPlanner::plan($targetRps, $averageLatencyMs, $maxConcurrency, $queueDepth, $averageJobMs), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
+    case 'throughput:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->throughputPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:profile':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'api_request';
+        echo json_encode($kernel->throughputPolicy()->profile($profile)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:budget':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'api_request';
+        $durationMs = (float)($argv[3] ?? 1200);
+        $queued = (bool)((int)($argv[4] ?? 0));
+        echo json_encode($kernel->throughputPolicy()->evaluate($profile, $durationMs, $queued)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:concurrency':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'api_request';
+        $result = $kernel->concurrencyLimiter()->tryAcquire($profile);
+        if (($result['token'] ?? null) instanceof \Mnb\SecurityCore\Throughput\ConcurrencyToken) {
+            $result['token'] = $result['token']->toArray();
+        }
+        echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($result['acquired']) ? 0 : 1);
+    case 'throughput:throttle':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'api_request';
+        $p95 = (float)($argv[3] ?? 0);
+        $active = (int)($argv[4] ?? 0);
+        echo json_encode($kernel->adaptiveThrottle()->decide($profile, ['p95_ms' => $p95, 'active_concurrency' => $active])->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:queue':
+        $kernel = new SecurityKernel($config);
+        $depth = (int)($argv[2] ?? 1200);
+        $workers = (int)($argv[3] ?? 10);
+        $avgJobMs = (float)($argv[4] ?? 250);
+        $oldest = (int)($argv[5] ?? 0);
+        echo json_encode($kernel->queuePressureMonitor()->report($depth, $workers, $avgJobMs, $oldest), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:slo':
+        $kernel = new SecurityKernel($config);
+        $metrics = [
+            'api_request' => ['p95_ms' => (float)($argv[2] ?? 500), 'p99_ms' => (float)($argv[3] ?? 1200), 'error_rate_percent' => (float)($argv[4] ?? 0.2)],
+            'database_export' => ['queue_drain_seconds' => (float)($argv[5] ?? 300), 'sync_execution_allowed' => false],
+        ];
+        echo json_encode($kernel->sloEvaluator()->evaluate($metrics)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:capacity-risk':
+        $kernel = new SecurityKernel($config);
+        $metrics = [
+            'p95_ms' => (float)($argv[2] ?? 700),
+            'critical_latency_ms' => (int)($config['throughput']['critical_latency_ms'] ?? 2000),
+            'active_concurrency' => (int)($argv[3] ?? 10),
+            'max_concurrency' => (int)($config['throughput']['max_concurrency'] ?? 25),
+            'queue_depth' => (int)($argv[4] ?? 0),
+            'queue_warning_depth' => (int)($config['throughput']['queue_warning_depth'] ?? 1000),
+        ];
+        echo json_encode($kernel->capacityRiskAnalyzer()->analyze($metrics)->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'throughput:simulate':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'api_request';
+        $targetRps = (float)($argv[3] ?? 100);
+        $avgLatency = (float)($argv[4] ?? 750);
+        echo json_encode($kernel->safeLoadSimulator()->simulate(new LoadTestProfile($profile, $targetRps, $avgLatency))->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
+    case 'performance:release-gate':
+        $kernel = new SecurityKernel($config);
+        $slo = $kernel->sloEvaluator()->evaluate([
+            'api_request' => ['p95_ms' => (float)($argv[2] ?? 500), 'p99_ms' => (float)($argv[3] ?? 1200), 'error_rate_percent' => 0.2],
+            'database_export' => ['queue_drain_seconds' => 300, 'sync_execution_allowed' => false],
+        ]);
+        $capacity = $kernel->capacityRiskAnalyzer()->analyze([
+            'p95_ms' => (float)($argv[2] ?? 500),
+            'critical_latency_ms' => (int)($config['throughput']['critical_latency_ms'] ?? 2000),
+            'active_concurrency' => 5,
+            'max_concurrency' => (int)($config['throughput']['max_concurrency'] ?? 25),
+        ]);
+        $report = $kernel->performanceReleaseGate()->evaluate($slo, $capacity);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
     case 'errors:policy':
         $kernel = new SecurityKernel($config);
         echo json_encode($kernel->errorPolicy()->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;

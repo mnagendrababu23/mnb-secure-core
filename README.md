@@ -1707,3 +1707,45 @@ php bin/mnb-secure memory:worker-check
 php bin/mnb-secure resources:check
 php bin/mnb-secure resources:cleanup-plan
 ```
+
+## Upgrade 32: Throughput Governance and Performance Capacity Engine
+
+MNB Secure Core v1.0.1 includes a throughput governance layer for capacity-safe production behavior.
+
+Key helpers are available from `SecurityKernel`:
+
+```php
+$kernel = new \Mnb\SecurityCore\Core\SecurityKernel($config);
+
+$policy = $kernel->throughputPolicy();
+$decision = $policy->evaluate('api_request', 750);
+
+$token = $kernel->concurrencyLimiter()->acquire('database_export');
+try {
+    // run bounded work
+} finally {
+    $token->release();
+}
+
+$queue = $kernel->queuePressureMonitor()->report(1200, 10, 250);
+$slo = $kernel->sloEvaluator()->evaluate($metricsByProfile);
+$risk = $kernel->capacityRiskAnalyzer()->analyze($capacityMetrics);
+$gate = $kernel->performanceReleaseGate()->evaluate($slo, $risk);
+```
+
+New CLI diagnostics:
+
+```bash
+php bin/mnb-secure throughput:policy
+php bin/mnb-secure throughput:profile api_request
+php bin/mnb-secure throughput:budget api_request 1200 1
+php bin/mnb-secure throughput:concurrency api_request
+php bin/mnb-secure throughput:throttle api_request 1800 55
+php bin/mnb-secure throughput:queue 1200 10 250
+php bin/mnb-secure throughput:slo
+php bin/mnb-secure throughput:capacity-risk
+php bin/mnb-secure throughput:simulate api_request 100 750
+php bin/mnb-secure performance:release-gate
+```
+
+The vulnerability matrix now maps performance/capacity risks including `performance_dos`, `capacity_exhaustion`, `concurrency_exhaustion`, `queue_overload`, `slowloris_capacity_abuse`, `worker_saturation`, `database_export_overload`, `expensive_operation_abuse`, `missing_capacity_gate`, and `failed_slo_release`.

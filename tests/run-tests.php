@@ -214,6 +214,20 @@ use Mnb\SecurityCore\Throughput\ThroughputConfig;
 use Mnb\SecurityCore\Throughput\ThroughputMeter;
 use Mnb\SecurityCore\Throughput\ThroughputMonitor;
 use Mnb\SecurityCore\Throughput\ThroughputPlanner;
+use Mnb\SecurityCore\Throughput\ThroughputPolicy;
+use Mnb\SecurityCore\Throughput\LatencyBudget;
+use Mnb\SecurityCore\Throughput\ConcurrencyLimiter;
+use Mnb\SecurityCore\Throughput\InMemoryConcurrencyStore;
+use Mnb\SecurityCore\Throughput\AdaptiveThrottle;
+use Mnb\SecurityCore\Throughput\QueueBacklogPolicy;
+use Mnb\SecurityCore\Throughput\QueuePressureMonitor;
+use Mnb\SecurityCore\Throughput\PerformanceSlo;
+use Mnb\SecurityCore\Throughput\SloEvaluator;
+use Mnb\SecurityCore\Throughput\DegradationPolicy;
+use Mnb\SecurityCore\Throughput\CapacityRiskAnalyzer;
+use Mnb\SecurityCore\Throughput\LoadTestProfile;
+use Mnb\SecurityCore\Throughput\SafeLoadSimulator;
+use Mnb\SecurityCore\Throughput\PerformanceReleaseGate;
 use Mnb\SecurityCore\Http\Middleware\ThroughputMiddleware;
 use Mnb\SecurityCore\Suggestions\AutoSuggestionEngine;
 use Mnb\SecurityCore\Validation\InputSanitizer;
@@ -1682,6 +1696,52 @@ ok(count($pentestPayloadsThroughput) >= 3, 'pentest payload library includes thr
 $verificationMatrix = (new VerificationMatrix())->all();
 ok(isset($verificationMatrix['Throughput and Performance Capacity Management']), 'verification matrix maps throughput management concept');
 
+$throughputGovernanceConfig = require __DIR__ . '/../config/security.php';
+$throughputGovernanceConfig['throughput']['concurrency']['store'] = 'memory';
+$throughputGovernanceConfig['throughput']['profiles']['tiny_test'] = ['max_concurrency' => 1, 'warning_latency_ms' => 10, 'critical_latency_ms' => 20];
+$throughputPolicy = ThroughputPolicy::fromConfig($throughputGovernanceConfig);
+ok($throughputPolicy->profile('api_request')->maxConcurrency() === 50, 'throughput policy resolves operation profile');
+ok($throughputPolicy->evaluate('api_request', 100)->allowed(), 'throughput budget allows fast operation');
+ok($throughputPolicy->evaluate('api_request', 800)->status() === 'warning', 'latency budget returns warning for slow operation');
+ok($throughputPolicy->evaluate('database_export', 12000)->action() === 'queue', 'throughput budget requires queue for export profile');
+
+$limiter = new ConcurrencyLimiter($throughputPolicy, new InMemoryConcurrencyStore(), 30, true);
+$token = $limiter->acquire('tiny_test');
+$secondAcquire = $limiter->tryAcquire('tiny_test');
+ok($secondAcquire['acquired'] === false, 'concurrency limiter blocks over-limit acquire');
+$token->release();
+ok($limiter->activeCount('tiny_test') === 0, 'concurrency token release decreases active count');
+
+$throttle = AdaptiveThrottle::fromConfig($throughputGovernanceConfig, $throughputPolicy);
+ok(in_array($throttle->decide('api_request', ['p95_ms' => 1800])->decision(), ['throttle','degrade','queue'], true), 'adaptive throttle reacts to critical p95 latency');
+$queueMonitor = new QueuePressureMonitor(QueueBacklogPolicy::fromConfig($throughputGovernanceConfig));
+$queueReport = $queueMonitor->report(1200, 10, 250, 120);
+ok(in_array($queueReport['status'], ['warning','critical'], true) && $queueReport['estimated_drain_seconds'] > 0, 'queue pressure monitor reports backlog and drain time');
+
+$sloReport = (new SloEvaluator(PerformanceSlo::fromConfig($throughputGovernanceConfig)))->evaluate([
+    'api_request' => ['p95_ms' => 500, 'p99_ms' => 1200, 'error_rate_percent' => 0.2],
+    'database_export' => ['queue_drain_seconds' => 300, 'sync_execution_allowed' => false],
+]);
+ok($sloReport->passed(), 'SLO evaluator passes healthy metrics');
+$sloFail = (new SloEvaluator(PerformanceSlo::fromConfig($throughputGovernanceConfig)))->evaluate(['api_request' => ['p95_ms' => 900, 'p99_ms' => 2500, 'error_rate_percent' => 2]]);
+ok(!$sloFail->passed(), 'SLO evaluator fails unhealthy p95/p99/error rate');
+
+$degradation = DegradationPolicy::fromConfig($throughputGovernanceConfig);
+ok($degradation->decide('login', 'critical')->decision() === 'protected', 'degradation policy protects critical features');
+ok($degradation->decide('reports', 'critical')->decision() === 'degrade', 'degradation policy degrades non-critical features');
+
+$capacityReport = (new CapacityRiskAnalyzer())->analyze(['p95_ms' => 2200, 'critical_latency_ms' => 1500, 'active_concurrency' => 50, 'max_concurrency' => 50, 'queue_depth' => 1200, 'queue_warning_depth' => 1000]);
+ok($capacityReport->status() === 'critical' && in_array('critical_latency', $capacityReport->bottlenecks(), true), 'capacity risk analyzer detects latency/concurrency bottlenecks');
+$simulation = (new SafeLoadSimulator($throughputPolicy))->simulate(new LoadTestProfile('api_request', 100, 750))->toArray();
+ok(isset($simulation['capacity_plan']['required_concurrency']), 'safe load simulator returns capacity plan');
+$releaseGate = PerformanceReleaseGate::fromConfig($throughputGovernanceConfig)->evaluate($sloFail, $capacityReport);
+ok($releaseGate['passed'] === false && in_array('failed_slo', $releaseGate['blockers'], true), 'performance release gate blocks failed SLO');
+
+$perfVulnerability = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix($throughputGovernanceConfig))->find('performance_dos');
+$concurrencyVulnerability = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix($throughputGovernanceConfig))->find('concurrency_exhaustion');
+ok($perfVulnerability !== null && $perfVulnerability->status() === 'protected' && $concurrencyVulnerability !== null, 'vulnerability matrix includes performance DoS and concurrency exhaustion coverage');
+ok(count($pentestPayloadsThroughput) >= 6, 'pentest payload library includes expanded throughput capacity scenarios');
+ok(in_array('PT-PERF-001', array_column((new PentestChecklist())->toArray(), 'id'), true), 'pentest checklist includes performance capacity cases');
 
 
 $passwordPolicy = new PasswordPolicy(['min_length' => 12, 'block_common_passwords' => true, 'block_user_context' => true]);

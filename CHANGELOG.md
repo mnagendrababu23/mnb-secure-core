@@ -325,3 +325,35 @@ Changed:
 ## v1.0.1 — Upgrade 31: Memory Governance and Resource Safety Engine
 
 MNB Secure Core v1.0.1 adds the Memory Governance and Resource Safety Engine, strengthening memory and resource protection with operation-specific memory profiles, streaming guards, bounded buffers, payload depth and size checks, output buffer limits, scoped resource cleanup, temporary file budgets, worker memory leak detection, CLI diagnostics, and vulnerability matrix coverage for memory exhaustion and resource leak risks.
+
+## v1.0.1 — Upgrade 32: Throughput Governance and Performance Capacity Engine
+
+MNB Secure Core v1.0.1 adds the Throughput Governance and Performance Capacity Engine, strengthening performance safety with operation-specific throughput profiles, latency budgets, concurrency limiting, adaptive throttling, queue pressure monitoring, SLO evaluation, degradation policy, safe load simulation, capacity risk reporting, performance release gates, audit events, CLI diagnostics, and vulnerability matrix coverage for performance denial-of-service and capacity exhaustion risks.
+
+Added:
+- Operation throughput profiles, throughput budgets, and latency budget decisions.
+- Concurrency limiter with memory/file stores and auto-releasing tokens.
+- Adaptive throttle and backpressure controller for overload decisions.
+- Queue backlog policy, pressure monitor, and capacity planner.
+- Rolling window metrics, percentile calculator, performance SLOs, and SLO reports.
+- Degradation policy and feature load shedding for non-critical work.
+- Capacity risk analyzer, bottleneck detector, remediation advisor, safe load simulator, and performance release gate.
+- Demo `36-throughput-governance-performance-capacity-engine.php`.
+
+Added CLI commands:
+- `php bin/mnb-secure throughput:policy`
+- `php bin/mnb-secure throughput:profile <profile>`
+- `php bin/mnb-secure throughput:budget <profile> <duration-ms> [queued]`
+- `php bin/mnb-secure throughput:concurrency <profile>`
+- `php bin/mnb-secure throughput:throttle <profile> [p95-ms] [active-concurrency]`
+- `php bin/mnb-secure throughput:queue <depth> <workers> <avg-job-ms> [oldest-job-seconds]`
+- `php bin/mnb-secure throughput:slo`
+- `php bin/mnb-secure throughput:capacity-risk`
+- `php bin/mnb-secure throughput:simulate <profile> <target-rps> <avg-latency-ms>`
+- `php bin/mnb-secure performance:release-gate`
+
+Changed:
+- Expanded `throughput` config with profiles, concurrency, adaptive throttling, queue pressure, SLO, degradation, and release-gate sections.
+- Added `SecurityKernel` helpers for throughput governance and performance capacity management.
+- Expanded pentest payloads/checklist/matrix with performance capacity verification cases.
+- Expanded vulnerability matrix coverage for `performance_dos`, `capacity_exhaustion`, `concurrency_exhaustion`, `queue_overload`, `worker_saturation`, `database_export_overload`, and failed SLO release risks.
