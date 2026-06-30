@@ -1265,6 +1265,7 @@ return [
 
 
     'memory' => [
+        'enabled' => true,
         'max_bytes' => 0, // 0 means use PHP memory_limit / unlimited when PHP is unlimited
         'warning_ratio' => (float)(getenv('MEMORY_WARNING_RATIO') ?: 0.75),
         'critical_ratio' => (float)(getenv('MEMORY_CRITICAL_RATIO') ?: 0.90),
@@ -1273,6 +1274,36 @@ return [
         'max_chunk_size' => (int)(getenv('MEMORY_MAX_CHUNK_SIZE') ?: 5000),
         'log_snapshots' => false,
         'guard_requests' => true,
+        'profiles' => [
+            'request' => ['enabled' => true, 'max_bytes' => getenv('MEMORY_REQUEST_MAX_BYTES') ?: '64M', 'critical_ratio' => 0.90],
+            'upload_scan' => ['enabled' => true, 'max_bytes' => getenv('MEMORY_UPLOAD_SCAN_MAX_BYTES') ?: '128M', 'require_streaming' => true, 'max_read_bytes' => 10485760],
+            'database_export' => ['enabled' => true, 'max_bytes' => getenv('MEMORY_DB_EXPORT_MAX_BYTES') ?: '128M', 'require_streaming' => true, 'chunk_size' => 1000, 'max_rows' => 100000],
+            'audit_export' => ['enabled' => true, 'max_bytes' => getenv('MEMORY_AUDIT_EXPORT_MAX_BYTES') ?: '96M', 'require_streaming' => true, 'chunk_size' => 1000],
+            'queue_worker' => ['enabled' => true, 'max_bytes' => getenv('MEMORY_WORKER_MAX_BYTES') ?: '256M', 'restart_after_growth_mb' => 64, 'restart_after_jobs' => 500],
+        ],
+        'payloads' => [
+            'max_decoded_depth' => 32,
+            'max_array_items' => 10000,
+            'max_string_bytes' => 1048576,
+            'block_deep_json' => true,
+        ],
+        'streams' => [
+            'max_read_bytes' => 10485760,
+            'max_write_bytes' => 52428800,
+            'buffer_size' => 8192,
+            'fail_closed' => true,
+        ],
+        'temporary_files' => [
+            'max_files' => 100,
+            'max_total_bytes' => 104857600,
+            'max_age_seconds' => 3600,
+            'cleanup_on_shutdown' => true,
+        ],
+        'output_buffers' => [
+            'enabled' => true,
+            'max_buffer_bytes' => 1048576,
+            'fail_closed' => true,
+        ],
     ],
     'database' => [
         'driver' => getenv('DB_DRIVER') ?: 'mysql',

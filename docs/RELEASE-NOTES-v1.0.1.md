@@ -318,3 +318,9 @@ php bin/mnb-secure errors:simulate security
 php bin/mnb-secure errors:fingerprint
 php bin/mnb-secure errors:check-production
 ```
+
+### Upgrade 31 — Memory Governance and Resource Safety Engine
+
+Adds policy-driven memory/resource protection for large requests, upload scans, database/audit exports, and long-running workers.
+
+New capabilities include operation memory profiles, allocation decisions, safe stream reader/writer guards, bounded buffers, payload size/depth guards, output buffer limits, resource scopes, temporary file budgets, temp cleanup planning, memory leak detection, worker restart recommendations, CLI diagnostics, and vulnerability matrix coverage for `memory_exhaustion`, `large_payload_dos`, `deep_json_dos`, `unbounded_buffering`, `unsafe_bulk_export`, `resource_leak`, `temporary_file_exhaustion`, `worker_memory_leak`, `unsafe_stream_read`, and `unsafe_stream_write`.

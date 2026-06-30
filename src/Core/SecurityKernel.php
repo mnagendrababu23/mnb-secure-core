@@ -103,6 +103,20 @@ use Mnb\SecurityCore\Http\Middleware\TrustBoundaryMiddleware;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
+use Mnb\SecurityCore\Memory\MemoryPolicy;
+use Mnb\SecurityCore\Memory\StreamGuard;
+use Mnb\SecurityCore\Memory\SafeStreamReader;
+use Mnb\SecurityCore\Memory\SafeStreamWriter;
+use Mnb\SecurityCore\Memory\PayloadSizeGuard;
+use Mnb\SecurityCore\Memory\DecodedPayloadGuard;
+use Mnb\SecurityCore\Memory\JsonDepthGuard;
+use Mnb\SecurityCore\Memory\ArrayDepthGuard;
+use Mnb\SecurityCore\Memory\OutputBufferGuard;
+use Mnb\SecurityCore\Memory\ResourceScopeManager;
+use Mnb\SecurityCore\Memory\TemporaryFileManager;
+use Mnb\SecurityCore\Memory\TempStorageSweeper;
+use Mnb\SecurityCore\Memory\MemoryLeakDetector;
+use Mnb\SecurityCore\Memory\WorkerMemorySupervisor;
 use Mnb\SecurityCore\Logging\FileLogger;
 use Mnb\SecurityCore\Logging\SecurityAuditTrail;
 use Mnb\SecurityCore\Logging\NullSecurityAuditTrail;
@@ -486,10 +500,87 @@ class SecurityKernel
         return new HeuristicMalwareScanner((int)($config['heuristic_read_bytes'] ?? 2097152));
     }
 
-    public function memoryGuard(): MemoryGuard
+    public function memoryPolicy(): MemoryPolicy
+    {
+        return MemoryPolicy::fromConfig($this->config);
+    }
+
+    public function memoryGuard(?string $profile = null): MemoryGuard
     {
         $logger = new FileLogger($this->config['paths']['logs'] . '/memory.log');
+        if ($profile !== null) {
+            $profileBudget = $this->memoryPolicy()->profile($profile)->budget();
+            $config = new MemoryConfig($profileBudget->maxBytes(), $profileBudget->warningRatio(), $profileBudget->criticalRatio());
+            return new MemoryGuard($config, $logger);
+        }
         return new MemoryGuard(MemoryConfig::fromArray($this->config['memory'] ?? []), $logger);
+    }
+
+    public function streamGuard(): StreamGuard
+    {
+        return StreamGuard::fromConfig($this->config);
+    }
+
+    public function safeStreamReader(): SafeStreamReader
+    {
+        return new SafeStreamReader($this->streamGuard());
+    }
+
+    public function safeStreamWriter(): SafeStreamWriter
+    {
+        return new SafeStreamWriter($this->streamGuard());
+    }
+
+    public function payloadSizeGuard(): PayloadSizeGuard
+    {
+        return PayloadSizeGuard::fromConfig($this->config);
+    }
+
+    public function decodedPayloadGuard(): DecodedPayloadGuard
+    {
+        return DecodedPayloadGuard::fromConfig($this->config);
+    }
+
+    public function jsonDepthGuard(): JsonDepthGuard
+    {
+        return JsonDepthGuard::fromConfig($this->config);
+    }
+
+    public function arrayDepthGuard(): ArrayDepthGuard
+    {
+        $memory = is_array($this->config['memory'] ?? null) ? $this->config['memory'] : [];
+        $payloads = is_array($memory['payloads'] ?? null) ? $memory['payloads'] : [];
+        return new ArrayDepthGuard((int)($payloads['max_decoded_depth'] ?? 32));
+    }
+
+    public function outputBufferGuard(): OutputBufferGuard
+    {
+        return OutputBufferGuard::fromConfig($this->config);
+    }
+
+    public function resourceScopeManager(): ResourceScopeManager
+    {
+        return new ResourceScopeManager();
+    }
+
+    public function temporaryFileManager(): TemporaryFileManager
+    {
+        return TemporaryFileManager::fromConfig($this->config);
+    }
+
+    public function tempStorageSweeper(): TempStorageSweeper
+    {
+        return new TempStorageSweeper($this->temporaryFileManager());
+    }
+
+    public function memoryLeakDetector(): MemoryLeakDetector
+    {
+        return new MemoryLeakDetector();
+    }
+
+    public function workerMemorySupervisor(string $profile = 'queue_worker'): WorkerMemorySupervisor
+    {
+        return new WorkerMemorySupervisor($this->memoryPolicy()->profile($profile), $this->memoryLeakDetector());
     }
 
     public function serverIdentityHider(): ServerIdentityHider

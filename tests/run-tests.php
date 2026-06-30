@@ -194,6 +194,21 @@ use Mnb\SecurityCore\Memory\MemoryGuard;
 use Mnb\SecurityCore\Memory\MemoryMonitor;
 use Mnb\SecurityCore\Memory\ChunkProcessor;
 use Mnb\SecurityCore\Memory\ResourceTracker;
+use Mnb\SecurityCore\Memory\MemoryPolicy;
+use Mnb\SecurityCore\Memory\StreamGuard;
+use Mnb\SecurityCore\Memory\SafeStreamReader;
+use Mnb\SecurityCore\Memory\SafeStreamWriter;
+use Mnb\SecurityCore\Memory\BoundedBuffer;
+use Mnb\SecurityCore\Memory\PayloadSizeGuard;
+use Mnb\SecurityCore\Memory\DecodedPayloadGuard;
+use Mnb\SecurityCore\Memory\JsonDepthGuard;
+use Mnb\SecurityCore\Memory\ArrayDepthGuard;
+use Mnb\SecurityCore\Memory\OutputBufferGuard;
+use Mnb\SecurityCore\Memory\ResourceScopeManager;
+use Mnb\SecurityCore\Memory\TemporaryFileManager;
+use Mnb\SecurityCore\Memory\TempStorageSweeper;
+use Mnb\SecurityCore\Memory\MemoryLeakDetector;
+use Mnb\SecurityCore\Memory\WorkerMemorySupervisor;
 use Mnb\SecurityCore\Http\Middleware\MemoryLimitMiddleware;
 use Mnb\SecurityCore\Throughput\ThroughputConfig;
 use Mnb\SecurityCore\Throughput\ThroughputMeter;
@@ -1529,6 +1544,112 @@ ok(count($memoryMonitor->report()) === 2 && $memoryMonitor->highestPeakBytes() >
 $memoryPipeline = new MiddlewarePipeline([new MemoryLimitMiddleware($memoryGuard, 'test-request')]);
 $memoryResponse = $memoryPipeline->handle(new Request('GET', '/memory'), fn() => Response::json(['status' => true]));
 ok($memoryResponse->status() === 200 && isset($memoryResponse->headers()['X-Memory-Peak-MB']), 'memory middleware adds usage headers to guarded response');
+
+$memoryPolicyConfig = array_replace_recursive($defaultConfig, [
+    'memory' => [
+        'enabled' => true,
+        'max_bytes' => '64M',
+        'profiles' => [
+            'request' => ['max_bytes' => '64M', 'critical_ratio' => 0.90],
+            'database_export' => ['max_bytes' => '128M', 'require_streaming' => true, 'chunk_size' => 1000, 'max_rows' => 100000],
+            'queue_worker' => ['max_bytes' => '256M', 'restart_after_growth_mb' => 1, 'restart_after_jobs' => 3],
+        ],
+        'payloads' => ['max_decoded_depth' => 4, 'max_array_items' => 20, 'max_string_bytes' => 32],
+        'streams' => ['max_read_bytes' => 4096, 'max_write_bytes' => 4096, 'buffer_size' => 512, 'fail_closed' => true],
+        'temporary_files' => ['max_files' => 5, 'max_total_bytes' => 4096, 'max_age_seconds' => 1, 'cleanup_on_shutdown' => true],
+        'output_buffers' => ['enabled' => true, 'max_buffer_bytes' => 64, 'fail_closed' => true],
+    ],
+]);
+$memoryPolicy = MemoryPolicy::fromConfig($memoryPolicyConfig);
+ok($memoryPolicy->profile('database_export')->requireStreaming() && $memoryPolicy->profile('database_export')->chunkSize() === 1000, 'memory policy resolves operation profiles and streaming requirements');
+ok($memoryPolicy->decideAllocation('request', 1024, 1024 * 1024)->allowed() && $memoryPolicy->decideAllocation('request', 100 * 1024 * 1024, 60 * 1024 * 1024)->blocked(), 'memory policy allows safe allocation and blocks critical budget estimate');
+
+$streamGuard = StreamGuard::fromConfig($memoryPolicyConfig);
+ok($streamGuard->plan(2048, 'read')['passed'] && !$streamGuard->plan(8192, 'read')['passed'], 'stream guard plans bounded reads');
+$streamSource = $base . '/memory/stream-source.txt';
+file_put_contents($streamSource, str_repeat('A', 2048));
+$readTotal = 0;
+foreach ((new SafeStreamReader($streamGuard))->chunks($streamSource, 4096, 512) as $chunk) { $readTotal += strlen($chunk); }
+ok($readTotal === 2048, 'safe stream reader reads file in bounded chunks');
+$streamTarget = $base . '/memory/stream-target.txt';
+$writerReport = (new SafeStreamWriter($streamGuard))->writeChunks($streamTarget, ['abc', 'def']);
+ok($writerReport['bytes_written'] === 6 && file_get_contents($streamTarget) === 'abcdef', 'safe stream writer writes bounded chunks');
+$writeBlocked = false;
+try { (new SafeStreamWriter($streamGuard))->writeChunks($base . '/memory/stream-too-large.txt', [str_repeat('x', 8192)]); } catch (RuntimeException $e) { $writeBlocked = true; }
+ok($writeBlocked, 'safe stream writer blocks oversized output');
+
+$bounded = new BoundedBuffer(2);
+$bounded->push('a'); $bounded->push('b');
+$bufferBlocked = false;
+try { $bounded->push('c'); } catch (RuntimeException $e) { $bufferBlocked = true; }
+ok($bufferBlocked && $bounded->flush() === ['a', 'b'] && $bounded->count() === 0, 'bounded buffer enforces max items and flushes');
+$flushedBatches = [];
+$autoBuffer = new BoundedBuffer(2, function (array $items) use (&$flushedBatches): void { $flushedBatches[] = $items; });
+$autoBuffer->push(1); $autoBuffer->push(2); $autoBuffer->push(3);
+ok(count($flushedBatches) === 1 && $autoBuffer->count() === 1, 'bounded buffer callback flush works');
+
+$payloadGuard = PayloadSizeGuard::fromConfig($memoryPolicyConfig);
+$payloadGuard->assertString('safe');
+$largeStringBlocked = false;
+try { $payloadGuard->assertString(str_repeat('x', 64)); } catch (RuntimeException $e) { $largeStringBlocked = true; }
+$largeArrayBlocked = false;
+try { $payloadGuard->assertArray(range(1, 30)); } catch (RuntimeException $e) { $largeArrayBlocked = true; }
+ok($largeStringBlocked && $largeArrayBlocked, 'payload size guard blocks large strings and arrays');
+
+$depthGuard = new ArrayDepthGuard(3);
+$depthBlocked = false;
+try { $depthGuard->assertWithinDepth(['a' => ['b' => ['c' => ['d' => true]]]]); } catch (RuntimeException $e) { $depthBlocked = true; }
+ok($depthBlocked, 'array depth guard blocks deep nested payloads');
+$jsonGuard = new JsonDepthGuard(4);
+ok(is_array($jsonGuard->decode('{"ok":true}')), 'json depth guard decodes safe json');
+$jsonBlocked = false;
+try { (new JsonDepthGuard(2))->decode('{"a":{"b":{"c":true}}}'); } catch (RuntimeException $e) { $jsonBlocked = true; }
+ok($jsonBlocked, 'json depth guard blocks deep json');
+$decodedGuard = DecodedPayloadGuard::fromConfig($memoryPolicyConfig);
+$decodedGuard->assertSafe(['ok' => true]);
+$decodedBlocked = false;
+try { $decodedGuard->assertSafe(str_repeat('x', 64)); } catch (RuntimeException $e) { $decodedBlocked = true; }
+ok($decodedBlocked, 'decoded payload guard enforces payload size limits');
+
+$outputGuard = OutputBufferGuard::fromConfig($memoryPolicyConfig);
+ok($outputGuard->check('small')['passed'], 'output buffer guard allows small response buffer');
+$outputBlocked = false;
+try { $outputGuard->assertSafe(str_repeat('x', 128)); } catch (RuntimeException $e) { $outputBlocked = true; }
+ok($outputBlocked, 'output buffer guard blocks oversized buffer');
+
+$scopeManager = new ResourceScopeManager();
+$scope = $scopeManager->start('test-scope');
+$scopeTemp = $base . '/memory/scope-temp.txt';
+file_put_contents($scopeTemp, 'temporary');
+$scope->trackTemporaryFile($scopeTemp);
+$scopeReport = $scope->cleanup();
+ok(!is_file($scopeTemp) && $scopeReport['cleaned'], 'resource scope cleans tracked temporary files');
+ok($scope->cleanup()['idempotent'] === true, 'resource scope cleanup is idempotent');
+
+$tempManager = new TemporaryFileManager($base . '/memory/tmp-budget', \Mnb\SecurityCore\Memory\TemporaryFileBudget::fromArray(['max_files' => 2, 'max_total_bytes' => 16, 'max_age_seconds' => 0]));
+$tmpA = $tempManager->create('a_', '1234');
+ok($tempManager->usage()['files'] >= 1, 'temporary file manager tracks usage');
+$tmpPlan = (new TempStorageSweeper($tempManager))->plan();
+ok($tmpPlan['passed'] && array_key_exists('count', $tmpPlan), 'temporary storage sweeper creates cleanup plan');
+
+$leakDetector = new MemoryLeakDetector();
+$leakReport = $leakDetector->analyze(1000, 3000, 1024);
+ok($leakReport['restart_recommended'] && $leakReport['growth_bytes'] === 2000, 'memory leak detector recommends restart on growth threshold');
+$workerSupervisor = new WorkerMemorySupervisor($memoryPolicy->profile('queue_worker'), new MemoryLeakDetector());
+$workerReport = $workerSupervisor->check(4, 1000, 1000);
+ok($workerReport['restart_recommended'] && $workerReport['reason'] === 'job_count_threshold_reached', 'worker memory supervisor recommends restart after job threshold');
+
+$memoryKernel = new SecurityKernel($memoryPolicyConfig);
+ok($memoryKernel->memoryPolicy()->profile('request')->enabled() && $memoryKernel->streamGuard()->plan(1024)['passed'] && $memoryKernel->outputBufferGuard()->check('ok')['passed'], 'security kernel exposes memory governance and resource safety helpers');
+
+$memoryConfigReport = (new SecurityConfigValidator($memoryPolicyConfig))->validate();
+ok($memoryConfigReport['passed'], 'security config validator accepts memory governance config');
+$badMemoryConfigReport = (new SecurityConfigValidator(array_replace_recursive($defaultConfig, ['memory' => ['warning_ratio' => 0.95, 'critical_ratio' => 0.80, 'profiles' => ['bad profile!' => 'nope'], 'streams' => ['max_read_bytes' => 0]]])))->validate();
+ok(in_array('invalid_memory_ratio_order', array_column($badMemoryConfigReport['errors'], 'key'), true), 'security config validator blocks unsafe memory ratios');
+
+$memoryVulnerability = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix($memoryPolicyConfig))->find('memory_exhaustion');
+$resourceLeakVulnerability = (new \Mnb\SecurityCore\Vulnerability\VulnerabilityMatrix($memoryPolicyConfig))->find('resource_leak');
+ok($memoryVulnerability !== null && $memoryVulnerability->status() === 'protected' && $resourceLeakVulnerability !== null, 'vulnerability matrix includes memory exhaustion and resource leak coverage');
 
 $pentestPayloads = (new PayloadLibrary())->get('memory');
 ok(count($pentestPayloads) >= 3, 'pentest payload library includes memory/resource exhaustion scenarios');

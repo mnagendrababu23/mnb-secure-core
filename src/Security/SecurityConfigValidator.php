@@ -2155,6 +2155,41 @@ class SecurityConfigValidator
         if (isset($memory['min_chunk_size'], $memory['max_chunk_size']) && (int)$memory['max_chunk_size'] < (int)$memory['min_chunk_size']) {
             $this->issue('high', 'invalid_memory_chunk_range', 'memory', 'memory.max_chunk_size must be greater than or equal to memory.min_chunk_size.', 'max >= min', ['min_chunk_size' => $memory['min_chunk_size'], 'max_chunk_size' => $memory['max_chunk_size']]);
         }
+
+        if (isset($memory['profiles']) && !is_array($memory['profiles'])) {
+            $this->issue('high', 'invalid_memory_profiles', 'memory.profiles', 'memory.profiles must be an associative array of operation memory profiles.', 'array', $memory['profiles']);
+        }
+        foreach ((is_array($memory['profiles'] ?? null) ? $memory['profiles'] : []) as $name => $profile) {
+            $path = 'memory.profiles.' . (string)$name;
+            if (!preg_match('/^[A-Za-z0-9_\-:.]{2,80}$/', (string)$name)) {
+                $this->issue('medium', 'invalid_memory_profile_name', $path, 'Memory profile names should be safe identifiers.', 'safe profile name', $name);
+            }
+            if (!is_array($profile)) {
+                $this->issue('high', 'invalid_memory_profile', $path, 'Memory profile must be an array.', 'array', $profile);
+                continue;
+            }
+            if (isset($profile['enabled'])) { $this->bool($profile, 'enabled', $path . '.enabled', false); }
+            if (isset($profile['require_streaming'])) { $this->bool($profile, 'require_streaming', $path . '.require_streaming', false); }
+            foreach (['chunk_size', 'max_read_bytes', 'max_rows', 'restart_after_growth_mb', 'restart_after_jobs'] as $key) {
+                if (isset($profile[$key])) { $this->positiveInt($profile, $key, $path . '.' . $key, required: false); }
+            }
+        }
+        $streams = is_array($memory['streams'] ?? null) ? $memory['streams'] : [];
+        foreach (['max_read_bytes','max_write_bytes','buffer_size'] as $key) {
+            if (isset($streams[$key])) { $this->positiveInt($streams, $key, 'memory.streams.' . $key, required: false); }
+        }
+        if (isset($streams['fail_closed'])) { $this->bool($streams, 'fail_closed', 'memory.streams.fail_closed', false); }
+        $payloads = is_array($memory['payloads'] ?? null) ? $memory['payloads'] : [];
+        foreach (['max_decoded_depth','max_array_items','max_string_bytes'] as $key) {
+            if (isset($payloads[$key])) { $this->positiveInt($payloads, $key, 'memory.payloads.' . $key, required: false); }
+        }
+        $temporary = is_array($memory['temporary_files'] ?? null) ? $memory['temporary_files'] : [];
+        foreach (['max_files','max_total_bytes','max_age_seconds'] as $key) {
+            if (isset($temporary[$key])) { $this->positiveInt($temporary, $key, 'memory.temporary_files.' . $key, required: false); }
+        }
+        $buffers = is_array($memory['output_buffers'] ?? null) ? $memory['output_buffers'] : [];
+        if (isset($buffers['enabled'])) { $this->bool($buffers, 'enabled', 'memory.output_buffers.enabled', false); }
+        if (isset($buffers['max_buffer_bytes'])) { $this->positiveInt($buffers, 'max_buffer_bytes', 'memory.output_buffers.max_buffer_bytes', required: false); }
     }
 
     private function validateDatabase(): void

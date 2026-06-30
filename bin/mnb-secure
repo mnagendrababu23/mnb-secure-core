@@ -29,6 +29,10 @@ use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Logging\FileLogger;
 use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
+use Mnb\SecurityCore\Memory\MemoryPolicy;
+use Mnb\SecurityCore\Memory\StreamGuard;
+use Mnb\SecurityCore\Memory\PayloadSizeGuard;
+use Mnb\SecurityCore\Memory\DecodedPayloadGuard;
 use Mnb\SecurityCore\Throughput\ThroughputConfig;
 use Mnb\SecurityCore\Throughput\ThroughputPlanner;
 use Mnb\SecurityCore\Quickstart\FirstTokenBootstrapper;
@@ -392,6 +396,54 @@ switch ($command) {
             'max_chunk_size' => $memoryConfig->maxChunkSize(),
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         break;
+    case 'memory:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'memory' => $kernel->memoryPolicy()->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'memory:profile':
+        $kernel = new SecurityKernel($config);
+        $profile = $argv[2] ?? 'request';
+        echo json_encode(['passed' => true, 'profile' => $kernel->memoryPolicy()->profile($profile)->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'memory:simulate-allocation':
+        $kernel = new SecurityKernel($config);
+        $bytes = (int)($argv[2] ?? 10485760);
+        $operation = $argv[3] ?? 'request';
+        $decision = $kernel->memoryPolicy()->decideAllocation($operation, $bytes);
+        echo json_encode($decision->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit($decision->allowed() ? 0 : 1);
+    case 'memory:stream-plan':
+        $kernel = new SecurityKernel($config);
+        $bytes = (int)($argv[2] ?? 52428800);
+        $mode = $argv[3] ?? 'read';
+        echo json_encode($kernel->streamGuard()->plan($bytes, $mode), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'memory:payload-check':
+        $kernel = new SecurityKernel($config);
+        $sample = ['safe' => true, 'items' => range(1, 5)];
+        try {
+            $kernel->decodedPayloadGuard()->assertSafe($sample);
+            $report = ['passed' => true, 'payload' => 'safe_sample'];
+        } catch (Throwable $e) {
+            $report = ['passed' => false, 'error' => $e->getMessage()];
+        }
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'memory:worker-check':
+        $kernel = new SecurityKernel($config);
+        $jobs = (int)($argv[2] ?? 10);
+        $start = memory_get_usage(true);
+        $report = $kernel->workerMemorySupervisor()->check($jobs, $start, memory_get_usage(true));
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'resources:check':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->temporaryFileManager()->usage(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'resources:cleanup-plan':
+        $kernel = new SecurityKernel($config);
+        echo json_encode($kernel->tempStorageSweeper()->plan(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
     case 'throughput:check':
         $throughputConfig = ThroughputConfig::fromArray($config['throughput'] ?? []);
         echo json_encode([

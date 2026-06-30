@@ -819,4 +819,17 @@ return array_replace_recursive($base, [
             'alert_on_repeated_500' => true,
         ],
     ],
+
+    'memory' => [
+        'enabled' => true,
+        'profiles' => [
+            'request' => ['max_bytes' => '64M', 'critical_ratio' => 0.90],
+            'database_export' => ['max_bytes' => '128M', 'require_streaming' => true, 'chunk_size' => 1000],
+            'queue_worker' => ['max_bytes' => '256M', 'restart_after_growth_mb' => 64, 'restart_after_jobs' => 500],
+        ],
+        'streams' => ['fail_closed' => true],
+        'output_buffers' => ['enabled' => true, 'fail_closed' => true],
+        'temporary_files' => ['cleanup_on_shutdown' => true],
+    ],
+
 ]);

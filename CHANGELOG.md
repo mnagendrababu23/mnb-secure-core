@@ -321,3 +321,7 @@ Changed:
 - Expanded `pentest` configuration with safe mode, evidence redaction/storage, SLA policy, verification profiles, and release gate policy.
 - Added `SecurityKernel` helpers for verification, evidence, remediation, retest, release gate, and coverage analysis.
 - Updated the vulnerability matrix with security verification gaps, missing retest evidence, release-with-known-vulnerability, and weak evidence handling coverage.
+
+## v1.0.1 — Upgrade 31: Memory Governance and Resource Safety Engine
+
+MNB Secure Core v1.0.1 adds the Memory Governance and Resource Safety Engine, strengthening memory and resource protection with operation-specific memory profiles, streaming guards, bounded buffers, payload depth and size checks, output buffer limits, scoped resource cleanup, temporary file budgets, worker memory leak detection, CLI diagnostics, and vulnerability matrix coverage for memory exhaustion and resource leak risks.

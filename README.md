@@ -1669,3 +1669,41 @@ php bin/mnb-secure errors:check-production
 ```
 
 The vulnerability matrix now includes coverage for error disclosure, debug leakage, stack trace exposure, sensitive log exposure, PII log exposure, unsafe validation errors, missing error correlation IDs, and unmonitored critical errors.
+
+## Upgrade 31: Memory Governance and Resource Safety Engine
+
+MNB Secure Core v1.0.1 now includes a Memory Governance and Resource Safety Engine for production resource exhaustion protection.
+
+Key helpers are available from `SecurityKernel`:
+
+```php
+$kernel = new \Mnb\SecurityCore\Core\SecurityKernel($config);
+
+$policy = $kernel->memoryPolicy();
+$profile = $policy->profile('database_export');
+$decision = $policy->decideAllocation('request', 1024 * 1024);
+
+foreach ($kernel->safeStreamReader()->chunks($path, 10 * 1024 * 1024) as $chunk) {
+    // inspect/process chunk safely
+}
+
+$scope = $kernel->resourceScopeManager()->start('upload_scan');
+try {
+    $scope->trackTemporaryFile($tmpPath);
+} finally {
+    $scope->cleanup();
+}
+```
+
+New CLI diagnostics:
+
+```bash
+php bin/mnb-secure memory:policy
+php bin/mnb-secure memory:profile database_export
+php bin/mnb-secure memory:simulate-allocation 10485760 request
+php bin/mnb-secure memory:stream-plan 52428800 read
+php bin/mnb-secure memory:payload-check
+php bin/mnb-secure memory:worker-check
+php bin/mnb-secure resources:check
+php bin/mnb-secure resources:cleanup-plan
+```
