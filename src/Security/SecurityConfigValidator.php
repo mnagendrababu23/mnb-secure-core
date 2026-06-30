@@ -37,6 +37,7 @@ class SecurityConfigValidator
         $this->validateAuthentication();
         $this->validateAuthorization();
         $this->validateDataProtection();
+        $this->validateWebSecurity();
         $this->validateRequestReceiving();
         $this->validateTrustBoundaries();
         $this->validateSuggestions();
@@ -1092,6 +1093,101 @@ class SecurityConfigValidator
         }
         if (isset($dp['logs']) && is_array($dp['logs'])) {
             $this->bool($dp['logs'], 'redact_before_write', 'data_protection.logs.redact_before_write', required: false);
+        }
+    }
+
+
+    private function validateWebSecurity(): void
+    {
+        $web = $this->section('web_security', false);
+        if ($web === null) {
+            return;
+        }
+        $this->bool($web, 'enabled', 'web_security.enabled', required: false);
+
+        if (!isset($web['profiles']) || !is_array($web['profiles']) || $web['profiles'] === []) {
+            $this->issue('medium', 'missing_web_security_profiles', 'web_security.profiles', 'Define web security profiles such as browser_page, browser_form, admin_panel, json_api, and upload_endpoint.', 'non-empty profile array', $web['profiles'] ?? null);
+        } else {
+            foreach ($web['profiles'] as $name => $profile) {
+                if (!is_string($name) || !preg_match('/^[a-z][a-z0-9_.:-]{1,95}$/', $name)) {
+                    $this->issue('high', 'invalid_web_security_profile_name', 'web_security.profiles', 'Web security profile names must be safe slugs.', 'safe profile slug', $name);
+                    continue;
+                }
+                if (!is_array($profile)) {
+                    $this->issue('high', 'invalid_web_security_profile', 'web_security.profiles.' . $name, 'Web security profile must be an array.', 'array', $profile);
+                    continue;
+                }
+                foreach (['security_headers', 'csrf', 'input_validation', 'safe_redirects', 'output_escape', 'authorization', 'cors'] as $boolKey) {
+                    $this->bool($profile, $boolKey, 'web_security.profiles.' . $name . '.' . $boolKey, required: false);
+                }
+                if (isset($profile['cache_policy']) && (!$this->isStringLike($profile['cache_policy']) || preg_match('/[\r\n]/', (string)$profile['cache_policy']))) {
+                    $this->issue('medium', 'invalid_web_cache_policy', 'web_security.profiles.' . $name . '.cache_policy', 'cache_policy must be a safe single-line policy name.', 'policy name', $profile['cache_policy']);
+                }
+                if (isset($profile['frame_policy']) && !in_array((string)$profile['frame_policy'], ['deny', 'sameorigin', 'allow', 'none'], true)) {
+                    $this->issue('medium', 'invalid_web_frame_policy', 'web_security.profiles.' . $name . '.frame_policy', 'frame_policy should be deny, sameorigin, allow, or none.', 'deny|sameorigin|allow|none', $profile['frame_policy']);
+                }
+                foreach (['auth_strategy', 'upload_profile'] as $key) {
+                    if (isset($profile[$key]) && (!$this->isStringLike($profile[$key]) || preg_match('/[\r\n]/', (string)$profile[$key]))) {
+                        $this->issue('medium', 'invalid_web_profile_' . $key, 'web_security.profiles.' . $name . '.' . $key, $key . ' must be a safe single-line string.', 'string', $profile[$key]);
+                    }
+                }
+            }
+        }
+
+        if (isset($web['redirects'])) {
+            if (!is_array($web['redirects'])) {
+                $this->issue('high', 'invalid_web_redirects', 'web_security.redirects', 'Redirect security config must be an array.', 'array', $web['redirects']);
+            } else {
+                $this->bool($web['redirects'], 'allow_external', 'web_security.redirects.allow_external', required: false);
+                if (isset($web['redirects']['allowed_hosts'])) {
+                    $this->stringList($web['redirects']['allowed_hosts'], 'web_security.redirects.allowed_hosts', false);
+                }
+                if ($this->isProduction($this->config['app'] ?? []) && !empty($web['redirects']['allow_external']) && empty($web['redirects']['allowed_hosts'])) {
+                    $this->issue('high', 'external_redirects_without_hosts', 'web_security.redirects', 'External redirects in production require an explicit allowed_hosts list.', 'allowed hosts', $web['redirects']);
+                }
+            }
+        }
+
+        if (isset($web['cookies'])) {
+            if (!is_array($web['cookies'])) {
+                $this->issue('high', 'invalid_web_cookies', 'web_security.cookies', 'Web cookie defaults must be an array.', 'array', $web['cookies']);
+            } else {
+                foreach (['secure', 'http_only'] as $key) {
+                    $this->bool($web['cookies'], $key, 'web_security.cookies.' . $key, required: false);
+                }
+                $sameSite = $web['cookies']['same_site'] ?? 'Lax';
+                if (!$this->isStringLike($sameSite) || !in_array(strtolower((string)$sameSite), ['lax', 'strict', 'none'], true)) {
+                    $this->issue('high', 'invalid_web_cookie_same_site', 'web_security.cookies.same_site', 'Web cookie SameSite must be Lax, Strict, or None.', 'Lax|Strict|None', $sameSite);
+                }
+                if (strtolower((string)$sameSite) === 'none' && empty($web['cookies']['secure'])) {
+                    $this->issue('high', 'web_cookie_same_site_none_without_secure', 'web_security.cookies', 'SameSite=None web cookies must use Secure.', 'secure=true', $web['cookies']);
+                }
+            }
+        }
+
+        if (isset($web['html_sanitizer'])) {
+            if (!is_array($web['html_sanitizer'])) {
+                $this->issue('high', 'invalid_html_sanitizer_config', 'web_security.html_sanitizer', 'HTML sanitizer config must be an array.', 'array', $web['html_sanitizer']);
+            } else {
+                if (isset($web['html_sanitizer']['allowed_tags'])) {
+                    $this->stringList($web['html_sanitizer']['allowed_tags'], 'web_security.html_sanitizer.allowed_tags', false);
+                }
+                if (isset($web['html_sanitizer']['allowed_attributes'])) {
+                    $this->stringList($web['html_sanitizer']['allowed_attributes'], 'web_security.html_sanitizer.allowed_attributes', false);
+                }
+                $this->bool($web['html_sanitizer'], 'allow_data_images', 'web_security.html_sanitizer.allow_data_images', required: false);
+            }
+        }
+
+        if (isset($web['signed_urls'])) {
+            if (!is_array($web['signed_urls'])) {
+                $this->issue('high', 'invalid_signed_urls_config', 'web_security.signed_urls', 'Signed URL config must be an array.', 'array', $web['signed_urls']);
+            } else {
+                if (isset($web['signed_urls']['key']) && (!$this->isStringLike($web['signed_urls']['key']) || strlen((string)$web['signed_urls']['key']) < 32)) {
+                    $this->issue($this->isProduction($this->config['app'] ?? []) ? 'high' : 'medium', 'weak_signed_url_key', 'web_security.signed_urls.key', 'Signed URL key should be at least 32 characters.', '>=32 character secret', isset($web['signed_urls']['key']) ? strlen((string)$web['signed_urls']['key']) . ' chars' : null);
+                }
+                $this->intRange($web['signed_urls'], 'default_ttl', 'web_security.signed_urls.default_ttl', 1, 86400, required: false);
+            }
         }
     }
 

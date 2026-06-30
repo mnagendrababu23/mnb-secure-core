@@ -87,6 +87,71 @@ return array_replace_recursive($base, [
         'cross_origin_embedder_policy' => $_ENV['CROSS_ORIGIN_EMBEDDER_POLICY'] ?? null,
     ],
 
+    'web_security' => [
+        'enabled' => filter_var($_ENV['WEB_SECURITY_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'profiles' => [
+            'browser_page' => [
+                'security_headers' => true,
+                'cache_policy' => 'private_user',
+                'csrf' => false,
+                'output_escape' => true,
+            ],
+            'browser_form' => [
+                'security_headers' => true,
+                'cache_policy' => 'sensitive_no_store',
+                'csrf' => true,
+                'input_validation' => true,
+                'safe_redirects' => true,
+                'output_escape' => true,
+            ],
+            'admin_panel' => [
+                'security_headers' => true,
+                'cache_policy' => 'sensitive_no_store',
+                'csrf' => true,
+                'auth_strategy' => 'admin_bearer',
+                'authorization' => true,
+                'frame_policy' => 'deny',
+            ],
+            'json_api' => [
+                'security_headers' => true,
+                'cors' => true,
+                'cache_policy' => 'no_store',
+                'input_validation' => true,
+                'auth_strategy' => 'api_bearer',
+                'authorization' => true,
+            ],
+            'upload_endpoint' => [
+                'security_headers' => true,
+                'cache_policy' => 'no_store',
+                'csrf' => false,
+                'auth_strategy' => 'api_bearer',
+                'upload_profile' => 'documents',
+            ],
+        ],
+        'redirects' => [
+            'allow_external' => filter_var($_ENV['WEB_REDIRECT_ALLOW_EXTERNAL'] ?? false, FILTER_VALIDATE_BOOL),
+            'allowed_hosts' => array_values(array_filter(array_map('trim', explode(',', $_ENV['WEB_REDIRECT_ALLOWED_HOSTS'] ?? '')))),
+        ],
+        'cookies' => [
+            'secure' => filter_var($_ENV['WEB_COOKIE_SECURE'] ?? (($_ENV['APP_ENV'] ?? 'local') === 'production'), FILTER_VALIDATE_BOOL),
+            'http_only' => filter_var($_ENV['WEB_COOKIE_HTTP_ONLY'] ?? true, FILTER_VALIDATE_BOOL),
+            'same_site' => $_ENV['WEB_COOKIE_SAME_SITE'] ?? 'Lax',
+            'path' => '/',
+        ],
+        'cache' => [
+            'profiles' => [],
+        ],
+        'html_sanitizer' => [
+            'allowed_tags' => ['p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'a'],
+            'allowed_attributes' => ['href', 'title'],
+            'allow_data_images' => false,
+        ],
+        'signed_urls' => [
+            'key' => $_ENV['SIGNED_URL_KEY'] ?? ($_ENV['APP_KEY'] ?? ''),
+            'default_ttl' => (int)($_ENV['SIGNED_URL_TTL'] ?? 900),
+        ],
+    ],
+
     'request_validation' => [
         'enabled' => filter_var($_ENV['REQUEST_VALIDATION_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
         'sanitize' => filter_var($_ENV['REQUEST_SANITIZE_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),

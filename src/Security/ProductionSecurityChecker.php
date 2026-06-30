@@ -26,6 +26,7 @@ class ProductionSecurityChecker
         $authorization = $this->config['authorization'] ?? [];
         $trustBoundaries = $this->config['trust_boundaries'] ?? [];
         $dataProtection = $this->config['data_protection'] ?? [];
+        $webSecurity = $this->config['web_security'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -200,6 +201,39 @@ class ProductionSecurityChecker
                 $logs = is_array($dataProtection['logs'] ?? null) ? $dataProtection['logs'] : [];
                 if (array_key_exists('redact_before_write', $logs) && empty($logs['redact_before_write'])) {
                     $issues[] = ['level' => 'high', 'key' => 'log_redaction_disabled', 'message' => 'Audit/log redaction should stay enabled before writing production logs.'];
+                }
+            }
+
+            if (is_array($webSecurity)) {
+                if (array_key_exists('enabled', $webSecurity) && empty($webSecurity['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'web_security_disabled', 'message' => 'Web application security controls should be enabled in production for escaping, redirects, cookies, cache-control, and signed URLs.'];
+                }
+                if (empty($webSecurity['profiles']) || !is_array($webSecurity['profiles'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'web_security_profiles_missing', 'message' => 'Define web security profiles for browser pages, forms, admin panels, JSON APIs, and upload endpoints.'];
+                }
+                $redirects = is_array($webSecurity['redirects'] ?? null) ? $webSecurity['redirects'] : [];
+                if (!empty($redirects['allow_external']) && empty($redirects['allowed_hosts'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'external_redirects_without_allowlist', 'message' => 'External redirects in production require an explicit allowed host list.'];
+                }
+                $webCookies = is_array($webSecurity['cookies'] ?? null) ? $webSecurity['cookies'] : [];
+                if (array_key_exists('secure', $webCookies) && empty($webCookies['secure'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'web_cookies_not_secure', 'message' => 'Web cookies should default to Secure in production.'];
+                }
+                if (array_key_exists('http_only', $webCookies) && empty($webCookies['http_only'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'web_cookies_not_httponly', 'message' => 'Web cookies should default to HttpOnly unless the cookie is intentionally readable by JavaScript.'];
+                }
+                $signed = is_array($webSecurity['signed_urls'] ?? null) ? $webSecurity['signed_urls'] : [];
+                if (strlen((string)($signed['key'] ?? '')) < 32) {
+                    $issues[] = ['level' => 'high', 'key' => 'signed_url_key_weak', 'message' => 'Signed URL key should be a 32+ character secret in production.'];
+                }
+                foreach ((array)($webSecurity['profiles'] ?? []) as $profileName => $profile) {
+                    if (!is_array($profile)) { continue; }
+                    if (str_contains((string)$profileName, 'admin') && (($profile['cache_policy'] ?? '') !== 'sensitive_no_store')) {
+                        $issues[] = ['level' => 'medium', 'key' => 'admin_profile_not_no_store', 'message' => 'Admin web security profile ' . (string)$profileName . ' should use sensitive_no_store cache policy.'];
+                    }
+                    if (!empty($profile['safe_redirects']) && empty($webSecurity['redirects'])) {
+                        $issues[] = ['level' => 'medium', 'key' => 'safe_redirects_without_config', 'message' => 'Profile ' . (string)$profileName . ' enables safe redirects but web_security.redirects is not configured.'];
+                    }
                 }
             }
             if (is_array($trustBoundaries)) {

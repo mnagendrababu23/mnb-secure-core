@@ -380,3 +380,15 @@ $csv = $kernel->safeCsvExporter()->export('students', [$stored]);
 ```
 
 Use `data_protection.resources.*.fields` to define field classes, encryption, search hashes, masks, export behavior, and log rules.
+
+## Web Security Controls
+
+```php
+$web = $kernel->webSecurityControls('browser_form');
+
+echo $web->escapeHtml($name);
+$body = $web->sanitizeHtml($request->input('body'));
+$redirect = $web->safeRedirect($request->input('next'), '/dashboard');
+$cookie = $web->cookies()->make('__Host-session_hint', $hint, ['max_age' => 600]);
+$signed = $web->signedUrl()->sign('/download/invoice.pdf', ['invoice_id' => 42], time() + 900, 'download');
+```

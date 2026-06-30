@@ -15,7 +15,7 @@ demo_step('Loaded APP_ENV', EnvLoader::get('APP_ENV'));
 demo_step('Loaded FORCE_HTTPS', EnvLoader::get('FORCE_HTTPS'));
 
 $config = [
-    'app' => ['env' => 'production', 'debug' => false, 'force_https' => true, 'key' => EnvLoader::get('APP_KEY'), 'trusted_hosts' => ['school.local']],
+    'app' => ['env' => 'production', 'debug' => false, 'force_https' => true, 'key' => EnvLoader::get('APP_KEY'), 'trusted_hosts' => ['school.local'], 'trusted_proxies' => ['10.0.0.0/8']],
     'cookies' => ['secure' => true, 'http_only' => true],
     'paths' => ['private_storage' => demo_storage_path('private'), 'backups' => demo_storage_path('backups'), 'logs' => demo_storage_path('logs'), 'audit' => demo_storage_path('audit')],
     'origin_protection' => [
@@ -35,6 +35,24 @@ $config = [
         'enabled' => true,
         'deny_by_default' => true,
         'policies' => ['public.read' => ['resource' => 'public_pages', 'actions' => ['read'], 'data_classes' => ['public']]],
+    ],
+    'data_protection' => [
+        'enabled' => true,
+        'deny_unclassified_fields' => true,
+        'encryption' => ['enabled' => true, 'current_key_id' => 'demo-v1', 'keys' => ['demo-v1' => EnvLoader::get('APP_KEY')]],
+        'search_hash' => ['enabled' => true, 'key' => EnvLoader::get('APP_KEY')],
+        'resources' => ['public_pages' => ['default_class' => 'public', 'fields' => ['title' => ['class' => 'public']]]],
+        'exports' => ['csv_injection_protection' => true],
+        'storage' => ['encrypt_files' => true],
+        'backups' => ['encrypt' => true, 'sign' => true],
+        'logs' => ['redact_before_write' => true],
+    ],
+    'web_security' => [
+        'enabled' => true,
+        'profiles' => ['browser_page' => ['security_headers' => true, 'cache_policy' => 'private_user', 'output_escape' => true]],
+        'redirects' => ['allow_external' => false, 'allowed_hosts' => []],
+        'cookies' => ['secure' => true, 'http_only' => true, 'same_site' => 'Lax'],
+        'signed_urls' => ['key' => EnvLoader::get('APP_KEY'), 'default_ttl' => 900],
     ],
     'request_receiving' => [
         'enabled' => true,

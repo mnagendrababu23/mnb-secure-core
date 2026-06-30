@@ -124,6 +124,14 @@ use Mnb\SecurityCore\Trust\TrustBoundaryRegistry;
 use Mnb\SecurityCore\Trust\TrustZone;
 use Mnb\SecurityCore\Trust\TrustZoneResolver;
 use Mnb\SecurityCore\Http\Middleware\TrustBoundaryMiddleware;
+use Mnb\SecurityCore\Web\OutputEscaper;
+use Mnb\SecurityCore\Web\HtmlSanitizer;
+use Mnb\SecurityCore\Web\SafeRedirector;
+use Mnb\SecurityCore\Web\SecureCookieBuilder;
+use Mnb\SecurityCore\Web\CacheControlPolicy;
+use Mnb\SecurityCore\Web\SignedUrl;
+use Mnb\SecurityCore\Web\WebSecurityRegistry;
+use Mnb\SecurityCore\Http\Middleware\CacheControlMiddleware;
 
 $base = sys_get_temp_dir() . '/mnb_secure_core_v1_0_tests_' . getmypid();
 @mkdir($base, 0777, true);
@@ -1318,6 +1326,57 @@ $dpInvalidReport = (new SecurityConfigValidator(['data_protection' => ['enabled'
 ok(!$dpInvalidReport['passed'], 'security config validator catches invalid data protection policies and keys');
 $dpSuggestions = (new AutoSuggestionEngine())->suggestFromCode('Response::json($student); fputcsv($handle, $row); $student["parent_phone"]');
 ok(count(array_filter($dpSuggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_data_protection_strategy' || ($item['id'] ?? '') === 'data_protection_strategy')) >= 1, 'auto suggestion engine recommends data protection strategy for sensitive output/export code');
+
+
+
+$escaper = new OutputEscaper();
+ok($escaper->html('<script>alert(1)</script>') === '&lt;script&gt;alert(1)&lt;/script&gt;' && str_contains($escaper->attr('" onclick="x'), '&quot;'), 'output escaper safely encodes html and attributes');
+
+$sanitizer = new HtmlSanitizer(['allowed_tags' => ['p', 'a', 'strong'], 'allowed_attributes' => ['href', 'title']]);
+$cleanHtml = $sanitizer->sanitize('<p onclick="x">Hi <script>alert(1)</script><a href="javascript:alert(1)" title="ok">bad</a><a href="/safe">safe</a></p>');
+ok(!str_contains($cleanHtml, 'script') && !str_contains($cleanHtml, 'onclick') && !str_contains($cleanHtml, 'javascript:') && str_contains($cleanHtml, 'href="/safe"'), 'HTML sanitizer removes dangerous tags attributes and URLs');
+
+$redirector = new SafeRedirector(['allow_external' => true, 'allowed_hosts' => ['trusted.test']], 'app.test');
+ok($redirector->to('/dashboard') === '/dashboard' && $redirector->to('https://trusted.test/ok') === 'https://trusted.test/ok' && $redirector->to('https://evil.test/phish', '/fallback') === '/fallback' && $redirector->to('javascript:alert(1)', '/fallback') === '/fallback', 'safe redirector allows relative and allow-listed hosts only');
+
+$cookieBuilder = new SecureCookieBuilder(['secure' => true, 'http_only' => true, 'same_site' => 'Lax', 'path' => '/']);
+$cookieHeader = $cookieBuilder->make('__Host-device', 'abc 123', ['max_age' => 3600]);
+$cookieFailed = false;
+try { (new SecureCookieBuilder(['secure' => false, 'same_site' => 'None']))->make('bad', 'x'); } catch (\InvalidArgumentException) { $cookieFailed = true; }
+ok(str_contains($cookieHeader, '__Host-device=abc%20123') && str_contains($cookieHeader, 'Secure') && str_contains($cookieHeader, 'HttpOnly') && $cookieFailed, 'secure cookie builder enforces secure defaults and SameSite rules');
+
+$cachePolicy = new CacheControlPolicy();
+$cacheHeaders = $cachePolicy->headers('sensitive_no_store');
+$cacheResponse = (new MiddlewarePipeline([new CacheControlMiddleware($cachePolicy, 'sensitive_no_store')]))->handle(new Request('GET', '/account'), fn() => Response::text('ok'));
+ok(($cacheHeaders['Cache-Control'] ?? '') === 'no-store, private' && ($cacheResponse->headers()['Pragma'] ?? '') === 'no-cache', 'cache-control policy and middleware apply sensitive no-store headers');
+
+$signedUrl = new SignedUrl(str_repeat('U', 40), 300);
+$signed = $signedUrl->sign('/download/report.csv', ['user_id' => 10], time() + 300, 'download');
+ok($signedUrl->verify($signed, 'download') && !$signedUrl->verify($signed . 'x', 'download') && !$signedUrl->verify($signed, 'other'), 'signed URL helper signs and verifies purpose-bound expiring URLs');
+
+$webConfig = [
+    'app' => ['key' => str_repeat('W', 40), 'env' => 'testing'],
+    'web_security' => [
+        'enabled' => true,
+        'profiles' => [
+            'browser_form' => ['security_headers' => true, 'cache_policy' => 'sensitive_no_store', 'csrf' => true, 'safe_redirects' => true, 'output_escape' => true],
+        ],
+        'redirects' => ['allow_external' => false, 'allowed_hosts' => []],
+        'cookies' => ['secure' => true, 'http_only' => true, 'same_site' => 'Lax', 'path' => '/'],
+        'html_sanitizer' => ['allowed_tags' => ['p', 'a'], 'allowed_attributes' => ['href'], 'allow_data_images' => false],
+        'signed_urls' => ['key' => str_repeat('Z', 40), 'default_ttl' => 300],
+    ],
+];
+$webRegistry = WebSecurityRegistry::fromConfig($webConfig);
+$webKernel = new SecurityKernel(array_replace_recursive(require __DIR__ . '/../config/security.php', $webConfig));
+$webControls = $webKernel->webSecurityControls('browser_form');
+ok($webRegistry->has('browser_form') && $webControls->profile()->cachePolicy() === 'sensitive_no_store' && $webControls->safeRedirect('https://evil.test', '/safe') === '/safe', 'web security registry and kernel controls expose configured profiles and helpers');
+
+$webInvalidReport = (new SecurityConfigValidator(['app' => ['env' => 'production'], 'web_security' => ['enabled' => true, 'redirects' => ['allow_external' => true], 'cookies' => ['same_site' => 'None', 'secure' => false], 'signed_urls' => ['key' => 'short'], 'profiles' => ['bad profile' => []]]]))->validate();
+ok(!$webInvalidReport['passed'], 'security config validator catches unsafe web security controls');
+
+$webSuggestions = (new AutoSuggestionEngine())->suggestFromCode('echo $name; header(\'Location: \'.$next); setcookie("device", $id);');
+ok(count(array_filter($webSuggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_web_security_controls' || ($item['id'] ?? '') === 'web_security_controls')) >= 1, 'auto suggestion engine recommends web security controls for output redirects and cookies');
 
 echo "\n{$passed} passed, {$failed} failed\n";
 exit($failed === 0 ? 0 : 1);

@@ -117,3 +117,18 @@ Added a unified data protection layer for classification, encryption, masking, s
 - Added data-protection config validation and production readiness checks.
 - Added `SecurityKernel` helpers for data protection, safe CSV export, key ring, and encrypted private storage.
 - Added demo `23-data-protection-strategy-engine.php`.
+
+## v1.0.1 - Web Application Security Controls Engine
+
+Added a unified web security controls layer for browser/API output safety while preserving existing request receiving, CORS, CSRF, and security header middleware.
+
+- Added `OutputEscaper` for HTML, attribute, JavaScript, URL, and CSS output contexts.
+- Added `HtmlSanitizer` for conservative dependency-free rich-text sanitization.
+- Added `SafeRedirector` to block open redirects, dangerous schemes, protocol-relative URLs, and untrusted external hosts.
+- Added `SecureCookieBuilder` for Secure, HttpOnly, SameSite, `__Host-`, and `__Secure-` cookie safety rules.
+- Added `CacheControlPolicy` and `CacheControlMiddleware` with public, private, no-store, sensitive, and download profiles.
+- Added `SignedUrl` for HMAC-signed, purpose-bound, expiring URLs.
+- Added `WebSecurityProfile`, `WebSecurityRegistry`, and `WebSecurityControls` for named web security profiles.
+- Added kernel helpers for escaping, sanitization, redirects, cookies, cache-control, signed URLs, and web security controls.
+- Added config validation and production readiness checks for `web_security`.
+- Added demo `24-web-application-security-controls-engine.php` and tests for output escaping, sanitization, redirects, cookies, cache headers, signed URLs, profiles, validation, and suggestions.

@@ -1342,3 +1342,41 @@ Supported protection behavior:
 - Response masking and log redaction.
 - CSV formula-injection protection.
 - Encrypted private file storage wrapper.
+
+## Web Application Security Controls Engine
+
+`mnb-secure-core v1.0.1` includes a web security controls layer for browser and API response-side protections: output escaping, safe rich-text sanitization, redirect validation, secure cookies, cache-control profiles, and signed URLs.
+
+```php
+$web = $kernel->webSecurityControls('browser_form');
+
+echo $web->escapeHtml($student['name']);
+$cleanHtml = $web->sanitizeHtml($request->input('description'));
+$next = $web->safeRedirect($request->input('next'), '/dashboard');
+$cookie = $web->cookies()->make('__Host-device', $deviceId, ['max_age' => 3600]);
+$url = $web->signedUrl()->sign('/download/report.csv', ['user_id' => 10], time() + 900, 'download');
+```
+
+Cache-control middleware:
+
+```php
+$pipeline = new MiddlewarePipeline([
+    $kernel->cacheControlMiddleware('sensitive_no_store'),
+]);
+```
+
+Main helpers:
+
+```php
+$kernel->outputEscaper();
+$kernel->htmlSanitizer();
+$kernel->safeRedirector();
+$kernel->secureCookieBuilder();
+$kernel->cacheControlPolicy();
+$kernel->cacheControlMiddleware('sensitive_no_store');
+$kernel->signedUrl();
+$kernel->webSecurityRegistry();
+$kernel->webSecurityControls('browser_page');
+```
+
+Built-in cache profiles include `public_static`, `public_api`, `private_user`, `sensitive_no_store`, `no_store`, and `download`.

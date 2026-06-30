@@ -82,6 +82,16 @@ use Mnb\SecurityCore\Trust\TrustZoneResolver;
 use Mnb\SecurityCore\Validation\InputSanitizer;
 use Mnb\SecurityCore\Validation\InputValidator;
 use Mnb\SecurityCore\Security\ServerIdentityHider;
+use Mnb\SecurityCore\Http\Middleware\CacheControlMiddleware;
+use Mnb\SecurityCore\Web\CacheControlPolicy;
+use Mnb\SecurityCore\Web\HtmlSanitizer;
+use Mnb\SecurityCore\Web\OutputEscaper;
+use Mnb\SecurityCore\Web\SafeRedirector;
+use Mnb\SecurityCore\Web\SecureCookieBuilder;
+use Mnb\SecurityCore\Web\SignedUrl;
+use Mnb\SecurityCore\Web\WebSecurityControls as WebControls;
+use Mnb\SecurityCore\Web\WebSecurityProfile;
+use Mnb\SecurityCore\Web\WebSecurityRegistry;
 use PDO;
 
 class SecurityKernel
@@ -390,6 +400,80 @@ class SecurityKernel
         return new EncryptedStorage(new LocalPrivateStorage($this->config['paths']['private_storage']), $this->dataKeyRing());
     }
 
+
+
+    public function outputEscaper(): OutputEscaper
+    {
+        return new OutputEscaper();
+    }
+
+    public function htmlSanitizer(array $override = []): HtmlSanitizer
+    {
+        $web = is_array($this->config['web_security'] ?? null) ? $this->config['web_security'] : [];
+        $config = is_array($web['html_sanitizer'] ?? null) ? $web['html_sanitizer'] : [];
+        return new HtmlSanitizer(array_replace($config, $override));
+    }
+
+    public function safeRedirector(?string $currentHost = null, array $override = []): SafeRedirector
+    {
+        $web = is_array($this->config['web_security'] ?? null) ? $this->config['web_security'] : [];
+        $config = is_array($web['redirects'] ?? null) ? $web['redirects'] : [];
+        return new SafeRedirector(array_replace($config, $override), $currentHost);
+    }
+
+    public function secureCookieBuilder(array $override = []): SecureCookieBuilder
+    {
+        $web = is_array($this->config['web_security'] ?? null) ? $this->config['web_security'] : [];
+        $cookies = is_array($web['cookies'] ?? null) ? $web['cookies'] : [];
+        if ($cookies === []) {
+            $cookies = is_array($this->config['cookies'] ?? null) ? $this->config['cookies'] : [];
+        }
+        return new SecureCookieBuilder(array_replace($cookies, $override));
+    }
+
+    public function cacheControlPolicy(array $profiles = []): CacheControlPolicy
+    {
+        $web = is_array($this->config['web_security'] ?? null) ? $this->config['web_security'] : [];
+        $cache = is_array($web['cache'] ?? null) ? $web['cache'] : [];
+        $configured = is_array($cache['profiles'] ?? null) ? $cache['profiles'] : [];
+        return new CacheControlPolicy(array_replace_recursive($configured, $profiles));
+    }
+
+    public function cacheControlMiddleware(string $profile = 'private_user'): CacheControlMiddleware
+    {
+        return new CacheControlMiddleware($this->cacheControlPolicy(), $profile);
+    }
+
+    public function signedUrl(array $override = []): SignedUrl
+    {
+        $web = is_array($this->config['web_security'] ?? null) ? $this->config['web_security'] : [];
+        $signed = is_array($web['signed_urls'] ?? null) ? $web['signed_urls'] : [];
+        $signed = array_replace($signed, $override);
+        return new SignedUrl((string)($signed['key'] ?? $this->config['app']['key'] ?? ''), (int)($signed['default_ttl'] ?? 900));
+    }
+
+    public function webSecurityRegistry(): WebSecurityRegistry
+    {
+        return WebSecurityRegistry::fromConfig($this->config);
+    }
+
+    public function webSecurityProfile(string $name): WebSecurityProfile
+    {
+        return $this->webSecurityRegistry()->get($name);
+    }
+
+    public function webSecurityControls(string $profileName = 'browser_page'): WebControls
+    {
+        return new WebControls(
+            $this->webSecurityProfile($profileName),
+            $this->outputEscaper(),
+            $this->htmlSanitizer(),
+            $this->safeRedirector(),
+            $this->secureCookieBuilder(),
+            $this->cacheControlPolicy(),
+            $this->signedUrl()
+        );
+    }
 
     public function passwordHasher(): PasswordHasher
     {

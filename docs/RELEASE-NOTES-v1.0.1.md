@@ -180,3 +180,8 @@ Existing direct guards and trust-boundary APIs remain supported.
 ### Data Protection Strategy Engine
 
 This release line now includes the Data Protection Strategy Engine. It unifies field classification, AES-256-GCM encrypted fields, keyed search hashes, response masking, log redaction, safe CSV exports, and encrypted private storage wrappers.
+
+### Web Application Security Controls Engine
+
+- Adds output escaping, HTML sanitization, safe redirects, secure cookie building, cache-control profiles, signed URLs, and named web security profiles.
+- Adds config/production validation for `web_security` and a new demo showing browser/API web controls.
