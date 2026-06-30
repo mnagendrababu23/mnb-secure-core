@@ -21,6 +21,7 @@ class ProductionSecurityChecker
         $securityHeaders = $this->config['security_headers'] ?? [];
         $cors = $this->config['cors'] ?? [];
         $requestValidation = $this->config['request_validation'] ?? [];
+        $requestReceiving = $this->config['request_receiving'] ?? [];
         $trustBoundaries = $this->config['trust_boundaries'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
@@ -84,6 +85,30 @@ class ProductionSecurityChecker
                 }
                 if (empty($requestValidation['default']) && empty($requestValidation['routes'])) {
                     $issues[] = ['level' => 'medium', 'key' => 'request_validation_no_policies', 'message' => 'Define default or route-specific request validation policies for public write endpoints.'];
+                }
+            }
+            if (is_array($requestReceiving)) {
+                if (array_key_exists('enabled', $requestReceiving) && empty($requestReceiving['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'request_receiving_disabled', 'message' => 'Secure request receiving profiles should be enabled in production.'];
+                }
+                if (empty($requestReceiving['profiles']) || !is_array($requestReceiving['profiles'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'request_receiving_profiles_missing', 'message' => 'Define named request receiving profiles for public, authenticated API, upload, admin, webhook, and internal routes.'];
+                }
+                $webhookProfile = $requestReceiving['profiles']['webhook'] ?? null;
+                $webhookConfig = is_array($requestReceiving['webhook'] ?? null) ? $requestReceiving['webhook'] : [];
+                if (is_array($webhookProfile) && (($webhookProfile['auth'] ?? null) === 'signature') && empty($webhookConfig['secret'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'webhook_secret_missing', 'message' => 'Webhook receiving profile uses signature auth but WEBHOOK_SECRET is missing.'];
+                }
+                foreach ((array)($requestReceiving['profiles'] ?? []) as $profileName => $profile) {
+                    if (!is_array($profile)) {
+                        continue;
+                    }
+                    if (!empty($profile['content_types']) && empty($profile['methods'])) {
+                        $issues[] = ['level' => 'medium', 'key' => 'request_receiving_profile_missing_methods', 'message' => 'Request receiving profile ' . (string)$profileName . ' should declare allowed HTTP methods.'];
+                    }
+                    if (($profile['auth'] ?? null) === null && str_contains((string)$profileName, 'admin')) {
+                        $issues[] = ['level' => 'high', 'key' => 'admin_receiving_profile_without_auth', 'message' => 'Admin request receiving profiles should require auth.'];
+                    }
                 }
             }
             if (is_array($trustBoundaries)) {

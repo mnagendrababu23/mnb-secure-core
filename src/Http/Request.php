@@ -25,14 +25,16 @@ class Request
         $uri = $_SERVER['REQUEST_URI'] ?? '/';
         $path = parse_url($uri, PHP_URL_PATH) ?: '/';
         $body = $_POST;
+        $rawBody = file_get_contents('php://input') ?: '';
         $contentType = strtolower($headers['Content-Type'] ?? $headers['content-type'] ?? '');
         if (str_contains($contentType, 'application/json')) {
-            $json = json_decode(file_get_contents('php://input') ?: '[]', true);
+            $json = json_decode($rawBody !== '' ? $rawBody : '[]', true);
             if (is_array($json)) {
                 $body = $json;
             }
         }
-        return new self($_SERVER['REQUEST_METHOD'] ?? 'GET', $path, $_GET, $body, $headers, $_SERVER, $trustedProxies);
+        return (new self($_SERVER['REQUEST_METHOD'] ?? 'GET', $path, $_GET, $body, $headers, $_SERVER, $trustedProxies))
+            ->withAttribute('raw_body', $rawBody);
     }
 
     public function method(): string { return strtoupper($this->method); }

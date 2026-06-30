@@ -2,6 +2,25 @@
 namespace Mnb\SecurityCore\Core;
 
 use Mnb\SecurityCore\Auth\Stores\DatabaseTokenStore;
+use Mnb\SecurityCore\Auth\Csrf;
+use Mnb\SecurityCore\Auth\OpaqueTokenService;
+use Mnb\SecurityCore\Http\Middleware\ApiTokenMiddleware;
+use Mnb\SecurityCore\Http\Middleware\ContentTypeMiddleware;
+use Mnb\SecurityCore\Http\Middleware\CsrfMiddleware;
+use Mnb\SecurityCore\Http\Middleware\HttpsMiddleware;
+use Mnb\SecurityCore\Http\Middleware\JsonBodyParserMiddleware;
+use Mnb\SecurityCore\Http\Middleware\RequestIdMiddleware;
+use Mnb\SecurityCore\Http\Middleware\RequestMethodMiddleware;
+use Mnb\SecurityCore\Http\Middleware\RequestSizeMiddleware;
+use Mnb\SecurityCore\Http\Middleware\ServerIdentityProtectionMiddleware;
+use Mnb\SecurityCore\Http\Middleware\SuspiciousRequestMiddleware;
+use Mnb\SecurityCore\Http\Middleware\TrustedHostMiddleware;
+use Mnb\SecurityCore\Http\Middleware\WebhookSignatureMiddleware;
+use Mnb\SecurityCore\Http\MiddlewarePipeline;
+use Mnb\SecurityCore\Http\RequestReceivingProfile;
+use Mnb\SecurityCore\Http\RequestReceivingRegistry;
+use Mnb\SecurityCore\Http\SecureRequestReceiver;
+use Mnb\SecurityCore\Http\WebhookSignatureVerifier;
 use Mnb\SecurityCore\Auth\Stores\FileTokenStore;
 use Mnb\SecurityCore\Auth\Stores\RedisTokenStore;
 use Mnb\SecurityCore\Cache\DatabaseCache;
@@ -305,6 +324,158 @@ class SecurityKernel
         $suggestionConfig = is_array($this->config['suggestions'] ?? null) ? $this->config['suggestions'] : [];
         $rules = is_array($suggestionConfig['rules'] ?? null) ? $suggestionConfig['rules'] : [];
         return new AutoSuggestionEngine(array_merge($rules, $customRules));
+    }
+
+
+    public function opaqueTokenService(?TokenStoreInterface $store = null, ?SecurityAuditTrail $audit = null): OpaqueTokenService
+    {
+        return new OpaqueTokenService($store ?: $this->tokenStore(), $audit ?: $this->auditTrail());
+    }
+
+    public function requestReceivingRegistry(): RequestReceivingRegistry
+    {
+        return RequestReceivingRegistry::fromConfig($this->config);
+    }
+
+    public function requestReceivingProfile(string $name): RequestReceivingProfile
+    {
+        return $this->requestReceivingRegistry()->get($name);
+    }
+
+    public function requestIdMiddleware(): RequestIdMiddleware
+    {
+        $config = is_array($this->config['request_receiving']['request_id'] ?? null) ? $this->config['request_receiving']['request_id'] : [];
+        return new RequestIdMiddleware(
+            (string)($config['header'] ?? 'X-Request-ID'),
+            (bool)($config['accept_incoming'] ?? true),
+            (int)($config['max_length'] ?? 80)
+        );
+    }
+
+    public function requestMethodMiddleware(array $methods = []): RequestMethodMiddleware
+    {
+        $blocked = is_array($this->config['request_receiving']['blocked_methods'] ?? null)
+            ? $this->config['request_receiving']['blocked_methods']
+            : ['TRACE', 'CONNECT'];
+        return new RequestMethodMiddleware($methods, $blocked);
+    }
+
+    public function contentTypeMiddleware(array $contentTypes = []): ContentTypeMiddleware
+    {
+        $receiving = is_array($this->config['request_receiving'] ?? null) ? $this->config['request_receiving'] : [];
+        return new ContentTypeMiddleware($contentTypes, (bool)($receiving['reject_body_on_get'] ?? true));
+    }
+
+    public function jsonBodyParserMiddleware(?int $maxBytes = null): JsonBodyParserMiddleware
+    {
+        $receiving = is_array($this->config['request_receiving'] ?? null) ? $this->config['request_receiving'] : [];
+        return new JsonBodyParserMiddleware(
+            (int)($receiving['json_depth'] ?? 64),
+            $maxBytes ?? (int)($receiving['json_max_bytes'] ?? $this->config['limits']['request_max_bytes'] ?? 1048576),
+            (bool)($receiving['json_require_object'] ?? true)
+        );
+    }
+
+    public function suspiciousRequestMiddleware(?SecurityAuditTrail $audit = null): SuspiciousRequestMiddleware
+    {
+        $config = is_array($this->config['request_receiving']['suspicious'] ?? null) ? $this->config['request_receiving']['suspicious'] : [];
+        return new SuspiciousRequestMiddleware($config, $audit ?: $this->auditTrail());
+    }
+
+    public function webhookSignatureVerifier(array $override = []): WebhookSignatureVerifier
+    {
+        $config = is_array($this->config['request_receiving']['webhook'] ?? null) ? $this->config['request_receiving']['webhook'] : [];
+        return new WebhookSignatureVerifier(array_replace($config, $override));
+    }
+
+    public function webhookSignatureMiddleware(array $override = []): WebhookSignatureMiddleware
+    {
+        return new WebhookSignatureMiddleware($this->webhookSignatureVerifier($override));
+    }
+
+    public function requestReceivingPipeline(string $profileName, array $options = []): MiddlewarePipeline
+    {
+        return $this->secureRequestReceiver($profileName, $options)->pipeline();
+    }
+
+    public function secureRequestReceiver(string $profileName, array $options = []): SecureRequestReceiver
+    {
+        $profile = $this->requestReceivingProfile($profileName);
+        return new SecureRequestReceiver($profile, $this->middlewareForReceivingProfile($profile, $options));
+    }
+
+    /** @return list<\Mnb\SecurityCore\Contracts\MiddlewareInterface> */
+    private function middlewareForReceivingProfile(RequestReceivingProfile $profile, array $options = []): array
+    {
+        $middleware = [];
+        $audit = $options['audit'] ?? $this->auditTrail();
+
+        if ($profile->requestId()) {
+            $middleware[] = $this->requestIdMiddleware();
+        }
+        if ($profile->requestTrust()) {
+            $middleware[] = $this->requestTrustMiddleware();
+        }
+        if ($profile->originProtection()) {
+            $middleware[] = new ServerIdentityProtectionMiddleware($this->config['origin_protection'] ?? []);
+        }
+        if ($profile->https()) {
+            $middleware[] = new HttpsMiddleware((bool)($this->config['app']['force_https'] ?? false));
+        }
+        if ($profile->trustedHost()) {
+            $middleware[] = new TrustedHostMiddleware((array)($this->config['app']['trusted_hosts'] ?? []));
+        }
+        if ($profile->cors()) {
+            $middleware[] = $this->corsMiddleware();
+        }
+        if ($profile->methods() !== []) {
+            $middleware[] = $this->requestMethodMiddleware($profile->methods());
+        }
+        if ($profile->maxBytes() > 0) {
+            $middleware[] = new RequestSizeMiddleware($profile->maxBytes());
+        }
+        if ($profile->contentTypes() !== []) {
+            $middleware[] = $this->contentTypeMiddleware($profile->contentTypes());
+        }
+        if ($profile->jsonBody()) {
+            $middleware[] = $this->jsonBodyParserMiddleware($profile->maxBytes() > 0 ? $profile->maxBytes() : null);
+        }
+        if ($profile->suspiciousDetection()) {
+            $middleware[] = $this->suspiciousRequestMiddleware($audit instanceof SecurityAuditTrail ? $audit : null);
+        }
+        if ($profile->securityHeaders()) {
+            $middleware[] = $this->securityHeadersMiddleware();
+        }
+        if ($profile->inputValidation()) {
+            $middleware[] = $this->inputValidationMiddleware();
+        }
+        if ($profile->ratePolicy() !== null) {
+            $middleware[] = $this->rateLimitMiddleware($profile->ratePolicy(), $profile->option('route_name'));
+        }
+        if ($profile->autoAudit()) {
+            $middleware[] = $this->autoAuditMiddleware($audit instanceof SecurityAuditTrail ? $audit : null);
+        }
+        if ($profile->csrf() || $profile->auth() === 'csrf') {
+            $middleware[] = new CsrfMiddleware(new Csrf((string)($profile->option('csrf_session_key') ?? '_csrf_token')));
+        }
+        if ($profile->auth() === 'bearer') {
+            $middleware[] = new ApiTokenMiddleware($this->opaqueTokenService(null, $audit instanceof SecurityAuditTrail ? $audit : null));
+        }
+        if ($profile->auth() === 'signature') {
+            $middleware[] = $this->webhookSignatureMiddleware(is_array($profile->option('webhook')) ? $profile->option('webhook') : []);
+        }
+        if ($profile->trustBoundary() !== null) {
+            $middleware[] = $this->trustBoundaryMiddleware(
+                $profile->trustBoundary(),
+                $options['resource_resolver'] ?? null,
+                $profile->option('action'),
+                $profile->option('data_class'),
+                $profile->option('resource'),
+                $audit instanceof SecurityAuditTrail ? $audit : null
+            );
+        }
+
+        return $middleware;
     }
 
     public function pdo(): PDO

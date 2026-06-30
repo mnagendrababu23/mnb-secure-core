@@ -124,6 +124,56 @@ return array_replace_recursive($base, [
     ],
 
 
+    'request_receiving' => [
+        'enabled' => filter_var($_ENV['REQUEST_RECEIVING_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'reject_body_on_get' => true,
+        'blocked_methods' => ['TRACE', 'CONNECT'],
+        'json_depth' => (int)($_ENV['REQUEST_JSON_DEPTH'] ?? 64),
+        'json_max_bytes' => (int)($_ENV['REQUEST_JSON_MAX_BYTES'] ?? 1048576),
+        'json_require_object' => true,
+        'request_id' => [
+            'header' => $_ENV['REQUEST_ID_HEADER'] ?? 'X-Request-ID',
+            'accept_incoming' => filter_var($_ENV['REQUEST_ID_ACCEPT_INCOMING'] ?? true, FILTER_VALIDATE_BOOL),
+            'max_length' => (int)($_ENV['REQUEST_ID_MAX_LENGTH'] ?? 80),
+        ],
+        'suspicious' => [
+            'mode' => $_ENV['SUSPICIOUS_REQUEST_MODE'] ?? 'block',
+            'max_path_length' => (int)($_ENV['REQUEST_MAX_PATH_LENGTH'] ?? 2048),
+            'max_parameters' => (int)($_ENV['REQUEST_MAX_PARAMETERS'] ?? 200),
+        ],
+        'webhook' => [
+            'signature_header' => $_ENV['WEBHOOK_SIGNATURE_HEADER'] ?? 'X-Signature',
+            'timestamp_header' => $_ENV['WEBHOOK_TIMESTAMP_HEADER'] ?? 'X-Timestamp',
+            'algorithm' => $_ENV['WEBHOOK_SIGNATURE_ALGORITHM'] ?? 'sha256',
+            'secret' => $_ENV['WEBHOOK_SECRET'] ?? '',
+            'tolerance_seconds' => (int)($_ENV['WEBHOOK_TIMESTAMP_TOLERANCE'] ?? 300),
+        ],
+        'defaults' => [
+            'request_id' => true,
+            'request_trust' => true,
+            'origin_protection' => true,
+            'https' => true,
+            'trusted_host' => true,
+            'cors' => true,
+            'security_headers' => true,
+            'json_body' => true,
+            'suspicious_detection' => true,
+            'input_validation' => true,
+            'auto_audit' => true,
+        ],
+        'profiles' => [
+            'public_read' => ['methods' => ['GET', 'HEAD'], 'max_bytes' => 65536, 'content_types' => [], 'rate_policy' => 'api', 'auth' => null, 'input_validation' => false, 'auto_audit' => false],
+            'public_form' => ['methods' => ['POST'], 'max_bytes' => 1048576, 'content_types' => ['application/x-www-form-urlencoded', 'multipart/form-data'], 'rate_policy' => 'api', 'auth' => null, 'csrf' => true, 'input_validation' => true, 'auto_audit' => true],
+            'api_public' => ['methods' => ['GET', 'POST'], 'max_bytes' => 1048576, 'content_types' => ['application/json'], 'rate_policy' => 'api', 'auth' => null, 'input_validation' => true],
+            'api_authenticated' => ['methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], 'max_bytes' => 1048576, 'content_types' => ['application/json'], 'rate_policy' => 'api', 'auth' => 'bearer', 'input_validation' => true],
+            'admin' => ['methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], 'max_bytes' => 1048576, 'content_types' => ['application/json', 'application/x-www-form-urlencoded'], 'rate_policy' => 'api', 'auth' => 'bearer', 'required_roles' => ['admin', 'super_admin'], 'input_validation' => true, 'auto_audit' => true],
+            'upload_image' => ['methods' => ['POST'], 'max_bytes' => 5242880, 'content_types' => ['multipart/form-data'], 'rate_policy' => 'api', 'auth' => 'bearer', 'upload_profile' => 'images', 'input_validation' => true, 'auto_audit' => true],
+            'webhook' => ['methods' => ['POST'], 'max_bytes' => 1048576, 'content_types' => ['application/json'], 'rate_policy' => 'api', 'auth' => 'signature', 'csrf' => false, 'input_validation' => true, 'auto_audit' => true],
+            'internal_system' => ['methods' => ['POST'], 'max_bytes' => 1048576, 'content_types' => ['application/json'], 'rate_policy' => 'api', 'auth' => 'bearer', 'trust_boundary' => 'backup.run', 'input_validation' => true, 'auto_audit' => true],
+        ],
+    ],
+
+
     'trust_boundaries' => [
         'enabled' => filter_var($_ENV['TRUST_BOUNDARIES_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
         'hide_denial_reasons' => filter_var($_ENV['TRUST_BOUNDARY_HIDE_DENIAL_REASONS'] ?? true, FILTER_VALIDATE_BOOL),

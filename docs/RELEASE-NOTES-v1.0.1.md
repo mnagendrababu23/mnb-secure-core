@@ -110,3 +110,30 @@ v1.0.1 now includes a production-ready trust boundary engine:
 - `TrustBoundaryMiddleware`
 
 This connects trust zones, data classes, resources, tenant context, permissions/scopes/roles, safe output filtering, and structured audit events.
+
+## Improvement 16 — Secure Request Receiving Strategy Engine
+
+This adds a unified request intake layer for applications that want one safe front door instead of manually ordering every middleware.
+
+New public API:
+
+```php
+$kernel->secureRequestReceiver('api_authenticated');
+$kernel->requestReceivingPipeline('api_authenticated');
+$kernel->requestReceivingRegistry();
+$kernel->requestReceivingProfile('api_authenticated');
+$kernel->webhookSignatureMiddleware();
+```
+
+New controls:
+
+- request correlation ID
+- allowed HTTP methods
+- request body size
+- content-type enforcement
+- JSON body parsing with invalid JSON rejection
+- suspicious request detection
+- HMAC/timestamp webhook signature verification
+- named receiving profiles for public, API, admin, upload, webhook, and internal-system routes
+
+Existing direct middleware usage remains supported.

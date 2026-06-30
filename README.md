@@ -1167,3 +1167,52 @@ $safe = $kernel->trustBoundaryRegistry()->filterForZone('students', $student, 's
 ```
 
 See `demos/19-trust-zone-boundary-engine.php` and `docs/PUBLIC-USAGE-EXAMPLES.md`.
+
+## Secure Request Receiving Strategy Engine
+
+`v1.0.1` includes a front-door request receiving engine that composes the existing middleware stack in a safer order. Existing middleware classes still work directly, but new apps can use named profiles.
+
+```php
+$request = $kernel->requestFromGlobals();
+
+$response = $kernel->secureRequestReceiver('api_authenticated')->handle(
+    $request,
+    function (Request $request): Response {
+        return Response::json([
+            'status' => true,
+            'user_id' => $request->attribute('auth')?->id(),
+            'request_id' => $request->attribute('request_id'),
+        ]);
+    }
+);
+```
+
+Built-in profile examples include:
+
+```text
+public_read
+public_form
+api_public
+api_authenticated
+admin
+upload_image
+webhook
+internal_system
+```
+
+The receiver can compose request ID, request trust, origin protection, HTTPS, trusted host, CORS, HTTP method checks, request-size checks, content-type checks, JSON body parsing, suspicious request detection, security headers, input validation, rate limits, auto audit, bearer auth, webhook signatures, CSRF, and trust boundaries.
+
+Webhook example:
+
+```php
+$middleware = $kernel->webhookSignatureMiddleware([
+    'secret' => $_ENV['WEBHOOK_SECRET'],
+]);
+```
+
+For full examples, see:
+
+```text
+demos/20-secure-request-receiving-strategy.php
+docs/PUBLIC-USAGE-EXAMPLES.md
+```

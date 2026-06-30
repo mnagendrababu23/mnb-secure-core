@@ -50,6 +50,16 @@ use Mnb\SecurityCore\Http\SecurityHeadersBuilder;
 use Mnb\SecurityCore\Http\MiddlewarePipeline;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Http\Response;
+use Mnb\SecurityCore\Http\RequestReceivingProfile;
+use Mnb\SecurityCore\Http\RequestReceivingRegistry;
+use Mnb\SecurityCore\Http\SecureRequestReceiver;
+use Mnb\SecurityCore\Http\WebhookSignatureVerifier;
+use Mnb\SecurityCore\Http\Middleware\ContentTypeMiddleware;
+use Mnb\SecurityCore\Http\Middleware\JsonBodyParserMiddleware;
+use Mnb\SecurityCore\Http\Middleware\RequestIdMiddleware;
+use Mnb\SecurityCore\Http\Middleware\RequestMethodMiddleware;
+use Mnb\SecurityCore\Http\Middleware\SuspiciousRequestMiddleware;
+use Mnb\SecurityCore\Http\Middleware\WebhookSignatureMiddleware;
 use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
 use Mnb\SecurityCore\Logging\SecurityAuditEvent;
 use Mnb\SecurityCore\Logging\SecurityAuditTrail;
@@ -806,6 +816,78 @@ $autoRequest = (new Request('POST', '/login', [], ['email' => 'user@example.com'
 $autoResponse = (new MiddlewarePipeline([$autoMiddleware]))->handle($autoRequest, fn() => Response::json(['status' => false], 401));
 $autoMiddlewareEntries = (new TamperEvidentAuditLogger($autoMiddlewareFile))->read(null, 'auth');
 ok($autoResponse->status() === 401 && count($autoMiddlewareEntries) === 1 && $autoMiddlewareEntries[0]['action'] === 'auth.login' && $autoMiddlewareEntries[0]['outcome'] === 'failure' && !str_contains(json_encode($autoMiddlewareEntries), 'secret'), 'auto audit middleware infers failed login without logging raw password');
+
+
+
+$receivingRegistry = new RequestReceivingRegistry([
+    'api_test' => [
+        'methods' => ['POST'],
+        'max_bytes' => 1024,
+        'content_types' => ['application/json'],
+        'rate_policy' => null,
+        'auth' => null,
+        'request_trust' => false,
+        'origin_protection' => false,
+        'https' => false,
+        'trusted_host' => false,
+        'cors' => false,
+        'security_headers' => false,
+        'input_validation' => false,
+        'auto_audit' => false,
+        'suspicious_detection' => false,
+        'json_body' => true,
+    ],
+]);
+ok($receivingRegistry->has('api_test') && $receivingRegistry->get('api_test')->methods() === ['POST'] && $receivingRegistry->get('api_test')->contentTypes() === ['application/json'], 'request receiving registry builds named intake profiles');
+
+$receivingKernelConfig = require __DIR__ . '/../config/security.php';
+$receivingKernelConfig['app']['trusted_hosts'] = [];
+$receivingKernelConfig['origin_protection']['enabled'] = false;
+$receivingKernelConfig['cors']['enabled'] = false;
+$receivingKernelConfig['security_headers']['enabled'] = false;
+$receivingKernelConfig['audit']['enabled'] = false;
+$receivingKernelConfig['request_receiving']['profiles']['api_test'] = $receivingRegistry->get('api_test')->options();
+$receivingKernel = new SecurityKernel($receivingKernelConfig);
+$receivingRequest = (new Request('POST', '/api/test', [], [], ['content-type' => 'application/json'], ['REMOTE_ADDR' => '127.0.0.1', 'CONTENT_LENGTH' => 16]))
+    ->withAttribute('raw_body', '{"name":"Ravi"}');
+$receivingResponse = $receivingKernel->secureRequestReceiver('api_test')->handle($receivingRequest, fn(Request $request) => Response::json([
+    'status' => true,
+    'name' => $request->input('name'),
+    'profile' => $request->attribute('request_receiving_profile'),
+    'request_id' => $request->attribute('request_id'),
+]));
+$receivingPayload = json_decode($receivingResponse->body(), true);
+ok($receivingResponse->status() === 200 && ($receivingPayload['name'] ?? null) === 'Ravi' && ($receivingPayload['profile'] ?? null) === 'api_test' && isset($receivingResponse->headers()['X-Request-ID']), 'secure request receiver composes request id, method, content type and JSON body parsing');
+
+$badMethodResponse = $receivingKernel->secureRequestReceiver('api_test')->handle(new Request('GET', '/api/test', [], [], ['content-type' => 'application/json'], ['REMOTE_ADDR' => '127.0.0.1']), fn() => Response::json(['status' => true]));
+$badTypeResponse = $receivingKernel->secureRequestReceiver('api_test')->handle(new Request('POST', '/api/test', [], [], ['content-type' => 'text/plain'], ['REMOTE_ADDR' => '127.0.0.1', 'CONTENT_LENGTH' => 4]), fn() => Response::json(['status' => true]));
+ok($badMethodResponse->status() === 405 && $badTypeResponse->status() === 415, 'secure request receiver blocks unexpected HTTP methods and content types');
+
+$invalidJson = (new MiddlewarePipeline([new JsonBodyParserMiddleware(10, 1024)]))->handle(
+    (new Request('POST', '/json', [], [], ['content-type' => 'application/json'], ['CONTENT_LENGTH' => 7]))->withAttribute('raw_body', '{bad'),
+    fn() => Response::json(['status' => true])
+);
+ok($invalidJson->status() === 400, 'JSON body parser rejects invalid JSON before controller logic');
+
+$suspiciousResponse = (new MiddlewarePipeline([new SuspiciousRequestMiddleware(['mode' => 'block'])]))->handle(
+    new Request('GET', '/../secret', ['q' => 'ok'], [], [], ['REMOTE_ADDR' => '127.0.0.1']),
+    fn() => Response::json(['status' => true])
+);
+ok($suspiciousResponse->status() === 400, 'suspicious request middleware blocks traversal-shaped intake');
+
+$webhookRaw = '{"event":"test"}';
+$webhookTs = (string)time();
+$webhookSecret = 'whsec_test_secret';
+$webhookSig = hash_hmac('sha256', $webhookTs . '.' . $webhookRaw, $webhookSecret);
+$webhookRequest = (new Request('POST', '/webhook', [], [], ['content-type' => 'application/json', 'x-timestamp' => $webhookTs, 'x-signature' => 'sha256=' . $webhookSig], ['CONTENT_LENGTH' => strlen($webhookRaw)]))->withAttribute('raw_body', $webhookRaw);
+$webhookResponse = (new MiddlewarePipeline([new WebhookSignatureMiddleware(new WebhookSignatureVerifier(['secret' => $webhookSecret]))]))->handle($webhookRequest, fn(Request $request) => Response::json(['verified' => $request->attribute('webhook_signature_verified')]));
+$badWebhookResponse = (new MiddlewarePipeline([new WebhookSignatureMiddleware(new WebhookSignatureVerifier(['secret' => $webhookSecret]))]))->handle($webhookRequest->withAttribute('raw_body', '{"event":"tampered"}'), fn() => Response::json(['status' => true]));
+ok($webhookResponse->status() === 200 && $badWebhookResponse->status() === 401, 'webhook signature middleware verifies HMAC signatures and blocks tampered payloads');
+
+$badReceivingConfig = $receivingKernelConfig;
+$badReceivingConfig['request_receiving']['profiles']['bad'] = ['methods' => ['POST'], 'auth' => 'magic'];
+$badReceivingReport = (new SecurityConfigValidator($badReceivingConfig))->validate();
+ok(!$badReceivingReport['passed'] && in_array('invalid_request_receiving_auth', array_column($badReceivingReport['errors'], 'key'), true), 'security config validator catches invalid request receiving auth profiles');
 
 $secretFile = $base . '/source.php';
 file_put_contents($secretFile, "<?php\n\$api_key = 'abcdefghijklmnopqrstuvwxyz123456';\n");

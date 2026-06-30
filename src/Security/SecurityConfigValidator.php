@@ -34,6 +34,7 @@ class SecurityConfigValidator
         $this->validateCors();
         $this->validateSecurityHeaders();
         $this->validateRequestValidation();
+        $this->validateRequestReceiving();
         $this->validateTrustBoundaries();
         $this->validateSuggestions();
         $this->validateOriginProtection();
@@ -780,6 +781,135 @@ class SecurityConfigValidator
         }
     }
 
+
+
+    private function validateRequestReceiving(): void
+    {
+        $receiving = $this->section('request_receiving', false);
+        if ($receiving === null) {
+            return;
+        }
+        $this->bool($receiving, 'enabled', 'request_receiving.enabled', required: false);
+        $this->bool($receiving, 'reject_body_on_get', 'request_receiving.reject_body_on_get', required: false);
+        $this->intRange($receiving, 'json_depth', 'request_receiving.json_depth', 1, 512, required: false);
+        $this->intRange($receiving, 'json_max_bytes', 'request_receiving.json_max_bytes', 1, 104857600, required: false);
+        $this->bool($receiving, 'json_require_object', 'request_receiving.json_require_object', required: false);
+        if (isset($receiving['blocked_methods'])) {
+            $this->validateHttpMethodList($receiving['blocked_methods'], 'request_receiving.blocked_methods');
+        }
+        if (isset($receiving['request_id'])) {
+            if (!is_array($receiving['request_id'])) {
+                $this->issue('high', 'invalid_request_receiving_request_id', 'request_receiving.request_id', 'request_id config must be an array.', 'array', $receiving['request_id']);
+            } else {
+                $rid = $receiving['request_id'];
+                if (isset($rid['header']) && (!$this->isStringLike($rid['header']) || preg_match('/[\r\n]/', (string)$rid['header']))) {
+                    $this->issue('high', 'invalid_request_id_header', 'request_receiving.request_id.header', 'Request ID header must be a safe single-line string.', 'header name', $rid['header']);
+                }
+                $this->bool($rid, 'accept_incoming', 'request_receiving.request_id.accept_incoming', required: false);
+                $this->intRange($rid, 'max_length', 'request_receiving.request_id.max_length', 16, 256, required: false);
+            }
+        }
+        if (isset($receiving['suspicious'])) {
+            if (!is_array($receiving['suspicious'])) {
+                $this->issue('high', 'invalid_suspicious_request_config', 'request_receiving.suspicious', 'Suspicious request config must be an array.', 'array', $receiving['suspicious']);
+            } else {
+                $mode = (string)($receiving['suspicious']['mode'] ?? 'block');
+                if (!in_array($mode, ['block', 'audit'], true)) {
+                    $this->issue('medium', 'invalid_suspicious_request_mode', 'request_receiving.suspicious.mode', 'Suspicious request mode must be block or audit.', 'block|audit', $mode);
+                }
+                $this->intRange($receiving['suspicious'], 'max_path_length', 'request_receiving.suspicious.max_path_length', 64, 8192, required: false);
+                $this->intRange($receiving['suspicious'], 'max_parameters', 'request_receiving.suspicious.max_parameters', 1, 5000, required: false);
+            }
+        }
+        if (isset($receiving['webhook'])) {
+            if (!is_array($receiving['webhook'])) {
+                $this->issue('high', 'invalid_webhook_receiving_config', 'request_receiving.webhook', 'Webhook receiving config must be an array.', 'array', $receiving['webhook']);
+            } else {
+                foreach (['signature_header', 'timestamp_header', 'algorithm'] as $key) {
+                    if (isset($receiving['webhook'][$key]) && (!$this->isStringLike($receiving['webhook'][$key]) || preg_match('/[\r\n]/', (string)$receiving['webhook'][$key]))) {
+                        $this->issue('high', 'invalid_webhook_' . $key, 'request_receiving.webhook.' . $key, 'Webhook config values must be safe single-line strings.', 'string', $receiving['webhook'][$key]);
+                    }
+                }
+                $this->intRange($receiving['webhook'], 'tolerance_seconds', 'request_receiving.webhook.tolerance_seconds', 0, 86400, required: false);
+                $algorithm = strtolower((string)($receiving['webhook']['algorithm'] ?? 'sha256'));
+                if (!in_array($algorithm, hash_hmac_algos(), true)) {
+                    $this->issue('high', 'invalid_webhook_algorithm', 'request_receiving.webhook.algorithm', 'Webhook HMAC algorithm is not supported by PHP.', 'hash_hmac algorithm', $algorithm);
+                }
+            }
+        }
+        if (isset($receiving['defaults'])) {
+            if (!is_array($receiving['defaults'])) {
+                $this->issue('high', 'invalid_request_receiving_defaults', 'request_receiving.defaults', 'Request receiving defaults must be an array.', 'array', $receiving['defaults']);
+            } else {
+                $this->validateReceivingProfile('request_receiving.defaults', $receiving['defaults'], allowMissingMethods: true);
+            }
+        }
+        if (!isset($receiving['profiles']) || !is_array($receiving['profiles']) || $receiving['profiles'] === []) {
+            $this->issue('medium', 'missing_request_receiving_profiles', 'request_receiving.profiles', 'Define named request receiving profiles such as api_authenticated, public_form, upload_image, and webhook.', 'non-empty profiles array', $receiving['profiles'] ?? null);
+            return;
+        }
+        foreach ($receiving['profiles'] as $name => $profile) {
+            if (!is_string($name) || !preg_match('/^[a-z][a-z0-9_.:-]{1,95}$/', $name)) {
+                $this->issue('high', 'invalid_request_receiving_profile_name', 'request_receiving.profiles', 'Request receiving profile names must be safe slugs.', 'safe profile slug', $name);
+                continue;
+            }
+            if (!is_array($profile)) {
+                $this->issue('high', 'invalid_request_receiving_profile', 'request_receiving.profiles.' . $name, 'Request receiving profile must be an array.', 'array', $profile);
+                continue;
+            }
+            $this->validateReceivingProfile('request_receiving.profiles.' . $name, $profile);
+        }
+    }
+
+    /** @param array<string,mixed> $profile */
+    private function validateReceivingProfile(string $path, array $profile, bool $allowMissingMethods = false): void
+    {
+        foreach (['request_id', 'request_trust', 'origin_protection', 'https', 'trusted_host', 'cors', 'security_headers', 'json_body', 'suspicious_detection', 'input_validation', 'auto_audit', 'csrf'] as $key) {
+            $this->bool($profile, $key, $path . '.' . $key, required: false);
+        }
+        if (isset($profile['methods'])) {
+            $this->validateHttpMethodList($profile['methods'], $path . '.methods');
+        } elseif (!$allowMissingMethods) {
+            $this->issue('medium', 'request_receiving_profile_missing_methods', $path . '.methods', 'Receiving profiles should declare allowed HTTP methods.', 'HTTP method list', null);
+        }
+        $this->positiveInt($profile, 'max_bytes', $path . '.max_bytes', required: false);
+        if (isset($profile['content_types'])) {
+            $this->stringList($profile['content_types'], $path . '.content_types', false);
+        }
+        if (isset($profile['rate_policy']) && $profile['rate_policy'] !== null && (!$this->isStringLike($profile['rate_policy']) || trim((string)$profile['rate_policy']) === '')) {
+            $this->issue('medium', 'invalid_request_receiving_rate_policy', $path . '.rate_policy', 'rate_policy must be a non-empty string when provided.', 'rate policy name', $profile['rate_policy']);
+        }
+        if (isset($profile['auth']) && $profile['auth'] !== null && $profile['auth'] !== '') {
+            $auth = (string)$profile['auth'];
+            if (!in_array($auth, ['bearer', 'csrf', 'signature', 'none'], true)) {
+                $this->issue('high', 'invalid_request_receiving_auth', $path . '.auth', 'auth must be bearer, csrf, signature, none, or null.', 'bearer|csrf|signature|none|null', $auth);
+            }
+        }
+        foreach (['trust_boundary', 'upload_profile', 'route_name', 'action', 'data_class', 'resource'] as $key) {
+            if (isset($profile[$key]) && $profile[$key] !== null && (!$this->isStringLike($profile[$key]) || preg_match('/[\r\n]/', (string)$profile[$key]))) {
+                $this->issue('medium', 'invalid_request_receiving_' . $key, $path . '.' . $key, $key . ' must be a safe string when provided.', 'safe string', $profile[$key]);
+            }
+        }
+        if (($profile['auth'] ?? null) === 'signature') {
+            $webhook = is_array($profile['webhook'] ?? null) ? $profile['webhook'] : (is_array($this->config['request_receiving']['webhook'] ?? null) ? $this->config['request_receiving']['webhook'] : []);
+            if ($this->isProduction($this->config['app'] ?? []) && empty($webhook['secret'])) {
+                $this->issue('high', 'missing_webhook_secret_for_signature_profile', $path . '.auth', 'Signature-auth receiving profiles require WEBHOOK_SECRET in production.', 'non-empty webhook secret', null);
+            }
+        }
+    }
+
+    private function validateHttpMethodList(mixed $value, string $path): void
+    {
+        if (!$this->stringList($value, $path, false)) {
+            return;
+        }
+        foreach ((array)$value as $method) {
+            $method = strtoupper(trim((string)$method));
+            if (!in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'], true)) {
+                $this->issue('medium', 'invalid_http_method_' . str_replace('.', '_', $path), $path, 'HTTP method should be one of GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD.', 'known HTTP method', $method);
+            }
+        }
+    }
 
     private function validateTrustBoundaries(): void
     {

@@ -227,3 +227,43 @@ Safe output filtering:
 $record = ['id' => 44, 'name' => 'Ravi', 'parent_phone' => '9876543210', 'password_hash' => 'hash'];
 $safe = $kernel->trustBoundaryRegistry()->filterForZone('students', $record, 'school_admin');
 ```
+
+## Secure request receiving profile
+
+Use a named receiver when you want the library to assemble the request intake stack in the recommended order.
+
+```php
+$request = $kernel->requestFromGlobals();
+
+$response = $kernel->secureRequestReceiver('api_authenticated')->handle(
+    $request,
+    fn (Request $request) => Response::json([
+        'status' => true,
+        'request_id' => $request->attribute('request_id'),
+        'user_id' => $request->attribute('auth')?->id(),
+    ])
+);
+```
+
+A small custom profile can be registered in `config/security.php`:
+
+```php
+'api_profile' => [
+    'methods' => ['POST'],
+    'max_bytes' => 1048576,
+    'content_types' => ['application/json'],
+    'rate_policy' => 'api',
+    'auth' => 'bearer',
+    'input_validation' => true,
+    'auto_audit' => true,
+]
+```
+
+Webhook signature receiving:
+
+```php
+$raw = $request->attribute('raw_body');
+$middleware = $kernel->webhookSignatureMiddleware([
+    'secret' => $_ENV['WEBHOOK_SECRET'],
+]);
+```

@@ -64,3 +64,15 @@ All notable changes to `mnb-secure-core` are documented here.
 - Added trust boundary audit events without logging raw sensitive payloads.
 - Added config validation and production readiness checks for `trust_boundaries`.
 - Added demo `19-trust-zone-boundary-engine.php`.
+
+### v1.0.1 — Improvement 16: Secure Request Receiving Strategy Engine
+
+Added a named request receiving engine that composes existing controls in a safe front-door order without removing older middleware usage.
+
+- Added `RequestReceivingProfile`, `RequestReceivingRegistry`, and `SecureRequestReceiver`.
+- Added `RequestIdMiddleware`, `RequestMethodMiddleware`, `ContentTypeMiddleware`, `JsonBodyParserMiddleware`, `SuspiciousRequestMiddleware`, and `WebhookSignatureMiddleware`.
+- Added `WebhookSignatureVerifier` for HMAC/timestamp webhook receiving.
+- Added `SecurityKernel::secureRequestReceiver()` and `SecurityKernel::requestReceivingPipeline()` helpers.
+- Added request receiving config profiles for public, API, admin, upload, webhook, and internal-system routes.
+- Added config and production-readiness validation for request receiving profiles.
+- Added demo 20 and tests for named profiles, method/content-type checks, JSON parsing, suspicious request blocking, and webhook signatures.
