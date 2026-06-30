@@ -46,6 +46,11 @@ use Mnb\SecurityCore\Database\TableSecurityPolicy;
 use Mnb\SecurityCore\Env\SecretScanner;
 use Mnb\SecurityCore\Exceptions\SecurityException;
 use Mnb\SecurityCore\Files\FileUploadPolicy;
+use Mnb\SecurityCore\Files\FileSecurityRegistry;
+use Mnb\SecurityCore\Files\ProtectedDownloadManager;
+use Mnb\SecurityCore\Files\SafeDownloadResponse;
+use Mnb\SecurityCore\Files\ArchiveInspector;
+use Mnb\SecurityCore\Files\FileRetentionManager;
 use Mnb\SecurityCore\Files\LocalPrivateStorage;
 use Mnb\SecurityCore\Files\SecureFileManager;
 use Mnb\SecurityCore\Files\UploadSecurityProfile;
@@ -403,6 +408,72 @@ ok($auditedUploadRejected && count($uploadAuditEntries) === 2 && $uploadAuditEnt
 
 $archivePolicy = FileUploadPolicy::forProfile(UploadSecurityProfile::ARCHIVES);
 ok($archivePolicy->allowsExtension('zip') && !$archivePolicy->allowsExtension('php'), 'archive upload profile allows archives but still blocks executable extensions');
+
+
+$fileSecurityAuditLogger = new TamperEvidentAuditLogger($base . '/audit/file-security.log');
+$fileSecurityAudit = new SecurityAuditTrail($fileSecurityAuditLogger);
+$fileSecurityConfig = [
+    'file_security' => [
+        'enabled' => true,
+        'deny_by_default' => true,
+        'audit_downloads' => true,
+        'policies' => [
+            'student_document.download' => [
+                'actions' => ['download'],
+                'roles' => ['school_admin'],
+                'permissions' => ['documents.download'],
+                'scopes' => ['documents:download'],
+                'tenant_required' => true,
+                'data_classes' => ['internal', 'sensitive'],
+                'require_scan_passed' => true,
+                'disposition' => 'attachment',
+                'cache_policy' => 'download',
+                'audit' => true,
+                'signed_urls' => ['enabled' => true, 'ttl' => 900],
+            ],
+        ],
+    ],
+];
+$fileRegistry = FileSecurityRegistry::fromConfig($fileSecurityConfig, $fileSecurityAudit);
+$downloadRecord = $stored + [
+    'file_id' => 'file_test_1',
+    'data_class' => 'sensitive',
+    'scan_status' => 'passed',
+    'school_id' => 10,
+    'branch_id' => 5,
+    'academic_year_id' => 2026,
+    'owner_user_id' => 1,
+];
+$fileRequest = (new Request('GET', '/files/file_test_1', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']))
+    ->withAttribute('auth', new AuthContext(true, 1, ['documents:download'], ['documents.download'], ['school_admin']))
+    ->withAttribute('tenant_context', $context);
+$fileAllowed = $fileRegistry->decide('student_document.download', $fileRequest, $downloadRecord, 'download');
+$fileDenied = $fileRegistry->decide('student_document.download', $fileRequest, array_replace($downloadRecord, ['school_id' => 11]), 'download');
+ok($fileAllowed->allowed() && $fileDenied->denied() && $fileDenied->code() === 'file_tenant_denied', 'file security registry authorizes scan-gated tenant downloads');
+
+$downloadManager = new ProtectedDownloadManager($storage, $fileRegistry, new CacheControlPolicy(), new SignedUrl(str_repeat('D', 40)));
+$downloadResponse = $downloadManager->download($fileRequest, $downloadRecord, 'student_document.download');
+ok($downloadResponse->status() === 200 && $downloadResponse->body() === 'hello' && str_contains($downloadResponse->headers()['Content-Disposition'] ?? '', 'attachment') && ($downloadResponse->headers()['X-Content-Type-Options'] ?? '') === 'nosniff', 'protected download manager returns safe attachment response headers');
+
+$signedDownloadUrl = $downloadManager->signedUrl($downloadRecord, '/download/file_test_1', 'student_document.download');
+ok($downloadManager->verifySignedUrl($signedDownloadUrl, 'student_document.download') && !$downloadManager->verifySignedUrl($signedDownloadUrl, 'files.download'), 'protected download manager creates purpose-bound signed URLs');
+
+$tarPath = $base . '/unsafe.tar';
+file_put_contents($tarPath, 'fake tar');
+$archiveInspection = (new ArchiveInspector())->inspect($tarPath, 'application/x-tar', 'tar');
+ok($archiveInspection->failed() && in_array('unsupported_archive_deep_inspection', $archiveInspection->findings(), true), 'archive inspector fails closed for unsupported tar deep inspection');
+
+$retentionDir = $base . '/retention';
+@mkdir($retentionDir, 0777, true);
+$oldTempFile = $retentionDir . '/old.tmp';
+file_put_contents($oldTempFile, 'old');
+touch($oldTempFile, time() - 7200);
+$retention = new FileRetentionManager(quarantineTtlHours: 1);
+$retentionReport = $retention->purgeQuarantine($retentionDir);
+ok($retentionReport['deleted'] === 1 && !is_file($oldTempFile), 'file retention manager purges expired quarantine files');
+
+$fileAuditEntries = $fileSecurityAuditLogger->read(null, 'file');
+ok(count($fileAuditEntries) >= 3 && $fileAuditEntries[0]['action'] === 'access.download', 'file security decisions write structured download audit events');
 
 $headersPipeline = new MiddlewarePipeline([new SecurityHeadersMiddleware(['hsts' => true])]);
 $headersResponse = $headersPipeline->handle(new Request('GET', '/', [], [], [], ['HTTPS' => 'on']), fn() => Response::text('ok'));

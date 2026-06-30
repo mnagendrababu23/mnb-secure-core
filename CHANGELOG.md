@@ -132,3 +132,15 @@ Added a unified web security controls layer for browser/API output safety while 
 - Added kernel helpers for escaping, sanitization, redirects, cookies, cache-control, signed URLs, and web security controls.
 - Added config validation and production readiness checks for `web_security`.
 - Added demo `24-web-application-security-controls-engine.php` and tests for output escaping, sanitization, redirects, cookies, cache headers, signed URLs, profiles, validation, and suggestions.
+
+### v1.0.1 — Improvement 21: File Upload, Download, and Document Security Engine
+
+Added a file lifecycle security layer around the existing upload profiles and private storage controls.
+
+- Added `FileSecurityRegistry`, `FileSecurityPolicy`, `FileSecurityRecord`, and `FileSecurityDecision` for named download/delete/document policies.
+- Added `ProtectedDownloadManager` and `SafeDownloadResponse` for scan-gated, tenant-aware downloads with safe attachment headers, no-sniff, no-store cache headers, checksums, ETags, and policy metadata.
+- Added purpose-bound signed download URL helpers through the existing `SignedUrl` primitive.
+- Added document/archive inspection hooks with `DocumentInspectorInterface`, `ArchiveInspector`, `DocumentInspectionResult`, `DocumentSanitizerInterface`, and `NullDocumentSanitizer`.
+- Added `FileChecksum` and richer upload metadata: file id, checksum, scan status, scanner driver/message, owner/tenant fields, data class, and creation timestamp.
+- Added `FileRetentionManager` for quarantine, rejected-file, and temporary-export cleanup.
+- Added file security config validation, production-readiness warnings, auto-suggestions, kernel helpers, and demo `25-file-upload-download-document-security-engine.php`.

@@ -14,7 +14,9 @@ class SecureFileManager
         private FileUploadPolicy $policy,
         private string $quarantinePath,
         private MalwareScannerInterface $scanner = new NullMalwareScanner(),
-        private ?SecurityAuditTrail $audit = null
+        private ?SecurityAuditTrail $audit = null,
+        private ?DocumentInspectorInterface $inspector = null,
+        private ?DocumentSanitizerInterface $sanitizer = null
     ) {
         if (!is_dir($quarantinePath)) {
             mkdir($quarantinePath, 0775, true);
@@ -48,6 +50,14 @@ class SecureFileManager
             }
             $this->validateMimeExtensionPair($extension, $mime);
             $this->validateFileContent($sourcePath, $extension, $mime);
+            $inspection = $this->inspector?->inspect($sourcePath, $mime, $extension);
+            if ($inspection && $inspection->failed()) {
+                throw new SecurityException('Document inspection failed: ' . $inspection->message());
+            }
+            $sanitization = $this->sanitizer?->sanitize($sourcePath, $mime, $extension);
+            if ($sanitization && $sanitization->failed()) {
+                throw new SecurityException('Document sanitization failed: ' . $sanitization->message());
+            }
 
             $quarantine = rtrim($this->quarantinePath, '/') . '/' . Str::random(12) . '.' . $extension;
             copy($sourcePath, $quarantine);
@@ -57,15 +67,28 @@ class SecureFileManager
             }
             $safeName = $this->policy->randomizeNames ? Str::random(16) . '.' . $extension : basename($originalName);
             $storagePath = trim($module, '/') . '/' . date('Y/m') . '/' . $safeName;
-            $this->storage->put($storagePath, file_get_contents($quarantine));
+            $contents = file_get_contents($quarantine) ?: '';
+            $checksum = FileChecksum::contentsSha256($contents);
+            $this->storage->put($storagePath, $contents);
             @unlink($quarantine);
             $record = [
+                'file_id' => 'file_' . substr($checksum, 0, 16),
                 'original_name' => $originalName,
                 'storage_path' => $storagePath,
                 'mime' => $mime,
                 'size' => $size,
                 'extension' => $extension,
                 'profile' => $this->policy->profile,
+                'scan_status' => 'passed',
+                'scan_driver' => get_debug_type($this->scanner),
+                'scan_message' => $this->scanner->lastMessage(),
+                'checksum_sha256' => $checksum,
+                'data_class' => (string)($context['data_class'] ?? 'internal'),
+                'owner_user_id' => $actor['user_id'] ?? $context['owner_user_id'] ?? null,
+                'school_id' => $context['school_id'] ?? null,
+                'branch_id' => $context['branch_id'] ?? null,
+                'academic_year_id' => $context['academic_year_id'] ?? null,
+                'created_at' => gmdate('c'),
             ];
             $this->audit?->uploadAccepted($actor, $target + ['storage_path' => $storagePath], $context, [
                 'mime' => $mime,

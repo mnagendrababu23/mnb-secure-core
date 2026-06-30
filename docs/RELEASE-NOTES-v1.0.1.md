@@ -185,3 +185,7 @@ This release line now includes the Data Protection Strategy Engine. It unifies f
 
 - Adds output escaping, HTML sanitization, safe redirects, secure cookie building, cache-control profiles, signed URLs, and named web security profiles.
 - Adds config/production validation for `web_security` and a new demo showing browser/API web controls.
+
+### Improvement 21 — File Upload, Download, and Document Security Engine
+
+This improvement completes the file lifecycle by adding protected downloads, file security policies, scan-status gates, tenant-aware file access, safe download responses, checksums, signed download URLs, archive/document inspection hooks, and file retention cleanup.

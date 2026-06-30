@@ -392,3 +392,23 @@ $redirect = $web->safeRedirect($request->input('next'), '/dashboard');
 $cookie = $web->cookies()->make('__Host-session_hint', $hint, ['max_age' => 600]);
 $signed = $web->signedUrl()->sign('/download/invoice.pdf', ['invoice_id' => 42], time() + 900, 'download');
 ```
+
+## Protected file downloads
+
+```php
+$record = $kernel->secureFileManager(profile: 'documents')->storeFromPath(
+    $tmpPath,
+    'student-note.txt',
+    'student-documents',
+    ['user_id' => $request->attribute('auth')->id()],
+    ['school_id' => 10, 'data_class' => 'sensitive']
+);
+
+$response = $kernel->protectedDownloadManager()->download(
+    $request,
+    $record,
+    'student_document.download'
+);
+```
+
+The protected download manager enforces file policy, tenant scope, scan status, safe filename/disposition headers, no-sniff, no-store cache headers, audit events, and optional signed URLs.

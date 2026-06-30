@@ -1380,3 +1380,44 @@ $kernel->webSecurityControls('browser_page');
 ```
 
 Built-in cache profiles include `public_static`, `public_api`, `private_user`, `sensitive_no_store`, `no_store`, and `download`.
+
+## File Upload, Download, and Document Security Engine
+
+`v1.0.1` includes a full file lifecycle security layer on top of the existing upload profiles and malware scanner hooks.
+
+```php
+$record = $kernel->secureFileManager(profile: 'documents')->storeFromPath(
+    $tmpPath,
+    'student-note.txt',
+    'student-documents',
+    ['user_id' => 501],
+    ['school_id' => 10, 'data_class' => 'sensitive']
+);
+
+$response = $kernel->protectedDownloadManager()->download(
+    $request,
+    $record,
+    'student_document.download'
+);
+```
+
+The file security engine adds:
+
+- named file policies for downloads/deletes/document access;
+- scan-gated downloads through `scan_status`;
+- tenant-aware file access checks;
+- safe `Content-Disposition`, `Content-Type`, `nosniff`, and no-store cache headers;
+- checksum metadata, ETag/Digest headers, and storage path fingerprinting in audit logs;
+- purpose-bound signed download URLs;
+- archive/document inspection hooks;
+- retention cleanup for quarantine, rejected files, and temporary exports.
+
+Kernel helpers:
+
+```php
+$kernel->fileSecurityRegistry();
+$kernel->protectedDownloadManager();
+$kernel->documentInspector();
+$kernel->documentSanitizer();
+$kernel->fileRetentionManager();
+```

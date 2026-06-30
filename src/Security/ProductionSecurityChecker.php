@@ -27,6 +27,7 @@ class ProductionSecurityChecker
         $trustBoundaries = $this->config['trust_boundaries'] ?? [];
         $dataProtection = $this->config['data_protection'] ?? [];
         $webSecurity = $this->config['web_security'] ?? [];
+        $fileSecurity = $this->config['file_security'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -236,6 +237,34 @@ class ProductionSecurityChecker
                     }
                 }
             }
+
+
+            if (is_array($fileSecurity)) {
+                if (array_key_exists('enabled', $fileSecurity) && empty($fileSecurity['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'file_security_disabled', 'message' => 'File upload/download/document security should be enabled in production.'];
+                }
+                if (array_key_exists('deny_by_default', $fileSecurity) && empty($fileSecurity['deny_by_default'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'file_security_not_deny_by_default', 'message' => 'File security policies should deny by default in production.'];
+                }
+                if (array_key_exists('deny_download_until_scan_passed', $fileSecurity) && empty($fileSecurity['deny_download_until_scan_passed'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'file_download_before_scan_allowed', 'message' => 'Production downloads should be denied until upload scanning has passed.'];
+                }
+                if (empty($fileSecurity['policies']) || !is_array($fileSecurity['policies'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'file_security_policies_missing', 'message' => 'Define file security policies for protected downloads, deletes, previews, and document access.'];
+                }
+                $download = is_array($fileSecurity['download'] ?? null) ? $fileSecurity['download'] : [];
+                if (array_key_exists('nosniff', $download) && empty($download['nosniff'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'download_nosniff_disabled', 'message' => 'Protected download responses should include X-Content-Type-Options: nosniff.'];
+                }
+                if (!empty($download['allow_inline'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'inline_file_preview_enabled', 'message' => 'Inline previews should be limited to explicitly safe profiles and sandboxed preview pages.'];
+                }
+                $inspection = is_array($fileSecurity['inspection'] ?? null) ? $fileSecurity['inspection'] : [];
+                if (array_key_exists('enabled', $inspection) && empty($inspection['enabled'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'document_inspection_disabled', 'message' => 'Enable document/archive inspection hooks for production uploads.'];
+                }
+            }
+
             if (is_array($trustBoundaries)) {
                 if (array_key_exists('enabled', $trustBoundaries) && empty($trustBoundaries['enabled'])) {
                     $issues[] = ['level' => 'high', 'key' => 'trust_boundaries_disabled', 'message' => 'Trust boundary enforcement should be enabled in production for protected resources.'];

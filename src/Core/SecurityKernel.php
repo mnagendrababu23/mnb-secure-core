@@ -45,6 +45,13 @@ use Mnb\SecurityCore\Database\PdoConnectionFactory;
 use Mnb\SecurityCore\Files\ClamAvMalwareScanner;
 use Mnb\SecurityCore\Files\CompositeMalwareScanner;
 use Mnb\SecurityCore\Files\FileUploadPolicy;
+use Mnb\SecurityCore\Files\FileSecurityRegistry;
+use Mnb\SecurityCore\Files\ProtectedDownloadManager;
+use Mnb\SecurityCore\Files\ArchiveInspector;
+use Mnb\SecurityCore\Files\DocumentInspectorInterface;
+use Mnb\SecurityCore\Files\DocumentSanitizerInterface;
+use Mnb\SecurityCore\Files\NullDocumentSanitizer;
+use Mnb\SecurityCore\Files\FileRetentionManager;
 use Mnb\SecurityCore\Files\HeuristicMalwareScanner;
 use Mnb\SecurityCore\Files\LocalPrivateStorage;
 use Mnb\SecurityCore\Files\NullMalwareScanner;
@@ -196,11 +203,14 @@ class SecurityKernel
         );
     }
 
-    public function secureFileManager(?MalwareScannerInterface $scanner = null, ?string $profile = null, ?SecurityAuditTrail $audit = null): SecureFileManager
+    public function secureFileManager(?MalwareScannerInterface $scanner = null, ?string $profile = null, ?SecurityAuditTrail $audit = null, ?DocumentInspectorInterface $inspector = null, ?DocumentSanitizerInterface $sanitizer = null): SecureFileManager
     {
-        $storage = new LocalPrivateStorage($this->config['paths']['private_storage']);
+        $storageConfig = is_array($this->config['data_protection']['storage'] ?? null) ? $this->config['data_protection']['storage'] : [];
+        $storage = !empty($storageConfig['encrypt_files'])
+            ? $this->encryptedPrivateStorage()
+            : new LocalPrivateStorage($this->config['paths']['private_storage']);
         $policy = $this->uploadPolicy($profile);
-        return new SecureFileManager($storage, $policy, $this->config['paths']['quarantine'], $scanner ?: $this->malwareScanner(), $audit);
+        return new SecureFileManager($storage, $policy, $this->config['paths']['quarantine'], $scanner ?: $this->malwareScanner(), $audit, $inspector ?: $this->documentInspector(), $sanitizer ?: $this->documentSanitizer());
     }
 
     public function auditLogger(): TamperEvidentAuditLogger
@@ -398,6 +408,46 @@ class SecurityKernel
     public function encryptedPrivateStorage(): EncryptedStorage
     {
         return new EncryptedStorage(new LocalPrivateStorage($this->config['paths']['private_storage']), $this->dataKeyRing());
+    }
+
+    public function fileSecurityRegistry(?SecurityAuditTrail $audit = null): FileSecurityRegistry
+    {
+        return FileSecurityRegistry::fromConfig($this->config, $audit ?: $this->auditTrail());
+    }
+
+    public function protectedDownloadManager(?SecurityAuditTrail $audit = null): ProtectedDownloadManager
+    {
+        $storageConfig = is_array($this->config['data_protection']['storage'] ?? null) ? $this->config['data_protection']['storage'] : [];
+        $storage = !empty($storageConfig['encrypt_files'])
+            ? $this->encryptedPrivateStorage()
+            : new LocalPrivateStorage($this->config['paths']['private_storage']);
+        return new ProtectedDownloadManager($storage, $this->fileSecurityRegistry($audit), $this->cacheControlPolicy(), $this->signedUrl());
+    }
+
+    public function documentInspector(): DocumentInspectorInterface
+    {
+        $uploads = is_array($this->config['uploads'] ?? null) ? $this->config['uploads'] : [];
+        return new ArchiveInspector(
+            (int)($uploads['max_archive_entries'] ?? 500),
+            (int)($uploads['max_archive_uncompressed_bytes'] ?? 104857600),
+            is_array($uploads['blocked_extensions'] ?? null) ? $uploads['blocked_extensions'] : ['php', 'phtml', 'phar', 'exe', 'sh']
+        );
+    }
+
+    public function documentSanitizer(): DocumentSanitizerInterface
+    {
+        return new NullDocumentSanitizer();
+    }
+
+    public function fileRetentionManager(): FileRetentionManager
+    {
+        $fs = is_array($this->config['file_security'] ?? null) ? $this->config['file_security'] : [];
+        $retention = is_array($fs['retention'] ?? null) ? $fs['retention'] : [];
+        return new FileRetentionManager(
+            (int)($retention['quarantine_ttl_hours'] ?? 24),
+            (int)($retention['rejected_ttl_days'] ?? 7),
+            (int)($retention['temporary_exports_ttl_hours'] ?? 24)
+        );
     }
 
 

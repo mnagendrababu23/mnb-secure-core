@@ -37,6 +37,7 @@ class SecurityConfigValidator
         $this->validateAuthentication();
         $this->validateAuthorization();
         $this->validateDataProtection();
+        $this->validateFileSecurity();
         $this->validateWebSecurity();
         $this->validateRequestReceiving();
         $this->validateTrustBoundaries();
@@ -1093,6 +1094,93 @@ class SecurityConfigValidator
         }
         if (isset($dp['logs']) && is_array($dp['logs'])) {
             $this->bool($dp['logs'], 'redact_before_write', 'data_protection.logs.redact_before_write', required: false);
+        }
+    }
+
+
+    private function validateFileSecurity(): void
+    {
+        $fs = $this->section('file_security', false);
+        if ($fs === null) {
+            return;
+        }
+        $validClasses = ['public', 'internal', 'confidential', 'sensitive', 'highly_sensitive'];
+        foreach (['enabled', 'deny_by_default', 'deny_download_until_scan_passed', 'audit_downloads', 'audit_deletes'] as $key) {
+            $this->bool($fs, $key, 'file_security.' . $key, required: false);
+        }
+        if (isset($fs['default_download_disposition']) && !in_array((string)$fs['default_download_disposition'], ['attachment', 'inline'], true)) {
+            $this->issue('high', 'invalid_file_default_download_disposition', 'file_security.default_download_disposition', 'Default download disposition must be attachment or inline.', 'attachment|inline', $fs['default_download_disposition']);
+        }
+        if (isset($fs['metadata'])) {
+            if (!is_array($fs['metadata'])) {
+                $this->issue('high', 'invalid_file_metadata_config', 'file_security.metadata', 'File metadata requirements must be an array.', 'array', $fs['metadata']);
+            } else {
+                foreach (['require_owner', 'require_tenant', 'require_checksum', 'require_scan_status'] as $key) {
+                    $this->bool($fs['metadata'], $key, 'file_security.metadata.' . $key, required: false);
+                }
+            }
+        }
+        if (isset($fs['download'])) {
+            if (!is_array($fs['download'])) {
+                $this->issue('high', 'invalid_file_download_config', 'file_security.download', 'File download config must be an array.', 'array', $fs['download']);
+            } else {
+                foreach (['nosniff', 'safe_filename', 'allow_inline'] as $key) {
+                    $this->bool($fs['download'], $key, 'file_security.download.' . $key, required: false);
+                }
+                if (isset($fs['download']['inline_profiles'])) {
+                    $this->stringList($fs['download']['inline_profiles'], 'file_security.download.inline_profiles', false);
+                }
+                if (isset($fs['download']['signed_urls']) && is_array($fs['download']['signed_urls'])) {
+                    $this->bool($fs['download']['signed_urls'], 'enabled', 'file_security.download.signed_urls.enabled', required: false);
+                    $this->intRange($fs['download']['signed_urls'], 'ttl', 'file_security.download.signed_urls.ttl', 1, 86400, required: false);
+                }
+            }
+        }
+        if (!isset($fs['policies']) || !is_array($fs['policies']) || $fs['policies'] === []) {
+            $this->issue('medium', 'missing_file_security_policies', 'file_security.policies', 'Define file security policies for downloads, deletes, previews, and document access.', 'non-empty policy array', $fs['policies'] ?? null);
+        } else {
+            foreach ($fs['policies'] as $name => $policy) {
+                if (!is_string($name) || !preg_match('/^[A-Za-z0-9_.:-]{1,120}$/', $name)) {
+                    $this->issue('high', 'invalid_file_security_policy_name', 'file_security.policies', 'File security policy names must be safe identifiers.', 'safe policy name', $name);
+                    continue;
+                }
+                if (!is_array($policy)) {
+                    $this->issue('high', 'invalid_file_security_policy', 'file_security.policies.' . $name, 'File security policy must be an array.', 'array', $policy);
+                    continue;
+                }
+                $path = 'file_security.policies.' . $name;
+                if (isset($policy['actions'])) { $this->stringList($policy['actions'], $path . '.actions', false); }
+                foreach (['roles', 'permissions', 'scopes', 'data_classes', 'inline_profiles'] as $key) {
+                    if (isset($policy[$key])) { $this->stringList($policy[$key], $path . '.' . $key, false); }
+                }
+                foreach ((array)($policy['data_classes'] ?? []) as $class) {
+                    if ((string)$class !== '*' && !in_array((string)$class, $validClasses, true)) {
+                        $this->issue('high', 'invalid_file_security_data_class', $path . '.data_classes', 'File security data class must be known.', implode('|', $validClasses), $class);
+                    }
+                }
+                foreach (['tenant_required', 'audit', 'require_scan_passed', 'allow_inline'] as $key) {
+                    $this->bool($policy, $key, $path . '.' . $key, required: false);
+                }
+                if (isset($policy['disposition']) && !in_array((string)$policy['disposition'], ['attachment', 'inline'], true)) {
+                    $this->issue('high', 'invalid_file_policy_disposition', $path . '.disposition', 'File policy disposition must be attachment or inline.', 'attachment|inline', $policy['disposition']);
+                }
+                if (isset($policy['signed_urls']) && is_array($policy['signed_urls'])) {
+                    $this->bool($policy['signed_urls'], 'enabled', $path . '.signed_urls.enabled', required: false);
+                    $this->intRange($policy['signed_urls'], 'ttl', $path . '.signed_urls.ttl', 1, 86400, required: false);
+                }
+            }
+        }
+        if (isset($fs['inspection']) && is_array($fs['inspection'])) {
+            foreach (['enabled', 'inspect_pdf', 'inspect_office', 'inspect_archives'] as $key) { $this->bool($fs['inspection'], $key, 'file_security.inspection.' . $key, required: false); }
+            $this->intRange($fs['inspection'], 'max_nested_archive_depth', 'file_security.inspection.max_nested_archive_depth', 0, 10, required: false);
+        }
+        if (isset($fs['sanitization']) && is_array($fs['sanitization'])) {
+            foreach (['enabled', 'reencode_images', 'strip_image_metadata', 'strip_pdf_active_content'] as $key) { $this->bool($fs['sanitization'], $key, 'file_security.sanitization.' . $key, required: false); }
+        }
+        if (isset($fs['retention']) && is_array($fs['retention'])) {
+            $this->intRange($fs['retention'], 'quarantine_ttl_hours', 'file_security.retention.quarantine_ttl_hours', 1, 8760, required: false);
+            $this->intRange($fs['retention'], 'rejected_ttl_days', 'file_security.retention.rejected_ttl_days', 1, 3650, required: false);
+            $this->intRange($fs['retention'], 'temporary_exports_ttl_hours', 'file_security.retention.temporary_exports_ttl_hours', 1, 8760, required: false);
         }
     }
 

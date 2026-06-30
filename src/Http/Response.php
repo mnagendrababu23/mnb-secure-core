@@ -20,6 +20,22 @@ class Response
         return new self($body, $status, $headers);
     }
 
+    public static function download(string $body, string $filename, string $mime = 'application/octet-stream', int $status = 200, array $headers = []): self
+    {
+        $safeName = basename(str_replace('\\', '/', $filename));
+        $safeName = preg_replace('/[^A-Za-z0-9._ -]+/', '_', $safeName) ?: 'download.bin';
+        $headers = array_replace([
+            'Content-Type' => preg_match('/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+\/-]{0,120}$/', $mime) ? $mime : 'application/octet-stream',
+            'Content-Disposition' => 'attachment; filename="' . str_replace(['"', '\\'], '_', $safeName) . '"',
+            'X-Content-Type-Options' => 'nosniff',
+            'Cache-Control' => 'private, no-store',
+            'Pragma' => 'no-cache',
+            'Expires' => '0',
+            'Content-Length' => (string)strlen($body),
+        ], $headers);
+        return new self($body, $status, $headers);
+    }
+
     public function withHeader(string $name, string $value): self
     {
         $clone = clone $this;
