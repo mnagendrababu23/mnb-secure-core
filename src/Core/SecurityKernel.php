@@ -23,6 +23,9 @@ use Mnb\SecurityCore\Files\SecureFileManager;
 use Mnb\SecurityCore\RateLimit\DatabaseRateLimiter;
 use Mnb\SecurityCore\RateLimit\FileRateLimiter;
 use Mnb\SecurityCore\RateLimit\RedisRateLimiter;
+use Mnb\SecurityCore\RateLimit\RateLimitPolicy;
+use Mnb\SecurityCore\RateLimit\RateLimitPolicyRegistry;
+use Mnb\SecurityCore\Http\Middleware\RateLimitPolicyMiddleware;
 use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
 use Mnb\SecurityCore\Logging\FileLogger;
@@ -82,6 +85,22 @@ class SecurityKernel
         }
 
         return $this->fileRateLimiter();
+    }
+
+
+    public function rateLimitPolicies(): RateLimitPolicyRegistry
+    {
+        return RateLimitPolicyRegistry::fromConfig($this->config);
+    }
+
+    public function rateLimitPolicy(string $name): RateLimitPolicy
+    {
+        return $this->rateLimitPolicies()->get($name);
+    }
+
+    public function rateLimitMiddleware(string $policyName = 'api', ?string $routeName = null, ?PDO $pdo = null, ?object $redis = null): RateLimitPolicyMiddleware
+    {
+        return new RateLimitPolicyMiddleware($this->rateLimiter($pdo, $redis), $this->rateLimitPolicies(), $policyName, $routeName);
     }
 
     public function tokenStore(?PDO $pdo = null, ?object $redis = null): TokenStoreInterface

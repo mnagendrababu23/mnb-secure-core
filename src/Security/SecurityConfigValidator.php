@@ -169,6 +169,49 @@ class SecurityConfigValidator
             }
             $this->positiveInt($limits[$policy], 'max', 'limits.' . $policy . '.max');
             $this->positiveInt($limits[$policy], 'seconds', 'limits.' . $policy . '.seconds');
+            $this->rateLimitKeyBy($limits[$policy], $policy);
+        }
+
+        foreach ($limits as $name => $policyConfig) {
+            if (!is_string($name) || in_array($name, ['request_max_bytes', 'upload_max_bytes'], true) || in_array($name, ['login', 'api', 'otp', 'export'], true)) {
+                continue;
+            }
+            if (!is_array($policyConfig) || (!array_key_exists('max', $policyConfig) && !array_key_exists('max_attempts', $policyConfig))) {
+                continue;
+            }
+            if (!preg_match('/^[a-z0-9][a-z0-9_.:-]{0,80}$/', strtolower($name))) {
+                $this->issue('high', 'invalid_rate_policy_name_' . preg_replace('/[^a-z0-9_]+/i', '_', $name), 'limits.' . $name, 'Rate limit policy names must use safe identifier characters.', 'letters, numbers, dash, underscore, dot or colon', $name);
+            }
+            $this->positiveInt($policyConfig, 'max', 'limits.' . $name . '.max');
+            if (!isset($policyConfig['seconds']) && !isset($policyConfig['decay_seconds']) && !isset($policyConfig['decay'])) {
+                $this->issue('high', 'missing_rate_policy_seconds_' . $name, 'limits.' . $name, "Rate limit policy '{$name}' must define seconds or decay_seconds.", 'positive int', null);
+            }
+            $this->rateLimitKeyBy($policyConfig, $name);
+        }
+    }
+
+    /** @param array<string,mixed> $policy */
+    private function rateLimitKeyBy(array $policy, string $name): void
+    {
+        $keyBy = $policy['key_by'] ?? $policy['by'] ?? null;
+        if ($keyBy === null) {
+            return;
+        }
+        if (is_string($keyBy)) {
+            $keyBy = array_filter(array_map('trim', explode(',', $keyBy)));
+        }
+        if (!is_array($keyBy) || $keyBy === []) {
+            $this->issue('medium', 'invalid_rate_policy_key_by_' . $name, 'limits.' . $name . '.key_by', 'Rate limit policy key_by must be a non-empty array or comma-separated string.', ['ip', 'user', 'route', 'path', 'method', 'auth'], $keyBy);
+            return;
+        }
+
+        $allowed = ['ip', 'user', 'route', 'path', 'method', 'auth'];
+        foreach ($keyBy as $part) {
+            $part = strtolower(trim((string)$part));
+            if ($part === '' || !in_array($part, $allowed, true)) {
+                $this->issue('medium', 'unsupported_rate_policy_key_part_' . $name, 'limits.' . $name . '.key_by', "Unsupported rate limit key part '{$part}' for policy '{$name}'.", $allowed, $keyBy);
+                return;
+            }
         }
     }
 

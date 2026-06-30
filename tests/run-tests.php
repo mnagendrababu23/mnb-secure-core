@@ -36,6 +36,8 @@ use Mnb\SecurityCore\Files\SecureFileManager;
 use Mnb\SecurityCore\Files\HeuristicMalwareScanner;
 use Mnb\SecurityCore\Http\Middleware\ApiTokenMiddleware;
 use Mnb\SecurityCore\Http\Middleware\HttpsMiddleware;
+use Mnb\SecurityCore\Http\Middleware\RateLimitMiddleware;
+use Mnb\SecurityCore\Http\Middleware\RateLimitPolicyMiddleware;
 use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
 use Mnb\SecurityCore\Http\MiddlewarePipeline;
 use Mnb\SecurityCore\Http\Request;
@@ -43,6 +45,8 @@ use Mnb\SecurityCore\Http\Response;
 use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
 use Mnb\SecurityCore\RateLimit\DatabaseRateLimiter;
 use Mnb\SecurityCore\RateLimit\FileRateLimiter;
+use Mnb\SecurityCore\RateLimit\RateLimitPolicy;
+use Mnb\SecurityCore\RateLimit\RateLimitPolicyRegistry;
 use Mnb\SecurityCore\Security\ProductionSecurityChecker;
 use Mnb\SecurityCore\Security\SecurityConfigValidator;
 use Mnb\SecurityCore\Security\VulnerabilityMatrix;
@@ -100,6 +104,40 @@ $r1 = $limiter->attempt('login:127.0.0.1', 2, 60);
 $r2 = $limiter->attempt('login:127.0.0.1', 2, 60);
 $r3 = $limiter->attempt('login:127.0.0.1', 2, 60);
 ok($r1->allowed && $r2->allowed && !$r3->allowed, 'atomic file rate limiter blocks over limit');
+
+
+$oldRateMiddlewareLimiter = new FileRateLimiter($base . '/rate-old-middleware');
+$oldRateMiddleware = new RateLimitMiddleware($oldRateMiddlewareLimiter, 1, 60, 'legacy');
+$oldRateRequest = new Request('GET', '/legacy-rate', [], [], [], ['REMOTE_ADDR' => '10.0.0.1']);
+$oldRateResponse1 = (new MiddlewarePipeline([$oldRateMiddleware]))->handle($oldRateRequest, fn() => Response::text('ok'));
+$oldRateResponse2 = (new MiddlewarePipeline([$oldRateMiddleware]))->handle($oldRateRequest, fn() => Response::text('ok'));
+ok($oldRateResponse1->status() === 200 && $oldRateResponse2->status() === 429 && ($oldRateResponse1->headers()['X-RateLimit-Policy'] ?? '') === 'legacy', 'rate limit middleware keeps legacy constructor behavior');
+
+$loginPolicy = new RateLimitPolicy('login', 2, 60, ['ip', 'route'], 'auth');
+$apiPolicy = RateLimitPolicy::fromArray('api', ['max' => 1, 'seconds' => 60, 'key_by' => ['user', 'route'], 'prefix' => 'api']);
+$policyRequestA = (new Request('POST', '/login', [], [], [], ['REMOTE_ADDR' => '10.0.0.2']))->withAttribute('route_name', 'login.submit');
+$policyRequestB = (new Request('POST', '/login', [], [], [], ['REMOTE_ADDR' => '10.0.0.3']))->withAttribute('route_name', 'login.submit');
+ok($loginPolicy->key($policyRequestA) !== $loginPolicy->key($policyRequestB) && str_contains($apiPolicy->key($policyRequestA->withAttribute('auth_user_id', 22)), 'user:22'), 'rate limit policies build per-ip, per-user and per-route keys');
+
+$policyRegistry = new RateLimitPolicyRegistry(['login' => ['max' => 2, 'seconds' => 60, 'key_by' => ['ip', 'route']], 'api' => $apiPolicy]);
+ok($policyRegistry->has('login') && $policyRegistry->get('api')->maxAttempts() === 1, 'rate limit policy registry registers array and object policies');
+
+$policyLimiter = new FileRateLimiter($base . '/rate-policy-middleware');
+$policyMiddleware = new RateLimitPolicyMiddleware($policyLimiter, $policyRegistry, 'api', 'api.profile');
+$userOneRequest = (new Request('GET', '/api/profile', [], [], [], ['REMOTE_ADDR' => '10.0.0.4']))->withAttribute('auth_user_id', 501);
+$userTwoRequest = (new Request('GET', '/api/profile', [], [], [], ['REMOTE_ADDR' => '10.0.0.4']))->withAttribute('auth_user_id', 502);
+$policyResponse1 = (new MiddlewarePipeline([$policyMiddleware]))->handle($userOneRequest, fn() => Response::json(['ok' => true]));
+$policyResponse2 = (new MiddlewarePipeline([$policyMiddleware]))->handle($userOneRequest, fn() => Response::json(['ok' => true]));
+$policyResponse3 = (new MiddlewarePipeline([$policyMiddleware]))->handle($userTwoRequest, fn() => Response::json(['ok' => true]));
+ok($policyResponse1->status() === 200 && $policyResponse2->status() === 429 && $policyResponse3->status() === 200 && ($policyResponse1->headers()['X-RateLimit-Policy'] ?? '') === 'api', 'rate limit policy middleware applies named per-user policies');
+
+$badPolicyBlocked = false;
+try {
+    RateLimitPolicy::fromArray('bad policy', ['max' => 1, 'seconds' => 60, 'key_by' => ['cookie']]);
+} catch (InvalidArgumentException $e) {
+    $badPolicyBlocked = true;
+}
+ok($badPolicyBlocked, 'rate limit policy validation blocks unsafe names and unsupported key parts');
 
 $cache = new FileCache($base . '/cache');
 $cache->put('school_settings', ['x' => 1], 60);

@@ -27,10 +27,10 @@ return [
     'limits' => [
         'request_max_bytes' => 5 * 1024 * 1024,
         'upload_max_bytes' => 10 * 1024 * 1024,
-        'login' => ['max' => 5, 'seconds' => 600],
-        'api' => ['max' => 120, 'seconds' => 60],
-        'otp' => ['max' => 3, 'seconds' => 600],
-        'export' => ['max' => 10, 'seconds' => 3600],
+        'login' => ['max' => 5, 'seconds' => 600, 'key_by' => ['ip', 'route']],
+        'api' => ['max' => 120, 'seconds' => 60, 'key_by' => ['ip', 'user', 'route']],
+        'otp' => ['max' => 3, 'seconds' => 600, 'key_by' => ['ip', 'user', 'route']],
+        'export' => ['max' => 10, 'seconds' => 3600, 'key_by' => ['user', 'route']],
     ],
     'uploads' => [
         'allowed_extensions' => ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv'],
