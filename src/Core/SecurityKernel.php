@@ -110,6 +110,10 @@ use Mnb\SecurityCore\Monitoring\FileAlertChannel;
 use Mnb\SecurityCore\Monitoring\MetricsRegistry;
 use Mnb\SecurityCore\Monitoring\MonitoringSummary;
 use Mnb\SecurityCore\Monitoring\WebhookAlertChannel;
+use Mnb\SecurityCore\Network\OutboundHttpClient;
+use Mnb\SecurityCore\Network\OutboundRequestPolicy;
+use Mnb\SecurityCore\Runtime\ProcessPolicy;
+use Mnb\SecurityCore\Runtime\SafeProcessRunner;
 use Mnb\SecurityCore\Contracts\LoggerInterface;
 use Mnb\SecurityCore\Data\DataProtectionRegistry;
 use Mnb\SecurityCore\Data\ExportPolicy;
@@ -342,6 +346,27 @@ class SecurityKernel
         return new FileTokenStore(StorageDriverResolver::filePath($this->config['paths']['tokens'] ?? $defaultTokenFile, 'token store'));
     }
 
+
+    public function processPolicy(): ProcessPolicy
+    {
+        return ProcessPolicy::fromConfig($this->config);
+    }
+
+    public function safeProcessRunner(?SecurityAuditTrail $audit = null): SafeProcessRunner
+    {
+        return new SafeProcessRunner($this->processPolicy(), $audit ?: $this->auditTrail());
+    }
+
+    public function outboundRequestPolicy(): OutboundRequestPolicy
+    {
+        return OutboundRequestPolicy::fromConfig($this->config);
+    }
+
+    public function outboundHttpClient(?SecurityAuditTrail $audit = null): OutboundHttpClient
+    {
+        return new OutboundHttpClient($this->outboundRequestPolicy(), $audit ?: $this->auditTrail());
+    }
+
     public function uploadPolicy(?string $profile = null): FileUploadPolicy
     {
         return FileUploadPolicy::fromConfig(
@@ -407,7 +432,8 @@ class SecurityKernel
             return new ClamAvMalwareScanner(
                 $config['clamav_binary'] ?? ($_ENV['CLAMAV_BINARY'] ?? 'clamscan'),
                 (int)($config['timeout_seconds'] ?? 30),
-                (bool)($config['fail_closed'] ?? false)
+                (bool)($config['fail_closed'] ?? false),
+                $this->safeProcessRunner()
             );
         }
         if ($driver === 'composite') {
@@ -416,7 +442,8 @@ class SecurityKernel
                 new ClamAvMalwareScanner(
                     $config['clamav_binary'] ?? ($_ENV['CLAMAV_BINARY'] ?? 'clamscan'),
                     (int)($config['timeout_seconds'] ?? 30),
-                    (bool)($config['fail_closed'] ?? false)
+                    (bool)($config['fail_closed'] ?? false),
+                    $this->safeProcessRunner()
                 ),
             ]);
         }
@@ -971,7 +998,7 @@ class SecurityKernel
         $channels = [];
         foreach ((array)($alerts['channels'] ?? ['file']) as $channel) {
             if ($channel === 'webhook' && !empty($alerts['webhook_url'])) {
-                $channels[] = new WebhookAlertChannel((string)$alerts['webhook_url']);
+                $channels[] = new WebhookAlertChannel((string)$alerts['webhook_url'], (int)($alerts['webhook_timeout_seconds'] ?? 2), $this->outboundHttpClient());
                 continue;
             }
             if ($channel === 'file') {

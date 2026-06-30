@@ -182,6 +182,27 @@ switch ($command) {
         $report = $kernel->incidentResponse()->summary();
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit(!empty($report['passed']) ? 0 : 1);
+    case 'runtime:list-commands':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'runtime' => $kernel->processPolicy()->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'runtime:check-command':
+        $kernel = new SecurityKernel($config);
+        $name = $argv[2] ?? '';
+        $args = array_slice($argv, 3);
+        $report = $name !== '' ? $kernel->safeProcessRunner()->check($name, $args) : ['passed' => false, 'error' => 'command_name_required'];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
+    case 'outbound:policy':
+        $kernel = new SecurityKernel($config);
+        echo json_encode(['passed' => true, 'outbound' => $kernel->outboundRequestPolicy()->toArray()], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(0);
+    case 'outbound:check-url':
+        $kernel = new SecurityKernel($config);
+        $url = $argv[2] ?? '';
+        $report = $url !== '' ? $kernel->outboundHttpClient()->checkUrl($url) : ['passed' => false, 'error' => 'url_required'];
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        exit(!empty($report['passed']) ? 0 : 1);
     case 'vulnerabilities:matrix':
     case 'matrix:export':
         $kernel = new SecurityKernel($config);

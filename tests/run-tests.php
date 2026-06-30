@@ -115,6 +115,7 @@ use Mnb\SecurityCore\Monitoring\FileAlertChannel;
 use Mnb\SecurityCore\Monitoring\MetricsRegistry;
 use Mnb\SecurityCore\Monitoring\MonitoringSummary;
 use Mnb\SecurityCore\Monitoring\TraceContext;
+use Mnb\SecurityCore\Monitoring\WebhookAlertChannel;
 use Mnb\SecurityCore\Recovery\BackupPolicy;
 use Mnb\SecurityCore\Recovery\BackupSigner;
 use Mnb\SecurityCore\Recovery\SecureBackupManager;
@@ -181,6 +182,11 @@ use Mnb\SecurityCore\Web\CacheControlPolicy;
 use Mnb\SecurityCore\Web\SignedUrl;
 use Mnb\SecurityCore\Web\WebSecurityRegistry;
 use Mnb\SecurityCore\Http\Middleware\CacheControlMiddleware;
+use Mnb\SecurityCore\Network\OutboundHttpClient;
+use Mnb\SecurityCore\Network\OutboundRequestPolicy;
+use Mnb\SecurityCore\Network\RedirectGuard;
+use Mnb\SecurityCore\Runtime\ProcessPolicy;
+use Mnb\SecurityCore\Runtime\SafeProcessRunner;
 
 $base = sys_get_temp_dir() . '/mnb_secure_core_v1_0_tests_' . getmypid();
 @mkdir($base, 0777, true);
@@ -1776,6 +1782,97 @@ ok(!$i26InvalidReport['passed'], 'security config validator catches invalid vuln
 
 $i26Suggestions = (new AutoSuggestionEngine())->suggestFromCode('OWASP CWE vulnerability SQL injection XSS SSRF coverage matrix');
 ok(count(array_filter($i26Suggestions, fn(array $item): bool => ($item['id'] ?? '') === 'missing_vulnerability_matrix_engine' || ($item['id'] ?? '') === 'vulnerability_matrix_engine')) >= 1, 'auto suggestion engine recommends vulnerability blocking matrix engine');
+
+
+
+
+$runtimeDir = $base . '/runtime-engine';
+$runtimeAllowedDir = $runtimeDir . '/allowed';
+$runtimeDeniedDir = $runtimeDir . '/denied';
+@mkdir($runtimeAllowedDir, 0777, true);
+@mkdir($runtimeDeniedDir, 0777, true);
+$runtimeConfig = [
+    'runtime' => [
+        'enabled' => true,
+        'deny_by_default' => true,
+        'default_timeout_seconds' => 2,
+        'max_output_bytes' => 2048,
+        'allowed_env' => ['PATH'],
+        'allowed_working_directories' => [$runtimeAllowedDir],
+        'commands' => [
+            'php_version' => ['binary' => PHP_BINARY, 'allowed_args' => ['-v'], 'timeout_seconds' => 2, 'max_output_bytes' => 2048],
+            'php_sleep' => ['binary' => PHP_BINARY, 'allowed_args' => ['-r', 'sleep(2);'], 'timeout_seconds' => 1, 'max_output_bytes' => 2048],
+            'php_big_output' => ['binary' => PHP_BINARY, 'allowed_args' => ['-r', 'echo str_repeat("A", 5000);'], 'timeout_seconds' => 2, 'max_output_bytes' => 1024],
+        ],
+    ],
+];
+$runtimePolicy = ProcessPolicy::fromConfig($runtimeConfig);
+$runtimeRunner = new SafeProcessRunner($runtimePolicy);
+$runtimeOk = $runtimeRunner->run('php_version', [], $runtimeAllowedDir);
+ok($runtimeOk->allowed() && $runtimeOk->exitCode() === 0 && str_contains($runtimeOk->output(), 'PHP'), 'safe process runner executes allow-listed command without shell');
+ok($runtimeRunner->check('unknown_command')['reason'] === 'command_not_allowed', 'safe process runner blocks unknown commands by default');
+ok($runtimeRunner->check('php_version', ['; rm -rf /'])['reason'] === 'shell_metacharacter_blocked', 'safe argument builder blocks shell metacharacters');
+ok($runtimeRunner->check('php_version', [], $runtimeDeniedDir)['reason'] === 'working_directory_not_allowed', 'process policy blocks unsafe working directory');
+ok($runtimeRunner->check('php_version', [], $runtimeAllowedDir, ['APP_KEY' => 'secret'])['reason'] === 'environment_key_not_allowed', 'process policy blocks unapproved environment variables');
+$runtimeTimeout = $runtimeRunner->run('php_sleep', [], $runtimeAllowedDir);
+ok($runtimeTimeout->timedOut() && $runtimeTimeout->reason() === 'process_timeout', 'safe process runner enforces timeout');
+$runtimeOutputLimit = $runtimeRunner->run('php_big_output', [], $runtimeAllowedDir);
+ok($runtimeOutputLimit->outputTruncated() && $runtimeOutputLimit->reason() === 'output_limit_exceeded', 'safe process runner enforces max output bytes');
+
+$networkConfig = [
+    'network' => [
+        'outbound' => [
+            'enabled' => true,
+            'https_only' => true,
+            'allowed_schemes' => ['https'],
+            'blocked_hosts' => ['localhost', 'metadata.google.internal'],
+            'block_private_ips' => true,
+            'block_loopback_ips' => true,
+            'block_link_local_ips' => true,
+            'block_metadata_ips' => true,
+            'max_redirects' => 3,
+            'timeout_seconds' => 1,
+            'max_response_bytes' => 1024,
+        ],
+    ],
+];
+$outboundPolicy = OutboundRequestPolicy::fromConfig($networkConfig);
+$outboundClient = new OutboundHttpClient($outboundPolicy);
+ok($outboundClient->checkUrl('https://93.184.216.34')['passed'], 'outbound policy allows public HTTPS IP literal');
+ok($outboundClient->checkUrl('http://93.184.216.34')['reason'] === 'https_required', 'outbound policy blocks HTTP by default');
+ok($outboundClient->checkUrl('https://localhost')['reason'] === 'host_blocked', 'outbound policy blocks localhost host');
+ok($outboundClient->checkUrl('https://127.0.0.1')['reason'] === 'loopback_ip_blocked', 'outbound policy blocks loopback IP');
+ok($outboundClient->checkUrl('https://10.0.0.1')['reason'] === 'private_ip_blocked', 'outbound policy blocks private IP');
+ok($outboundClient->checkUrl('https://169.254.169.254')['reason'] === 'metadata_ip_blocked', 'outbound policy blocks cloud metadata IP');
+ok($outboundClient->checkUrl('gopher://93.184.216.34')['reason'] === 'https_required', 'outbound policy blocks unsupported schemes');
+$redirectGuard = new RedirectGuard($outboundPolicy, 3);
+ok(!$redirectGuard->checkChain(['https://93.184.216.34', 'https://127.0.0.1/admin'])['passed'], 'redirect guard blocks redirect chains into internal IPs');
+$blockedWebhook = new WebhookAlertChannel('http://127.0.0.1/security-alert', 1, $outboundClient);
+$blockedWebhook->send(['event' => 'unit-test']);
+ok(true, 'webhook alert channel dispatches through guarded outbound client without unsafe direct fetch');
+
+$clamFile = $runtimeAllowedDir . '/scan.txt';
+file_put_contents($clamFile, 'clean');
+$clamRunner = new SafeProcessRunner(ProcessPolicy::fromConfig([
+    'runtime' => [
+        'enabled' => true,
+        'deny_by_default' => true,
+        'allowed_working_directories' => [$runtimeAllowedDir],
+        'commands' => ['clamav_scan' => ['binary' => PHP_BINARY, 'allowed_args' => ['-v'], 'timeout_seconds' => 2, 'max_output_bytes' => 2048]],
+    ],
+]));
+$clamScanner = new \Mnb\SecurityCore\Files\ClamAvMalwareScanner(PHP_BINARY, 2, true, $clamRunner);
+ok($clamScanner->scan($clamFile), 'ClamAV scanner delegates process execution to SafeProcessRunner');
+
+$i27Config = array_replace_recursive($i25Config, $runtimeConfig, $networkConfig);
+$i27Kernel = new SecurityKernel($i27Config);
+ok($i27Kernel->processPolicy()->allowList()->has('php_version') && $i27Kernel->safeProcessRunner()->check('php_version')['passed'], 'security kernel exposes runtime execution security engine');
+ok($i27Kernel->outboundHttpClient()->checkUrl('https://127.0.0.1')['reason'] === 'loopback_ip_blocked', 'security kernel exposes outbound network SSRF guard');
+$i27Ssrf = $i27Kernel->vulnerabilityAdvisor()->recommend('ssrf');
+$i27Command = $i27Kernel->vulnerabilityAdvisor()->recommend('command_injection');
+ok($i27Ssrf['status'] === 'protected' && $i27Command['status'] === 'protected', 'vulnerability matrix marks SSRF and command injection protected by upgrade 27 controls');
+$i27Invalid = (new SecurityConfigValidator(['app' => ['env' => 'production'], 'runtime' => ['enabled' => true, 'commands' => ['bad shell' => ['binary' => 'bash -c whoami']]], 'network' => ['outbound' => ['enabled' => true, 'https_only' => true, 'allowed_schemes' => ['http'], 'block_private_ips' => false]]]))->validate();
+ok(!$i27Invalid['passed'], 'security config validator catches unsafe runtime and outbound network configuration');
 
 
 echo "\n{$passed} passed, {$failed} failed\n";

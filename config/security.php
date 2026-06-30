@@ -271,7 +271,7 @@ return [
     ],
 
     'limits' => [
-        'request_max_bytes' => 5 * 1024 * 1024,
+        'request_max_bytes' => 12 * 1024 * 1024,
         'upload_max_bytes' => 10 * 1024 * 1024,
         'login' => ['max' => 5, 'seconds' => 600, 'key_by' => ['ip', 'route']],
         'api' => ['max' => 120, 'seconds' => 60, 'key_by' => ['ip', 'user', 'route']],
@@ -307,6 +307,45 @@ return [
             'timeout_seconds' => (int)($_ENV['UPLOAD_SCAN_TIMEOUT'] ?? 30),
             'fail_closed' => filter_var($_ENV['UPLOAD_SCAN_FAIL_CLOSED'] ?? (($_ENV['APP_ENV'] ?? 'local') === 'production' ? true : false), FILTER_VALIDATE_BOOL),
             'heuristic_read_bytes' => (int)($_ENV['UPLOAD_HEURISTIC_READ_BYTES'] ?? 2097152),
+        ],
+    ],
+
+
+    'runtime' => [
+        'enabled' => filter_var($_ENV['RUNTIME_SECURITY_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'deny_by_default' => filter_var($_ENV['RUNTIME_DENY_BY_DEFAULT'] ?? true, FILTER_VALIDATE_BOOL),
+        'default_timeout_seconds' => (int)($_ENV['RUNTIME_DEFAULT_TIMEOUT'] ?? 10),
+        'max_output_bytes' => (int)($_ENV['RUNTIME_MAX_OUTPUT_BYTES'] ?? 65536),
+        'allowed_env' => array_values(array_filter(array_map('trim', explode(',', $_ENV['RUNTIME_ALLOWED_ENV'] ?? 'PATH,TMPDIR,TEMP')))),
+        'allowed_working_directories' => [
+            __DIR__ . '/../storage/private',
+            __DIR__ . '/../storage/quarantine',
+        ],
+        'commands' => [
+            'clamav_scan' => [
+                'binary' => $_ENV['CLAMAV_BINARY'] ?? 'clamscan',
+                'allowed_args' => ['--no-summary', '--infected'],
+                'timeout_seconds' => (int)($_ENV['UPLOAD_SCAN_TIMEOUT'] ?? 30),
+                'max_output_bytes' => 65536,
+            ],
+        ],
+    ],
+
+    'network' => [
+        'outbound' => [
+            'enabled' => filter_var($_ENV['OUTBOUND_SECURITY_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'https_only' => filter_var($_ENV['OUTBOUND_HTTPS_ONLY'] ?? true, FILTER_VALIDATE_BOOL),
+            'allowed_schemes' => array_values(array_filter(array_map('trim', explode(',', $_ENV['OUTBOUND_ALLOWED_SCHEMES'] ?? 'https')))),
+            'allowed_hosts' => array_values(array_filter(array_map('trim', explode(',', $_ENV['OUTBOUND_ALLOWED_HOSTS'] ?? '')))),
+            'blocked_hosts' => array_values(array_filter(array_map('trim', explode(',', $_ENV['OUTBOUND_BLOCKED_HOSTS'] ?? 'localhost,metadata.google.internal')))),
+            'block_private_ips' => filter_var($_ENV['OUTBOUND_BLOCK_PRIVATE_IPS'] ?? true, FILTER_VALIDATE_BOOL),
+            'block_loopback_ips' => filter_var($_ENV['OUTBOUND_BLOCK_LOOPBACK_IPS'] ?? true, FILTER_VALIDATE_BOOL),
+            'block_link_local_ips' => filter_var($_ENV['OUTBOUND_BLOCK_LINK_LOCAL_IPS'] ?? true, FILTER_VALIDATE_BOOL),
+            'block_metadata_ips' => filter_var($_ENV['OUTBOUND_BLOCK_METADATA_IPS'] ?? true, FILTER_VALIDATE_BOOL),
+            'max_redirects' => (int)($_ENV['OUTBOUND_MAX_REDIRECTS'] ?? 3),
+            'timeout_seconds' => (int)($_ENV['OUTBOUND_TIMEOUT_SECONDS'] ?? 5),
+            'max_response_bytes' => (int)($_ENV['OUTBOUND_MAX_RESPONSE_BYTES'] ?? 1048576),
+            'user_agent' => $_ENV['OUTBOUND_USER_AGENT'] ?? 'mnb-secure-core/1.0.1',
         ],
     ],
 
@@ -1153,8 +1192,8 @@ return [
             'secrets_exposure' => ['enabled' => true, 'severity' => 'critical'],
             'insecure_file_upload' => ['enabled' => true, 'severity' => 'critical'],
             'unsafe_file_download' => ['enabled' => true, 'severity' => 'high'],
-            'ssrf' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'partially_protected'],
-            'command_injection' => ['enabled' => true, 'severity' => 'critical', 'expected_status' => 'partially_protected'],
+            'ssrf' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'protected'],
+            'command_injection' => ['enabled' => true, 'severity' => 'critical', 'expected_status' => 'protected'],
         ],
     ],
 

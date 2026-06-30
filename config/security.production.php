@@ -149,6 +149,33 @@ return array_replace_recursive($base, [
             'heuristic_read_bytes' => (int)($_ENV['UPLOAD_HEURISTIC_READ_BYTES'] ?? 2097152),
         ],
     ],
+
+    'runtime' => [
+        'enabled' => true,
+        'deny_by_default' => true,
+        'default_timeout_seconds' => (int)($_ENV['RUNTIME_DEFAULT_TIMEOUT'] ?? 10),
+        'max_output_bytes' => (int)($_ENV['RUNTIME_MAX_OUTPUT_BYTES'] ?? 65536),
+        'allowed_env' => array_values(array_filter(array_map('trim', explode(',', $_ENV['RUNTIME_ALLOWED_ENV'] ?? 'PATH,TMPDIR,TEMP')))),
+    ],
+
+    'network' => [
+        'outbound' => [
+            'enabled' => true,
+            'https_only' => true,
+            'allowed_schemes' => ['https'],
+            'allowed_hosts' => array_values(array_filter(array_map('trim', explode(',', $_ENV['OUTBOUND_ALLOWED_HOSTS'] ?? '')))),
+            'blocked_hosts' => array_values(array_filter(array_map('trim', explode(',', $_ENV['OUTBOUND_BLOCKED_HOSTS'] ?? 'localhost,metadata.google.internal')))),
+            'block_private_ips' => true,
+            'block_loopback_ips' => true,
+            'block_link_local_ips' => true,
+            'block_metadata_ips' => true,
+            'max_redirects' => (int)($_ENV['OUTBOUND_MAX_REDIRECTS'] ?? 3),
+            'timeout_seconds' => (int)($_ENV['OUTBOUND_TIMEOUT_SECONDS'] ?? 5),
+            'max_response_bytes' => (int)($_ENV['OUTBOUND_MAX_RESPONSE_BYTES'] ?? 1048576),
+            'user_agent' => $_ENV['OUTBOUND_USER_AGENT'] ?? 'mnb-secure-core/1.0.1',
+        ],
+    ],
+
     'security_headers' => [
         'enabled' => true,
         'hsts' => [
@@ -730,8 +757,8 @@ return array_replace_recursive($base, [
             'secrets_exposure' => ['enabled' => true, 'severity' => 'critical'],
             'insecure_file_upload' => ['enabled' => true, 'severity' => 'critical'],
             'unsafe_file_download' => ['enabled' => true, 'severity' => 'high'],
-            'ssrf' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'partially_protected'],
-            'command_injection' => ['enabled' => true, 'severity' => 'critical', 'expected_status' => 'partially_protected'],
+            'ssrf' => ['enabled' => true, 'severity' => 'high', 'expected_status' => 'protected'],
+            'command_injection' => ['enabled' => true, 'severity' => 'critical', 'expected_status' => 'protected'],
         ],
     ],
 

@@ -1545,3 +1545,19 @@ php bin/mnb-secure vulnerabilities:export
 ```
 
 The report includes vulnerability status, score, OWASP/CWE mappings, blocking controls, detecting controls, config dependencies, evidence, gaps, and recommendations.
+### Runtime Execution and Outbound Network Security Engine
+
+MNB Secure Core v1.0.1 includes safe process execution and outbound HTTP protection for runtime/integration security. Use `SafeProcessRunner` for command allow-listing and `OutboundHttpClient` for SSRF-protected webhooks and external calls.
+
+```php
+$result = $kernel->safeProcessRunner()->run('clamav_scan', [$uploadedFilePath]);
+$response = $kernel->outboundHttpClient()->postJson($webhookUrl, ['event' => 'security.alert']);
+```
+
+CLI helpers:
+
+```bash
+php bin/mnb-secure runtime:list-commands
+php bin/mnb-secure outbound:check-url https://example.com
+```
+

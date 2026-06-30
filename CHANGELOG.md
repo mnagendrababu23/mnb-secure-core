@@ -211,3 +211,44 @@ Added CLI commands:
 - `php bin/mnb-secure vulnerabilities:export`
 
 The legacy `matrix:export` command and `Security\VulnerabilityMatrix` class remain compatible.
+
+## v1.0.1 - Improvement 27: Runtime Execution and Outbound Network Security Engine
+
+MNB Secure Core v1.0.1 adds the Runtime Execution and Outbound Network Security Engine, introducing safe process execution, command allow-listing, outbound HTTP protection, SSRF blocking, DNS and redirect guards, protected webhook dispatch, and vulnerability matrix coverage for runtime and integration security risks.
+
+Added:
+- `src/Runtime/ProcessPolicy.php`
+- `src/Runtime/CommandDefinition.php`
+- `src/Runtime/CommandAllowList.php`
+- `src/Runtime/SafeArgumentBuilder.php`
+- `src/Runtime/ProcessRequest.php`
+- `src/Runtime/ProcessResult.php`
+- `src/Runtime/SafeProcessRunner.php`
+- `src/Runtime/RuntimeAuditEvents.php`
+- `src/Network/OutboundRequestPolicy.php`
+- `src/Network/OutboundRequest.php`
+- `src/Network/OutboundResponse.php`
+- `src/Network/AllowedHostPolicy.php`
+- `src/Network/BlockedIpRangePolicy.php`
+- `src/Network/DnsResolutionGuard.php`
+- `src/Network/RedirectGuard.php`
+- `src/Network/OutboundHttpClient.php`
+- `src/Network/NetworkAuditEvents.php`
+- `demos/31-runtime-execution-outbound-network-security-engine.php`
+
+Changed:
+- Added `runtime` and `network.outbound` configuration blocks.
+- Added `SecurityKernel` helpers for process policy, safe process runner, outbound request policy, and outbound HTTP client.
+- Updated `WebhookAlertChannel` to send webhook alerts through the guarded outbound client.
+- Updated `ClamAvMalwareScanner` to support safe process execution through `SafeProcessRunner`.
+- Updated the vulnerability matrix so SSRF, command injection, unsafe runtime execution, and unsafe webhook dispatch are covered by concrete runtime/network controls.
+
+Added CLI commands:
+- `php bin/mnb-secure runtime:list-commands`
+- `php bin/mnb-secure runtime:check-command <command> [args...]`
+- `php bin/mnb-secure outbound:policy`
+- `php bin/mnb-secure outbound:check-url <url>`
+
+Validation:
+- Expanded the test suite to cover runtime command allow-listing, unsafe arguments, working directory/env blocking, timeouts, max output handling, outbound SSRF blocking, guarded webhooks, ClamAV runner delegation, kernel helpers, and vulnerability matrix status.
+

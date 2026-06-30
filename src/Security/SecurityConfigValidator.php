@@ -33,6 +33,8 @@ class SecurityConfigValidator
         $this->validateVulnerabilityMatrix();
         $this->validateLimits();
         $this->validateUploads();
+        $this->validateRuntimeSecurity();
+        $this->validateOutboundNetworkSecurity();
         $this->validateStores();
         $this->validateCaching();
         $this->validateRedis();
@@ -679,6 +681,84 @@ class SecurityConfigValidator
         $dangerousAllowed = array_values(array_intersect($allowedExtensions, $dangerous));
         if ($dangerousAllowed !== []) {
             $this->issue('critical', 'dangerous_upload_profile_extension_' . preg_replace('/[^a-z0-9_]+/i', '_', $name), $path . '.allowed_extensions', 'Upload profiles must not allow executable or scriptable extensions.', 'safe extensions only', $dangerousAllowed);
+        }
+    }
+
+
+    private function validateRuntimeSecurity(): void
+    {
+        $runtime = $this->section('runtime', false);
+        if ($runtime === null) {
+            return;
+        }
+        $this->bool($runtime, 'enabled', 'runtime.enabled', required: false);
+        $this->bool($runtime, 'deny_by_default', 'runtime.deny_by_default', required: false);
+        $this->positiveInt($runtime, 'default_timeout_seconds', 'runtime.default_timeout_seconds', required: false);
+        $this->positiveInt($runtime, 'max_output_bytes', 'runtime.max_output_bytes', required: false);
+        if (isset($runtime['allowed_env'])) {
+            $this->stringList($runtime['allowed_env'], 'runtime.allowed_env', false);
+        }
+        if (isset($runtime['allowed_working_directories'])) {
+            $this->stringList($runtime['allowed_working_directories'], 'runtime.allowed_working_directories', false);
+        }
+        if (!isset($runtime['commands']) || !is_array($runtime['commands'])) {
+            if (!empty($runtime['deny_by_default'])) {
+                $this->issue('medium', 'runtime_commands_missing', 'runtime.commands', 'Runtime deny-by-default mode should define explicit command allow-list entries.', 'commands array', $runtime['commands'] ?? null);
+            }
+            return;
+        }
+        foreach ($runtime['commands'] as $name => $command) {
+            $path = 'runtime.commands.' . (string)$name;
+            if (!is_string($name) || !preg_match('/^[a-z0-9][a-z0-9_.:-]{0,95}$/', strtolower($name))) {
+                $this->issue('high', 'invalid_runtime_command_name', 'runtime.commands', 'Runtime command names must be safe identifiers.', 'safe command name', $name);
+                continue;
+            }
+            if (!is_array($command)) {
+                $this->issue('high', 'invalid_runtime_command_config', $path, 'Runtime command config must be an array.', 'array', $command);
+                continue;
+            }
+            if (empty($command['binary']) || !$this->isStringLike($command['binary']) || preg_match('/[\x00\r\n;&|`$<>]/', (string)$command['binary'])) {
+                $this->issue('high', 'invalid_runtime_command_binary', $path . '.binary', 'Runtime command binary must be a safe binary name or absolute path, not a shell string.', 'safe binary', $command['binary'] ?? null);
+            }
+            if (isset($command['allowed_args'])) {
+                $this->stringList($command['allowed_args'], $path . '.allowed_args', false);
+            }
+            $this->positiveInt($command, 'timeout_seconds', $path . '.timeout_seconds', required: false);
+            $this->positiveInt($command, 'max_output_bytes', $path . '.max_output_bytes', required: false);
+        }
+    }
+
+    private function validateOutboundNetworkSecurity(): void
+    {
+        $network = $this->section('network', false);
+        if ($network === null) {
+            return;
+        }
+        if (!isset($network['outbound'])) {
+            $this->issue('medium', 'network_outbound_missing', 'network.outbound', 'Define network.outbound to control SSRF-safe outbound HTTP behavior.', 'outbound config array', null);
+            return;
+        }
+        if (!is_array($network['outbound'])) {
+            $this->issue('high', 'invalid_network_outbound', 'network.outbound', 'Outbound network config must be an array.', 'array', $network['outbound']);
+            return;
+        }
+        $outbound = $network['outbound'];
+        foreach (['enabled', 'https_only', 'block_private_ips', 'block_loopback_ips', 'block_link_local_ips', 'block_metadata_ips'] as $key) {
+            $this->bool($outbound, $key, 'network.outbound.' . $key, required: false);
+        }
+        foreach (['allowed_schemes', 'allowed_hosts', 'blocked_hosts'] as $key) {
+            if (isset($outbound[$key])) {
+                $this->stringList($outbound[$key], 'network.outbound.' . $key, false);
+            }
+        }
+        $this->intRange($outbound, 'max_redirects', 'network.outbound.max_redirects', 0, 20, required: false);
+        $this->positiveInt($outbound, 'timeout_seconds', 'network.outbound.timeout_seconds', required: false);
+        $this->positiveInt($outbound, 'max_response_bytes', 'network.outbound.max_response_bytes', required: false);
+        if (!empty($outbound['https_only']) && isset($outbound['allowed_schemes']) && is_array($outbound['allowed_schemes']) && !in_array('https', array_map('strtolower', $outbound['allowed_schemes']), true)) {
+            $this->issue('high', 'network_https_only_without_https_scheme', 'network.outbound.allowed_schemes', 'HTTPS-only mode requires https in allowed_schemes.', ['https'], $outbound['allowed_schemes']);
+        }
+        if ($this->isProduction($this->config['app'] ?? []) && empty($outbound['block_private_ips'])) {
+            $this->issue('high', 'network_private_ip_blocking_disabled', 'network.outbound.block_private_ips', 'Production outbound network security should block private IP ranges to prevent SSRF.', true, $outbound['block_private_ips'] ?? null);
         }
     }
 

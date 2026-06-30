@@ -221,3 +221,29 @@ Added secure backup creation, manifests, HMAC signatures, restore dry-runs, reco
 Adds a coverage matrix for SQL injection, XSS, CSRF, broken access control, IDOR, authentication failures, authorization failures, sensitive data exposure, secrets exposure, file upload/download risks, path traversal, open redirects, CORS misconfiguration, weak security headers, cache data leakage, audit/backup tampering, SSRF, command injection, CSV injection, webhook spoofing, and tenant boundary bypass.
 
 This engine makes protection coverage visible through PHP helpers and CLI commands while preserving the legacy `matrix:export` command.
+
+### Improvement 27 — Runtime Execution and Outbound Network Security Engine
+
+Adds safe runtime and outbound integration controls for SSRF, command injection, unsafe webhooks, unsafe process execution, redirect-to-private-IP attacks, DNS/private-network abuse, timeout abuse, and oversized response/output handling.
+
+New public API examples:
+
+```php
+$result = $kernel->safeProcessRunner()->run('clamav_scan', [$uploadedFilePath]);
+
+$response = $kernel->outboundHttpClient()->postJson($webhookUrl, [
+    'event' => 'security.alert',
+]);
+```
+
+New CLI commands:
+
+```bash
+php bin/mnb-secure runtime:list-commands
+php bin/mnb-secure runtime:check-command clamav_scan /path/to/file
+php bin/mnb-secure outbound:policy
+php bin/mnb-secure outbound:check-url https://example.com
+```
+
+The vulnerability matrix now maps SSRF and command injection to concrete controls including `OutboundHttpClient`, `OutboundRequestPolicy`, `DnsResolutionGuard`, `RedirectGuard`, `BlockedIpRangePolicy`, `SafeProcessRunner`, `CommandAllowList`, `SafeArgumentBuilder`, and `ProcessPolicy`.
+
