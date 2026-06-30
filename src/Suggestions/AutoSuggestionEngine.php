@@ -57,6 +57,9 @@ class AutoSuggestionEngine
         if ((str_contains($code, '$_POST') || str_contains($code, '->input(') || str_contains($code, 'Request::fromGlobals')) && !str_contains($code, 'inputValidationMiddleware') && !str_contains($code, 'InputValidator')) {
             $extra[] = $this->result('missing_input_validation', 'validation', 'Validate and sanitize request input before controllers.', 'Use InputValidationMiddleware or InputValidator/InputSanitizer to normalize request data and reject invalid submissions before business logic.', 0.9, '$kernel->inputValidationMiddleware([...])');
         }
+        if ((str_contains($code, 'SecureDatabase') || str_contains($code, 'Response::json') || str_contains($code, 'student') || str_contains($code, 'tenant')) && !str_contains($code, 'trustBoundaryMiddleware') && !str_contains($code, 'TrustBoundaryRegistry')) {
+            $extra[] = $this->result('missing_trust_boundary', 'trust_boundary', 'Add trust boundary checks around sensitive resources.', 'Use TrustBoundaryMiddleware or TrustBoundaryRegistry to connect zone, data class, action, tenant, permissions, and audit decisions.', 0.91, "\$kernel->trustBoundaryMiddleware('students.read')");
+        }
 
         return array_slice($this->mergeResults($extra, $hints), 0, max(1, min(50, $limit)));
     }
@@ -107,6 +110,7 @@ class AutoSuggestionEngine
             ['id' => 'auth_context', 'type' => 'auth', 'title' => 'Read AuthContext after API token middleware', 'description' => 'AuthContext gives user id, scopes, permissions, and roles for downstream authorization.', 'keywords' => ['auth', 'token', 'scope', 'permission', 'role', 'bearer'], 'example' => '$auth = $request->attribute(\'auth\');'],
             ['id' => 'upload_profile', 'type' => 'upload', 'title' => 'Choose a specific upload security profile', 'description' => 'Use images/documents/videos/archives/strict profiles instead of one broad upload policy.', 'keywords' => ['upload', 'file', 'image', 'document', 'video', 'archive', 'mime'], 'example' => '$kernel->secureFileManager(profile: \'images\')'],
             ['id' => 'input_validation', 'type' => 'validation', 'title' => 'Validate and sanitize request input before business logic', 'description' => 'Use route-aware request validation for body/query data, field allow-lists, safe sanitization, and 422 responses for invalid submissions.', 'keywords' => ['input', 'validation', 'validate', 'sanitize', 'sanitization', 'request', 'form', 'body', 'query', 'submission'], 'example' => '$kernel->inputValidationMiddleware([...])'],
+            ['id' => 'trust_boundary', 'type' => 'trust_boundary', 'title' => 'Enforce trust zones and data boundaries for sensitive resources', 'description' => 'Use named trust boundary policies to connect zone, action, data class, tenant scope, permissions, output filtering, and audit logs.', 'keywords' => ['trust', 'zone', 'boundary', 'data class', 'tenant', 'resource', 'sensitive', 'classification'], 'example' => "\$kernel->trustBoundaryMiddleware('students.read')"],
             ['id' => 'doctor', 'type' => 'cli', 'title' => 'Run doctor before pushing or deploying', 'description' => 'Doctor checks PHP extensions, config, storage paths, headers, upload scanner, secrets, and package readiness.', 'keywords' => ['doctor', 'deploy', 'production', 'check', 'ci', 'release'], 'example' => 'php bin/mnb-secure doctor'],
         ];
     }

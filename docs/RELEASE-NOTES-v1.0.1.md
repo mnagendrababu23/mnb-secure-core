@@ -97,3 +97,16 @@ Additional v1.0.1 additions include:
 - Added request helpers for sanitized/validated data: `queryParams()`, `body()`, `validated()`, `withQuery()`, and `withBody()`.
 - Added kernel helpers: `inputValidator()`, `inputSanitizer()`, and `inputValidationMiddleware()`.
 - Added config/env and production/config validator checks for request validation policy safety.
+
+### Trust Zone Boundary Engine
+
+v1.0.1 now includes a production-ready trust boundary engine:
+
+- `TrustBoundaryPolicy`
+- `TrustBoundaryDecision`
+- `TrustBoundaryContext`
+- `TrustZoneResolver`
+- `TrustBoundaryRegistry`
+- `TrustBoundaryMiddleware`
+
+This connects trust zones, data classes, resources, tenant context, permissions/scopes/roles, safe output filtering, and structured audit events.

@@ -1127,3 +1127,43 @@ For public GitHub releases, use the included release readiness docs and template
 
 Security vulnerabilities should be reported privately using `SECURITY.md`, not through public GitHub issues.
 
+
+## Trust Zone Boundary Engine
+
+The v1.0.1 trust boundary engine connects request trust, authentication context, tenant context, data classification, permissions, and audit logging into named resource policies.
+
+```php
+$decision = $kernel->trustBoundaryRegistry()->decide(
+    policyName: 'students.read',
+    request: $request,
+    resource: ['id' => 44, 'school_id' => 10],
+    action: 'read',
+    dataClass: 'sensitive',
+    resourceName: 'students'
+);
+
+if ($decision->denied()) {
+    return Response::json(['status' => false, 'message' => 'Access denied'], 403);
+}
+```
+
+Middleware usage:
+
+```php
+$pipeline = new MiddlewarePipeline([
+    $kernel->requestTrustMiddleware(),
+    $kernel->corsMiddleware(),
+    $kernel->securityHeadersMiddleware(),
+    $kernel->inputValidationMiddleware(),
+    $kernel->rateLimitMiddleware('api', 'students.read'),
+    $kernel->trustBoundaryMiddleware('students.read'),
+]);
+```
+
+Output filtering:
+
+```php
+$safe = $kernel->trustBoundaryRegistry()->filterForZone('students', $student, 'school_admin');
+```
+
+See `demos/19-trust-zone-boundary-engine.php` and `docs/PUBLIC-USAGE-EXAMPLES.md`.

@@ -54,3 +54,13 @@ All notable changes to `mnb-secure-core` are documented here.
 - Added request helpers: `queryParams()`, `body()`, `validated()`, `withQuery()`, and `withBody()`.
 - Added kernel helpers: `inputValidator()`, `inputSanitizer()`, and `inputValidationMiddleware()`.
 - Added config/env settings and production/config validation for request validation policies.
+
+## v1.0.1 - Trust Zone Boundary Engine
+
+- Added production-grade trust boundary policies, decisions, context, registry, zone resolver, and middleware.
+- Preserved legacy `BoundaryGuard` behavior while allowing multiple boundaries per zone.
+- Added tenant-aware resource boundary decisions with safe allow/deny reasons.
+- Added output field filtering by resource classification and resolved trust zone.
+- Added trust boundary audit events without logging raw sensitive payloads.
+- Added config validation and production readiness checks for `trust_boundaries`.
+- Added demo `19-trust-zone-boundary-engine.php`.

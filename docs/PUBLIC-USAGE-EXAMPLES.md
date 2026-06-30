@@ -166,3 +166,64 @@ $email = $request->validated('email');
 ```
 
 This layer complements, but does not replace, prepared SQL, output escaping, CSRF protection, CSP, authorization, and business-rule checks.
+
+## Trust Zone Boundary Engine
+
+Use named trust boundary policies after authentication for sensitive resources. A boundary decision connects the resolved trust zone, resource data class, requested action, tenant context, permissions/scopes/roles, optional output filtering, and audit logging.
+
+```php
+use Mnb\SecurityCore\Auth\AuthContext;
+use Mnb\SecurityCore\Authz\TenantContext;
+use Mnb\SecurityCore\Http\MiddlewarePipeline;
+use Mnb\SecurityCore\Http\Request;
+use Mnb\SecurityCore\Http\Response;
+
+$request = $request
+    ->withAttribute(AuthContext::ATTRIBUTE, $auth)
+    ->withAttribute('tenant_context', new TenantContext(
+        userId: 15,
+        schoolId: 10,
+        branchId: 5,
+        academicYearId: 2026,
+        permissions: ['student.view']
+    ));
+
+$pipeline = new MiddlewarePipeline([
+    $kernel->requestTrustMiddleware(),
+    $kernel->corsMiddleware(),
+    $kernel->securityHeadersMiddleware(),
+    $kernel->inputValidationMiddleware(),
+    $kernel->rateLimitMiddleware('api', 'students.read'),
+    $kernel->trustBoundaryMiddleware(
+        'students.read',
+        resourceResolver: fn (Request $request) => ['school_id' => 10],
+        action: 'read',
+        dataClass: 'sensitive',
+        resourceName: 'students'
+    ),
+]);
+```
+
+Direct decision usage:
+
+```php
+$decision = $kernel->trustBoundaryRegistry()->decide(
+    policyName: 'students.read',
+    request: $request,
+    resource: ['id' => 44, 'school_id' => 10],
+    action: 'read',
+    dataClass: 'sensitive',
+    resourceName: 'students'
+);
+
+if ($decision->denied()) {
+    return Response::json(['status' => false, 'message' => 'Access denied'], 403);
+}
+```
+
+Safe output filtering:
+
+```php
+$record = ['id' => 44, 'name' => 'Ravi', 'parent_phone' => '9876543210', 'password_hash' => 'hash'];
+$safe = $kernel->trustBoundaryRegistry()->filterForZone('students', $record, 'school_admin');
+```

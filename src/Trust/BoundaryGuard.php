@@ -3,16 +3,22 @@ namespace Mnb\SecurityCore\Trust;
 
 class BoundaryGuard
 {
-    /** @var array<string,DataBoundary> */
+    /** @var array<string,list<DataBoundary>> */
     private array $boundaries = [];
 
     public function add(DataBoundary $boundary): void
     {
-        $this->boundaries[$boundary->zone] = $boundary;
+        $this->boundaries[$boundary->zone] ??= [];
+        $this->boundaries[$boundary->zone][] = $boundary;
     }
 
     public function allows(string $zone, string $dataClass, string $action): bool
     {
-        return isset($this->boundaries[$zone]) && $this->boundaries[$zone]->allows($dataClass, $action);
+        foreach ($this->boundaries[$zone] ?? [] as $boundary) {
+            if ($boundary->allows($dataClass, $action)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

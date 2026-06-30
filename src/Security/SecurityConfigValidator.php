@@ -34,6 +34,7 @@ class SecurityConfigValidator
         $this->validateCors();
         $this->validateSecurityHeaders();
         $this->validateRequestValidation();
+        $this->validateTrustBoundaries();
         $this->validateSuggestions();
         $this->validateOriginProtection();
         $this->validateErrors();
@@ -775,6 +776,128 @@ class SecurityConfigValidator
                     $this->issue('medium', 'invalid_input_rule_value', $path . '.' . $key . '.' . $field, 'Input rules must be pipe-delimited strings or arrays.', 'string|array', $rule);
                     break;
                 }
+            }
+        }
+    }
+
+
+    private function validateTrustBoundaries(): void
+    {
+        $trust = $this->section('trust_boundaries', false);
+        if ($trust === null) {
+            return;
+        }
+
+        foreach (['enabled', 'hide_denial_reasons', 'deny_unclassified_fields'] as $key) {
+            $this->bool($trust, $key, 'trust_boundaries.' . $key, required: false);
+        }
+
+        $validZones = ['public', 'authenticated', 'school_admin', 'super_admin', 'internal_system'];
+        $validClasses = ['public', 'internal', 'confidential', 'sensitive', 'highly_sensitive'];
+
+        if (isset($trust['zones'])) {
+            $this->stringList($trust['zones'], 'trust_boundaries.zones', false);
+            foreach ((array)$trust['zones'] as $zone) {
+                if (is_scalar($zone) && !in_array((string)$zone, $validZones, true)) {
+                    $this->issue('medium', 'unknown_trust_zone', 'trust_boundaries.zones', 'Trust boundary zone is not one of the built-in zones.', implode('|', $validZones), $zone);
+                }
+            }
+        }
+
+        if (isset($trust['zone_data_access']) && is_array($trust['zone_data_access'])) {
+            foreach ($trust['zone_data_access'] as $zone => $classes) {
+                if (!is_string($zone) || !preg_match('/^[a-z][a-z0-9_:-]{1,95}$/', $zone)) {
+                    $this->issue('high', 'invalid_trust_zone_access_name', 'trust_boundaries.zone_data_access', 'Trust zone access names must be safe slugs.', 'safe zone slug', $zone);
+                    continue;
+                }
+                if (!$this->stringList($classes, 'trust_boundaries.zone_data_access.' . $zone, false)) {
+                    continue;
+                }
+                foreach ((array)$classes as $class) {
+                    if (is_scalar($class) && !in_array((string)$class, $validClasses, true)) {
+                        $this->issue('high', 'invalid_trust_zone_data_class', 'trust_boundaries.zone_data_access.' . $zone, 'Trust zone data access contains an unknown data class.', implode('|', $validClasses), $class);
+                    }
+                }
+            }
+        } elseif (isset($trust['zone_data_access'])) {
+            $this->issue('high', 'invalid_trust_zone_data_access', 'trust_boundaries.zone_data_access', 'Trust boundary zone_data_access must be an associative array.', 'array', $trust['zone_data_access']);
+        }
+
+        if (isset($trust['resources']) && is_array($trust['resources'])) {
+            foreach ($trust['resources'] as $name => $resource) {
+                if (!is_string($name) || !preg_match('/^[a-z][a-z0-9_.:-]{1,95}$/', $name)) {
+                    $this->issue('high', 'invalid_trust_resource_name', 'trust_boundaries.resources', 'Trust resource names must be safe slugs.', 'safe resource slug', $name);
+                    continue;
+                }
+                if (!is_array($resource)) {
+                    $this->issue('high', 'invalid_trust_resource', 'trust_boundaries.resources.' . $name, 'Trust resource config must be an array.', 'array', $resource);
+                    continue;
+                }
+                $class = $resource['data_class'] ?? null;
+                if (!is_scalar($class) || !in_array((string)$class, $validClasses, true)) {
+                    $this->issue('high', 'invalid_trust_resource_data_class', 'trust_boundaries.resources.' . $name . '.data_class', 'Trust resource data_class must be known.', implode('|', $validClasses), $class);
+                }
+                if (isset($resource['tenant_scoped'])) {
+                    $this->bool($resource, 'tenant_scoped', 'trust_boundaries.resources.' . $name . '.tenant_scoped', required: false);
+                }
+                if (isset($resource['fields'])) {
+                    if (!is_array($resource['fields'])) {
+                        $this->issue('high', 'invalid_trust_resource_fields', 'trust_boundaries.resources.' . $name . '.fields', 'Trust resource fields must map field names to data classes.', 'array', $resource['fields']);
+                    } else {
+                        foreach ($resource['fields'] as $field => $fieldClass) {
+                            if (!is_string($field) || !preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,95}$/', $field)) {
+                                $this->issue('high', 'invalid_trust_resource_field_name', 'trust_boundaries.resources.' . $name . '.fields', 'Field names must be safe identifiers.', 'field_name', $field);
+                            }
+                            if (!is_scalar($fieldClass) || !in_array((string)$fieldClass, $validClasses, true)) {
+                                $this->issue('high', 'invalid_trust_resource_field_class', 'trust_boundaries.resources.' . $name . '.fields.' . (string)$field, 'Field data classification must be known.', implode('|', $validClasses), $fieldClass);
+                            }
+                        }
+                    }
+                }
+            }
+        } elseif (isset($trust['resources'])) {
+            $this->issue('high', 'invalid_trust_resources', 'trust_boundaries.resources', 'Trust resources must be an associative array.', 'array', $trust['resources']);
+        }
+
+        if (!isset($trust['rules']) || !is_array($trust['rules']) || $trust['rules'] === []) {
+            $this->issue('medium', 'missing_trust_boundary_rules', 'trust_boundaries.rules', 'Define trust boundary rules for protected resources.', 'non-empty rules array', $trust['rules'] ?? null);
+            return;
+        }
+
+        foreach ($trust['rules'] as $name => $rule) {
+            if (!is_string($name) || !preg_match('/^[a-z][a-z0-9_.:-]{1,95}$/', $name)) {
+                $this->issue('high', 'invalid_trust_boundary_policy_name', 'trust_boundaries.rules', 'Trust boundary policy names must be safe slugs.', 'safe policy slug', $name);
+                continue;
+            }
+            if (!is_array($rule)) {
+                $this->issue('high', 'invalid_trust_boundary_rule', 'trust_boundaries.rules.' . $name, 'Trust boundary rule must be an array.', 'array', $rule);
+                continue;
+            }
+            foreach (['zones', 'data_classes', 'actions'] as $listKey) {
+                if (!$this->stringList($rule[$listKey] ?? [], 'trust_boundaries.rules.' . $name . '.' . $listKey)) {
+                    continue;
+                }
+            }
+            foreach ((array)($rule['zones'] ?? []) as $zone) {
+                if (is_scalar($zone) && (string)$zone !== '*' && !in_array((string)$zone, $validZones, true)) {
+                    $this->issue('high', 'invalid_trust_rule_zone', 'trust_boundaries.rules.' . $name . '.zones', 'Trust boundary rule uses an unknown zone.', implode('|', $validZones), $zone);
+                }
+            }
+            foreach ((array)($rule['data_classes'] ?? []) as $class) {
+                if (is_scalar($class) && (string)$class !== '*' && !in_array((string)$class, $validClasses, true)) {
+                    $this->issue('high', 'invalid_trust_rule_data_class', 'trust_boundaries.rules.' . $name . '.data_classes', 'Trust boundary rule uses an unknown data class.', implode('|', $validClasses), $class);
+                }
+            }
+            foreach (['resources', 'permissions', 'scopes', 'roles'] as $optionalListKey) {
+                if (isset($rule[$optionalListKey])) {
+                    $this->stringList($rule[$optionalListKey], 'trust_boundaries.rules.' . $name . '.' . $optionalListKey, false);
+                }
+            }
+            foreach (['tenant_required', 'audit'] as $boolKey) {
+                $this->bool($rule, $boolKey, 'trust_boundaries.rules.' . $name . '.' . $boolKey, required: false);
+            }
+            if (isset($rule['deny_message']) && (!$this->isStringLike($rule['deny_message']) || preg_match('/[\r\n]/', (string)$rule['deny_message']))) {
+                $this->issue('medium', 'invalid_trust_deny_message', 'trust_boundaries.rules.' . $name . '.deny_message', 'Trust boundary deny messages must be single-line strings.', 'single-line string', $rule['deny_message']);
             }
         }
     }

@@ -31,6 +31,7 @@ use Mnb\SecurityCore\Http\Middleware\CorsMiddleware;
 use Mnb\SecurityCore\Http\Middleware\RequestTrustMiddleware;
 use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
 use Mnb\SecurityCore\Http\Middleware\InputValidationMiddleware;
+use Mnb\SecurityCore\Http\Middleware\TrustBoundaryMiddleware;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
@@ -41,6 +42,9 @@ use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
 use Mnb\SecurityCore\Logging\AutoAuditLogger;
 use Mnb\SecurityCore\Contracts\LoggerInterface;
 use Mnb\SecurityCore\Suggestions\AutoSuggestionEngine;
+use Mnb\SecurityCore\Trust\TrustBoundaryRegistry;
+use Mnb\SecurityCore\Trust\TrustBoundaryPolicy;
+use Mnb\SecurityCore\Trust\TrustZoneResolver;
 use Mnb\SecurityCore\Validation\InputSanitizer;
 use Mnb\SecurityCore\Validation\InputValidator;
 use Mnb\SecurityCore\Security\ServerIdentityHider;
@@ -264,6 +268,36 @@ class SecurityKernel
             $config['routes'] = array_merge(is_array($config['routes'] ?? null) ? $config['routes'] : [], $routePolicies);
         }
         return new InputValidationMiddleware($config, $this->inputValidator(), $this->inputSanitizer());
+    }
+
+    public function trustZoneResolver(): TrustZoneResolver
+    {
+        $config = is_array($this->config['trust_boundaries'] ?? null) ? $this->config['trust_boundaries'] : [];
+        return new TrustZoneResolver($config);
+    }
+
+    public function trustBoundaryRegistry(?SecurityAuditTrail $audit = null): TrustBoundaryRegistry
+    {
+        return TrustBoundaryRegistry::fromConfig($this->config, $audit ?: $this->auditTrail());
+    }
+
+    public function trustBoundaryPolicy(string $name): TrustBoundaryPolicy
+    {
+        return $this->trustBoundaryRegistry()->get($name);
+    }
+
+    public function trustBoundaryMiddleware(string $policyName, ?callable $resourceResolver = null, ?string $action = null, ?string $dataClass = null, ?string $resourceName = null, ?SecurityAuditTrail $audit = null): TrustBoundaryMiddleware
+    {
+        $config = is_array($this->config['trust_boundaries'] ?? null) ? $this->config['trust_boundaries'] : [];
+        return new TrustBoundaryMiddleware(
+            $this->trustBoundaryRegistry($audit),
+            $policyName,
+            $resourceResolver,
+            $action,
+            $dataClass,
+            $resourceName,
+            (bool)($config['hide_denial_reasons'] ?? true)
+        );
     }
 
     public function suggestionEngine(array $customRules = []): AutoSuggestionEngine

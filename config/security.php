@@ -197,6 +197,89 @@ return [
         'routes' => [],
     ],
 
+
+    'trust_boundaries' => [
+        'enabled' => filter_var($_ENV['TRUST_BOUNDARIES_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'hide_denial_reasons' => filter_var($_ENV['TRUST_BOUNDARY_HIDE_DENIAL_REASONS'] ?? true, FILTER_VALIDATE_BOOL),
+        'deny_unclassified_fields' => filter_var($_ENV['TRUST_BOUNDARY_DENY_UNCLASSIFIED_FIELDS'] ?? false, FILTER_VALIDATE_BOOL),
+        'zones' => ['public', 'authenticated', 'school_admin', 'super_admin', 'internal_system'],
+        'zone_data_access' => [
+            'public' => ['public'],
+            'authenticated' => ['public', 'internal'],
+            'school_admin' => ['public', 'internal', 'confidential', 'sensitive'],
+            'super_admin' => ['public', 'internal', 'confidential', 'sensitive'],
+            'internal_system' => ['public', 'internal', 'confidential', 'sensitive', 'highly_sensitive'],
+        ],
+        'zone_resolvers' => [
+            'school_admin' => ['roles' => ['school_admin', 'admin'], 'scopes' => ['school:*'], 'permissions' => ['school.manage', 'student.manage']],
+            'super_admin' => ['roles' => ['super_admin', 'root', 'owner'], 'scopes' => ['admin:*', '*']],
+            'internal_system' => ['roles' => ['internal_system', 'system'], 'scopes' => ['system:*', 'internal:*']],
+        ],
+        'resources' => [
+            'students' => [
+                'data_class' => 'sensitive',
+                'tenant_scoped' => true,
+                'fields' => [
+                    'id' => 'internal',
+                    'name' => 'internal',
+                    'email' => 'confidential',
+                    'parent_phone' => 'sensitive',
+                    'school_id' => 'internal',
+                    'branch_id' => 'internal',
+                    'password_hash' => 'highly_sensitive',
+                ],
+            ],
+            'public_pages' => [
+                'data_class' => 'public',
+                'tenant_scoped' => false,
+                'fields' => ['title' => 'public', 'slug' => 'public', 'body' => 'public'],
+            ],
+        ],
+        'rules' => [
+            'public.read' => [
+                'zones' => ['public', 'authenticated', 'school_admin', 'super_admin'],
+                'data_classes' => ['public'],
+                'actions' => ['read'],
+                'resources' => ['public_pages'],
+                'audit' => false,
+            ],
+            'students.read' => [
+                'zones' => ['school_admin', 'super_admin'],
+                'data_classes' => ['internal', 'confidential', 'sensitive'],
+                'actions' => ['read'],
+                'resources' => ['students'],
+                'permissions' => ['student.view'],
+                'tenant_required' => true,
+                'audit' => true,
+            ],
+            'students.update' => [
+                'zones' => ['school_admin', 'super_admin'],
+                'data_classes' => ['sensitive'],
+                'actions' => ['update'],
+                'resources' => ['students'],
+                'permissions' => ['student.update'],
+                'tenant_required' => true,
+                'audit' => true,
+            ],
+            'students.delete' => [
+                'zones' => ['super_admin'],
+                'data_classes' => ['sensitive'],
+                'actions' => ['delete'],
+                'resources' => ['students'],
+                'permissions' => ['student.delete'],
+                'tenant_required' => true,
+                'audit' => true,
+            ],
+            'backup.run' => [
+                'zones' => ['internal_system'],
+                'data_classes' => ['highly_sensitive'],
+                'actions' => ['backup'],
+                'scopes' => ['system:backup', 'system:*'],
+                'audit' => true,
+            ],
+        ],
+    ],
+
     'suggestions' => [
         'enabled' => filter_var($_ENV['SUGGESTIONS_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
         'max_results' => (int)($_ENV['SUGGESTIONS_MAX_RESULTS'] ?? 8),

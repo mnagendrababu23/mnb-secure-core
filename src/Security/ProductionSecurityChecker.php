@@ -21,6 +21,7 @@ class ProductionSecurityChecker
         $securityHeaders = $this->config['security_headers'] ?? [];
         $cors = $this->config['cors'] ?? [];
         $requestValidation = $this->config['request_validation'] ?? [];
+        $trustBoundaries = $this->config['trust_boundaries'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -83,6 +84,17 @@ class ProductionSecurityChecker
                 }
                 if (empty($requestValidation['default']) && empty($requestValidation['routes'])) {
                     $issues[] = ['level' => 'medium', 'key' => 'request_validation_no_policies', 'message' => 'Define default or route-specific request validation policies for public write endpoints.'];
+                }
+            }
+            if (is_array($trustBoundaries)) {
+                if (array_key_exists('enabled', $trustBoundaries) && empty($trustBoundaries['enabled'])) {
+                    $issues[] = ['level' => 'high', 'key' => 'trust_boundaries_disabled', 'message' => 'Trust boundary enforcement should be enabled in production for protected resources.'];
+                }
+                if (empty($trustBoundaries['rules'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'trust_boundary_rules_missing', 'message' => 'Define trust boundary rules for sensitive resources and internal system actions.'];
+                }
+                if (array_key_exists('deny_unclassified_fields', $trustBoundaries) && empty($trustBoundaries['deny_unclassified_fields'])) {
+                    $issues[] = ['level' => 'medium', 'key' => 'trust_boundary_allows_unclassified_fields', 'message' => 'Production response filtering should deny or explicitly classify sensitive resource fields.'];
                 }
             }
         }

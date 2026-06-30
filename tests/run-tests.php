@@ -90,6 +90,14 @@ use Mnb\SecurityCore\Http\Middleware\ThroughputMiddleware;
 use Mnb\SecurityCore\Suggestions\AutoSuggestionEngine;
 use Mnb\SecurityCore\Validation\InputSanitizer;
 use Mnb\SecurityCore\Validation\InputValidator;
+use Mnb\SecurityCore\Trust\BoundaryGuard;
+use Mnb\SecurityCore\Trust\DataBoundary;
+use Mnb\SecurityCore\Trust\TrustBoundaryDecision;
+use Mnb\SecurityCore\Trust\TrustBoundaryPolicy;
+use Mnb\SecurityCore\Trust\TrustBoundaryRegistry;
+use Mnb\SecurityCore\Trust\TrustZone;
+use Mnb\SecurityCore\Trust\TrustZoneResolver;
+use Mnb\SecurityCore\Http\Middleware\TrustBoundaryMiddleware;
 
 $base = sys_get_temp_dir() . '/mnb_secure_core_v1_0_tests_' . getmypid();
 @mkdir($base, 0777, true);
@@ -165,6 +173,76 @@ $tenant = new TenantGuard();
 ok($tenant->recordBelongsToContext(['school_id' => 10, 'branch_id' => 5, 'academic_year_id' => 2026], $context), 'tenant guard allows matching record');
 ok(!$tenant->recordBelongsToContext(['school_id' => 11, 'branch_id' => 5, 'academic_year_id' => 2026], $context), 'tenant guard blocks other school');
 ok($tenant->classSectionAllowed(['class_id' => 3], $context) && !$tenant->classSectionAllowed(['class_id' => 4], $context), 'tenant guard class scope');
+
+$legacyBoundaryGuard = new BoundaryGuard();
+$legacyBoundaryGuard->add(new DataBoundary(TrustZone::PUBLIC, ['public'], ['read']));
+$legacyBoundaryGuard->add(new DataBoundary(TrustZone::PUBLIC, ['internal'], ['submit']));
+ok($legacyBoundaryGuard->allows(TrustZone::PUBLIC, 'public', 'read') && $legacyBoundaryGuard->allows(TrustZone::PUBLIC, 'internal', 'submit'), 'legacy boundary guard supports multiple boundaries per zone');
+
+$trustConfig = [
+    'trust_boundaries' => [
+        'enabled' => true,
+        'hide_denial_reasons' => false,
+        'deny_unclassified_fields' => true,
+        'resources' => [
+            'students' => [
+                'data_class' => 'sensitive',
+                'tenant_scoped' => true,
+                'fields' => [
+                    'id' => 'internal',
+                    'name' => 'internal',
+                    'parent_phone' => 'sensitive',
+                    'password_hash' => 'highly_sensitive',
+                    'school_id' => 'internal',
+                ],
+            ],
+        ],
+        'rules' => [
+            'students.read' => [
+                'zones' => ['school_admin', 'super_admin'],
+                'data_classes' => ['sensitive'],
+                'actions' => ['read'],
+                'resources' => ['students'],
+                'permissions' => ['student.view'],
+                'tenant_required' => true,
+                'audit' => true,
+            ],
+            'students.delete' => [
+                'zones' => ['super_admin'],
+                'data_classes' => ['sensitive'],
+                'actions' => ['delete'],
+                'resources' => ['students'],
+                'permissions' => ['student.delete'],
+                'tenant_required' => true,
+                'audit' => true,
+            ],
+        ],
+    ],
+];
+$trustAudit = new SecurityAuditTrail(new TamperEvidentAuditLogger($base . '/audit/trust-boundary.log'));
+$trustRegistry = TrustBoundaryRegistry::fromConfig($trustConfig, $trustAudit);
+$schoolAdminAuth = new AuthContext(true, 10, ['school:*'], ['student.view'], ['school_admin']);
+$schoolAdminRequest = (new Request('GET', '/students/7', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']))
+    ->withAttribute(AuthContext::ATTRIBUTE, $schoolAdminAuth)
+    ->withAttribute('tenant_context', $context);
+$allowedTrustDecision = $trustRegistry->decide('students.read', $schoolAdminRequest, ['id' => 7, 'school_id' => 10], 'read', 'sensitive', resourceName: 'students');
+$deniedTrustDecision = $trustRegistry->decide('students.delete', $schoolAdminRequest, ['id' => 7, 'school_id' => 10], 'delete', 'sensitive', resourceName: 'students');
+ok($allowedTrustDecision->allowed() && $allowedTrustDecision->zone() === TrustZone::SCHOOL_ADMIN && $deniedTrustDecision->denied(), 'trust boundary registry allows matching zone and denies stronger action');
+
+$crossTenantDecision = $trustRegistry->decide('students.read', $schoolAdminRequest, ['id' => 8, 'school_id' => 99], 'read', 'sensitive', resourceName: 'students');
+$trustAuditEntries = (new TamperEvidentAuditLogger($base . '/audit/trust-boundary.log'))->read(null, 'trust');
+ok($crossTenantDecision->denied() && count($trustAuditEntries) >= 2 && !str_contains(json_encode($trustAuditEntries), 'parent_phone'), 'trust boundary audits denied decisions without leaking sensitive payload');
+
+$filteredForPublic = $trustRegistry->filterForZone('students', ['id' => 7, 'name' => 'Ravi', 'parent_phone' => '9876543210', 'password_hash' => 'hash'], TrustZone::PUBLIC);
+$filteredForAdmin = $trustRegistry->filterForZone('students', ['id' => 7, 'name' => 'Ravi', 'parent_phone' => '9876543210', 'password_hash' => 'hash'], TrustZone::SCHOOL_ADMIN);
+ok(!isset($filteredForPublic['parent_phone']) && isset($filteredForAdmin['parent_phone']) && !isset($filteredForAdmin['password_hash']), 'trust boundary filters output fields by zone data access');
+
+$trustMiddleware = new TrustBoundaryMiddleware($trustRegistry, 'students.read', fn(Request $request): array => ['school_id' => 10], action: 'read', dataClass: 'sensitive', resourceName: 'students', hideReason: false);
+$trustMiddlewareResponse = (new MiddlewarePipeline([$trustMiddleware]))->handle($schoolAdminRequest, fn(Request $request) => Response::json(['zone' => $request->attribute('trust_zone')]));
+ok($trustMiddlewareResponse->status() === 200 && json_decode($trustMiddlewareResponse->body(), true)['zone'] === TrustZone::SCHOOL_ADMIN, 'trust boundary middleware attaches decision and zone to allowed requests');
+
+$trustResolver = new TrustZoneResolver();
+ok($trustResolver->resolve(null, new AuthContext(true, 1, ['system:backup'], [], [])) === TrustZone::INTERNAL_SYSTEM, 'trust zone resolver detects internal system scope');
 
 $registry = new PolicyRegistry();
 $registry->register('student', new StudentPolicy());
