@@ -1,0 +1,85 @@
+<?php
+$base = require __DIR__ . '/security.php';
+
+return array_replace_recursive($base, [
+    'app' => [
+        'env' => 'production',
+        'debug' => false,
+        'force_https' => true,
+        'url' => $_ENV['APP_URL'] ?? 'https://example.com',
+        'key' => $_ENV['APP_KEY'] ?? '',
+        'trusted_hosts' => array_values(array_filter(array_map('trim', explode(',', $_ENV['TRUSTED_HOSTS'] ?? 'example.com')))),
+        'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', $_ENV['TRUSTED_PROXIES'] ?? '')))),
+    ],
+    'cookies' => [
+        'secure' => true,
+        'http_only' => true,
+        'same_site' => $_ENV['SESSION_SAME_SITE'] ?? 'Strict',
+    ],
+    'audit' => [
+        'enabled' => true,
+        'file' => $_ENV['AUDIT_FILE'] ?? 'storage/audit/security-audit.log',
+        'mirror_to_log' => filter_var($_ENV['AUDIT_MIRROR_TO_LOG'] ?? false, FILTER_VALIDATE_BOOL),
+        'log_file' => $_ENV['AUDIT_LOG_FILE'] ?? 'storage/logs/security-audit.log',
+    ],
+    'uploads' => [
+        'profile' => $_ENV['UPLOAD_PROFILE'] ?? 'documents',
+        'strict_production' => true,
+        'allow_archives_in_production' => filter_var($_ENV['UPLOAD_ALLOW_ARCHIVES_IN_PRODUCTION'] ?? false, FILTER_VALIDATE_BOOL),
+        'scanner' => [
+            'driver' => $_ENV['UPLOAD_SCANNER_DRIVER'] ?? 'composite',
+            'clamav_binary' => $_ENV['CLAMAV_BINARY'] ?? 'clamscan',
+            'timeout_seconds' => (int)($_ENV['UPLOAD_SCAN_TIMEOUT'] ?? 30),
+            'fail_closed' => true,
+            'heuristic_read_bytes' => (int)($_ENV['UPLOAD_HEURISTIC_READ_BYTES'] ?? 2097152),
+        ],
+    ],
+    'security_headers' => [
+        'enabled' => true,
+        'hsts' => [
+            'enabled' => true,
+            'max_age' => (int)($_ENV['HSTS_MAX_AGE'] ?? 31536000),
+            'include_subdomains' => filter_var($_ENV['HSTS_INCLUDE_SUBDOMAINS'] ?? true, FILTER_VALIDATE_BOOL),
+            'preload' => filter_var($_ENV['HSTS_PRELOAD'] ?? false, FILTER_VALIDATE_BOOL),
+            'only_on_https' => true,
+        ],
+        'csp' => [
+            'enabled' => true,
+            'report_only' => filter_var($_ENV['CSP_REPORT_ONLY'] ?? false, FILTER_VALIDATE_BOOL),
+            'nonce_enabled' => true,
+            'auto_nonce' => true,
+            'nonce_directives' => ['script-src', 'style-src'],
+            'directives' => [
+                'default-src' => ["'self'"],
+                'script-src' => ["'self'"],
+                'style-src' => ["'self'"],
+                'img-src' => ["'self'", 'data:'],
+                'font-src' => ["'self'", 'data:'],
+                'connect-src' => ["'self'"],
+                'object-src' => ["'none'"],
+                'base-uri' => ["'self'"],
+                'form-action' => ["'self'"],
+                'frame-ancestors' => ["'self'"],
+            ],
+        ],
+        'permissions_policy' => ['preset' => $_ENV['PERMISSIONS_POLICY_PRESET'] ?? 'strict'],
+        'cross_origin_opener_policy' => $_ENV['CROSS_ORIGIN_OPENER_POLICY'] ?? 'same-origin',
+        'cross_origin_resource_policy' => $_ENV['CROSS_ORIGIN_RESOURCE_POLICY'] ?? 'same-origin',
+        'cross_origin_embedder_policy' => $_ENV['CROSS_ORIGIN_EMBEDDER_POLICY'] ?? null,
+    ],
+    'origin_protection' => [
+        'enabled' => true,
+        'block_direct_ip_host' => true,
+        'cdn_or_proxy_enabled' => filter_var($_ENV['CDN_OR_PROXY_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'require_cdn_or_proxy_in_production' => true,
+        'block_untrusted_forwarded_headers' => true,
+        'require_trusted_proxy' => filter_var($_ENV['REQUIRE_TRUSTED_PROXY'] ?? false, FILTER_VALIDATE_BOOL),
+    ],
+    'errors' => [
+        'hide_frontend_errors' => true,
+        'response_format' => $_ENV['ERROR_RESPONSE_FORMAT'] ?? 'auto',
+        'default_public_message' => 'Something went wrong. Please try again later.',
+        'include_request_id' => true,
+        'log_channel' => 'errors',
+    ],
+]);

@@ -798,6 +798,9 @@ From package root:
 php tests/run-tests.php
 php demos/run-all-demos.php
 php bin/mnb-secure key:generate
+php bin/mnb-secure config:validate
+php bin/mnb-secure doctor
+php bin/mnb-secure bootstrap:first-token demo-admin admin:*,profile.read,uploads.write 86400 --write-demo-user
 php bin/mnb-secure matrix:export
 php bin/mnb-secure throughput:check
 php bin/mnb-secure throughput:plan 80 150 25 500 900
@@ -915,7 +918,73 @@ Typical flow:
 
 ---
 
-## 32. Package structure
+
+## 32. Framework integration examples
+
+Additional copy/paste examples are available in `examples/framework-integration/`:
+
+```text
+examples/framework-integration/
+├── README.md
+├── plain-php-api.php
+├── slim-app.php
+└── doctor-workflow.php
+```
+
+They show how to wire the v1.0.1 controls into application code:
+
+- middleware pipeline order: request trust → security headers → rate policies → API token auth
+- `AuthContext` and `Auth\PermissionGuard` usage after bearer-token validation
+- named rate-limit policies for route/user/IP-aware throttling
+- upload security profiles such as `images`, `documents`, `videos`, `archives`, and `strict`
+- structured audit events for token, upload, admin, and sensitive actions
+- `SecurityDoctor` usage for local and CI readiness checks
+
+Plain PHP front controller example:
+
+```php
+$pipeline = new MiddlewarePipeline([
+    $kernel->requestTrustMiddleware(),
+    $kernel->securityHeadersMiddleware(),
+    $kernel->rateLimitMiddleware('api', 'api.profile'),
+    new ApiTokenMiddleware($tokens),
+]);
+```
+
+Slim remains optional. The Slim example is a bridge pattern, not a required dependency.
+
+---
+
+
+## 33. Developer experience quickstart
+
+Production onboarding helpers are available for v1.0.1:
+
+```text
+.env.production.example
+config/security.production.php
+docs/INSTALL-CHECKLIST.md
+examples/quickstart/README.md
+examples/quickstart/bootstrap-first-token.php
+```
+
+Recommended first setup flow:
+
+```bash
+cp .env.production.example .env
+php bin/mnb-secure key:generate
+php bin/mnb-secure config:validate
+php bin/mnb-secure doctor
+php bin/mnb-secure bootstrap:first-token demo-admin admin:*,profile.read,uploads.write 86400 --write-demo-user
+```
+
+The bootstrap command issues a real opaque API token through the configured token store and audit trail. The plain token is shown once; store it securely and rotate it after creating real application users.
+
+Use `docs/INSTALL-CHECKLIST.md` before pushing to production.
+
+---
+
+## 34. Package structure
 
 ```text
 mnb-secure-core/
@@ -923,6 +992,9 @@ mnb-secure-core/
 ├── bin/mnb-secure
 ├── composer.json
 ├── config/security.php
+├── config/security.production.php
+├── .env.production.example
+├── docs/INSTALL-CHECKLIST.md
 ├── database/
 ├── demos/
 ├── examples/

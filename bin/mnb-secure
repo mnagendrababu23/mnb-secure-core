@@ -20,6 +20,7 @@ use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
 use Mnb\SecurityCore\Throughput\ThroughputConfig;
 use Mnb\SecurityCore\Throughput\ThroughputPlanner;
+use Mnb\SecurityCore\Quickstart\FirstTokenBootstrapper;
 
 $command = $argv[1] ?? 'help';
 $root = getcwd();
@@ -46,6 +47,19 @@ switch ($command) {
         $report = (new SecurityDoctor($config, $root))->check();
         echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
         exit($report['passed'] ? 0 : 1);
+    case 'bootstrap:first-token':
+        $userId = $argv[2] ?? 'demo-admin';
+        $scopes = isset($argv[3]) ? array_filter(array_map('trim', explode(',', (string)$argv[3]))) : ['admin:*', 'profile.read', 'uploads.write'];
+        $ttlSeconds = isset($argv[4]) ? (int)$argv[4] : 86400;
+        $writeDemoUser = in_array('--write-demo-user', $argv, true);
+        $report = (new FirstTokenBootstrapper($config, $root))->issue([
+            'user_id' => $userId,
+            'scopes' => $scopes,
+            'ttl_seconds' => $ttlSeconds,
+            'write_demo_user' => $writeDemoUser,
+        ]);
+        echo json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+        break;
     case 'secrets:scan':
         $findings = (new SecretScanner())->scanDirectory($root);
         echo json_encode(['findings' => $findings], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL;
@@ -122,6 +136,7 @@ switch ($command) {
         echo "  config:validate          Validate security config shape, values, and safe combinations\n";
         echo "  check:production         Run production security readiness checks\n";
         echo "  doctor                   Run full security, package, runtime, storage, and scanner diagnostics\n";
+        echo "  bootstrap:first-token    Issue first file/db/redis-backed API token: user_id scopes ttl [--write-demo-user]\n";
         echo "  secrets:scan             Scan project for accidental secrets\n";
         echo "  matrix:export            Export vulnerability blocking matrix\n";
         echo "  pentest:checklist        Export pentest checklist\n";

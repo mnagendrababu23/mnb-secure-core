@@ -59,6 +59,7 @@ use Mnb\SecurityCore\Security\CspNonceManager;
 use Mnb\SecurityCore\Security\SecurityConfigValidator;
 use Mnb\SecurityCore\Security\SecurityDoctor;
 use Mnb\SecurityCore\Security\VulnerabilityMatrix;
+use Mnb\SecurityCore\Quickstart\FirstTokenBootstrapper;
 use Mnb\SecurityCore\Pentest\PentestChecklist;
 use Mnb\SecurityCore\Pentest\PayloadLibrary;
 use Mnb\SecurityCore\Pentest\PentestFinding;
@@ -419,6 +420,53 @@ $doctorCliCode = 0;
 exec('cd ' . escapeshellarg(dirname(__DIR__)) . ' && ' . escapeshellarg(PHP_BINARY) . ' bin/mnb-secure doctor 2>&1', $doctorCliOutput, $doctorCliCode);
 $doctorCliJson = json_decode(implode("\n", $doctorCliOutput), true);
 ok(is_array($doctorCliJson) && isset($doctorCliJson['sections']['config_validation']) && $doctorCliCode === 1, 'CLI doctor command returns JSON diagnostics and non-zero status for blocking issues');
+
+$quickstartConfig = $defaultConfig;
+$quickstartConfig['app']['key'] = str_repeat('q', 40);
+$quickstartConfig['paths']['cache'] = $base . '/quickstart/cache';
+$quickstartConfig['paths']['tokens'] = $base . '/quickstart/tokens/tokens.json';
+$quickstartConfig['paths']['audit'] = $base . '/quickstart/audit';
+$quickstartConfig['paths']['logs'] = $base . '/quickstart/logs';
+$quickstartConfig['paths']['private_storage'] = $base . '/quickstart/private';
+$quickstartConfig['audit']['file'] = $base . '/quickstart/audit/security-audit.log';
+@mkdir($quickstartConfig['paths']['cache'], 0777, true);
+@mkdir(dirname($quickstartConfig['paths']['tokens']), 0777, true);
+@mkdir($quickstartConfig['paths']['audit'], 0777, true);
+@mkdir($quickstartConfig['paths']['logs'], 0777, true);
+@mkdir($quickstartConfig['paths']['private_storage'], 0777, true);
+$quickstartReport = (new FirstTokenBootstrapper($quickstartConfig, $base))->issue([
+    'user_id' => 'demo-admin',
+    'scopes' => ['admin:*', 'profile.read'],
+    'ttl_seconds' => 3600,
+    'write_demo_user' => true,
+]);
+$quickstartTokenService = new OpaqueTokenService((new SecurityKernel($quickstartConfig))->tokenStore());
+$quickstartRecord = $quickstartTokenService->validate($quickstartReport['token']['plain_token']);
+ok($quickstartReport['ok'] === true && $quickstartRecord !== null && $quickstartRecord['user_id'] === 'demo-admin' && is_file($base . '/storage/private/demo-user.json'), 'quickstart bootstrapper issues first token and writes demo user metadata');
+
+$quickstartCliRoot = $base . '/quickstart-cli';
+@mkdir($quickstartCliRoot . '/config', 0777, true);
+@mkdir($quickstartCliRoot . '/storage/tokens', 0777, true);
+@mkdir($quickstartCliRoot . '/storage/audit', 0777, true);
+$quickstartCliConfig = var_export(array_replace_recursive($defaultConfig, [
+    'app' => ['key' => str_repeat('c', 40)],
+    'paths' => [
+        'cache' => $quickstartCliRoot . '/storage/cache',
+        'tokens' => $quickstartCliRoot . '/storage/tokens/tokens.json',
+        'audit' => $quickstartCliRoot . '/storage/audit',
+        'logs' => $quickstartCliRoot . '/storage/logs',
+        'private_storage' => $quickstartCliRoot . '/storage/private',
+        'quarantine' => $quickstartCliRoot . '/storage/quarantine',
+        'backups' => $quickstartCliRoot . '/storage/backups',
+    ],
+    'audit' => ['file' => $quickstartCliRoot . '/storage/audit/security-audit.log'],
+]), true);
+file_put_contents($quickstartCliRoot . '/config/security.php', '<?php return ' . $quickstartCliConfig . ';');
+$quickstartCliOutput = [];
+$quickstartCliCode = 0;
+exec('cd ' . escapeshellarg($quickstartCliRoot) . ' && ' . escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(dirname(__DIR__) . '/bin/mnb-secure') . ' bootstrap:first-token demo-cli profile.read 3600 --write-demo-user 2>&1', $quickstartCliOutput, $quickstartCliCode);
+$quickstartCliJson = json_decode(implode("\n", $quickstartCliOutput), true);
+ok($quickstartCliCode === 0 && is_array($quickstartCliJson) && ($quickstartCliJson['user']['id'] ?? null) === 'demo-cli' && isset($quickstartCliJson['token']['authorization_header']), 'CLI bootstrap:first-token returns first-token JSON workflow');
 
 $invalidConfigReport = (new SecurityConfigValidator([
     'app' => ['env' => 'production', 'debug' => 'true', 'force_https' => false, 'key' => 'weak', 'trusted_hosts' => ['*'], 'trusted_proxies' => ['not-a-proxy', '*']],
