@@ -33,6 +33,7 @@ class SecurityConfigValidator
         $this->validateRedis();
         $this->validateCors();
         $this->validateSecurityHeaders();
+        $this->validateSuggestions();
         $this->validateOriginProtection();
         $this->validateErrors();
         $this->validateMemory();
@@ -166,6 +167,22 @@ class SecurityConfigValidator
             }
             if (!$this->isStringLike($audit[$key]) || trim((string)$audit[$key]) === '') {
                 $this->issue('high', 'invalid_audit_' . $key, 'audit.' . $key, 'Audit file paths must be non-empty strings.', 'path string', $audit[$key]);
+            }
+        }
+
+        if (isset($audit['auto'])) {
+            if (!is_array($audit['auto'])) {
+                $this->issue('high', 'invalid_audit_auto_config', 'audit.auto', 'audit.auto must be a config array when provided.', 'array', $audit['auto']);
+            } else {
+                foreach (['enabled', 'log_reads', 'log_preflight'] as $key) {
+                    $this->bool($audit['auto'], $key, 'audit.auto.' . $key, required: false);
+                }
+                if (isset($audit['auto']['excluded_paths'])) {
+                    $this->stringList($audit['auto']['excluded_paths'], 'audit.auto.excluded_paths', false);
+                }
+                if (isset($audit['auto']['sensitive_input_keys'])) {
+                    $this->stringList($audit['auto']['sensitive_input_keys'], 'audit.auto.sensitive_input_keys', false);
+                }
             }
         }
 
@@ -462,11 +479,60 @@ class SecurityConfigValidator
         if ($cors === null) {
             return;
         }
+
+        $this->bool($cors, 'enabled', 'cors.enabled', required: false);
+        $this->bool($cors, 'allow_credentials', 'cors.allow_credentials', required: false);
+        $this->bool($cors, 'allow_null_origin', 'cors.allow_null_origin', required: false);
+        $this->bool($cors, 'allow_private_network', 'cors.allow_private_network', required: false);
         $this->stringList($cors['allowed_origins'] ?? [], 'cors.allowed_origins', true);
         $this->stringList($cors['allowed_methods'] ?? [], 'cors.allowed_methods', true);
         $this->stringList($cors['allowed_headers'] ?? [], 'cors.allowed_headers', true);
-        if (in_array('*', $cors['allowed_origins'] ?? [], true) && $this->isProduction($this->config['app'] ?? [])) {
+        if (isset($cors['allowed_origin_patterns'])) {
+            $this->stringList($cors['allowed_origin_patterns'], 'cors.allowed_origin_patterns', false);
+        }
+        if (isset($cors['exposed_headers'])) {
+            $this->stringList($cors['exposed_headers'], 'cors.exposed_headers', false);
+        }
+        $this->intRange($cors, 'max_age', 'cors.max_age', 0, 86400, required: false);
+
+        $origins = is_array($cors['allowed_origins'] ?? null) ? $cors['allowed_origins'] : [];
+        foreach ($origins as $origin) {
+            if (!is_scalar($origin)) {
+                continue;
+            }
+            $origin = trim((string)$origin);
+            if ($origin === '*') {
+                continue;
+            }
+            if ($origin === 'null') {
+                if (empty($cors['allow_null_origin'])) {
+                    $this->issue('medium', 'null_cors_origin_without_opt_in', 'cors.allowed_origins', 'The null origin should only be allowed when cors.allow_null_origin is explicitly true.', 'allow_null_origin=true', $origin);
+                }
+                continue;
+            }
+            if (!$this->looksLikeUrl($origin)) {
+                $this->issue('medium', 'invalid_cors_origin', 'cors.allowed_origins', 'CORS origins must be explicit http(s) origins such as https://app.example.com.', 'http(s) origin', $origin);
+            }
+            if (preg_match('/[
+]/', $origin)) {
+                $this->issue('high', 'cors_origin_header_injection', 'cors.allowed_origins', 'CORS origins must not contain CR/LF characters.', 'single-line origin', $origin);
+            }
+        }
+
+        if (in_array('*', $origins, true) && !empty($cors['allow_credentials'])) {
+            $this->issue('high', 'wildcard_cors_with_credentials', 'cors', 'CORS cannot safely combine wildcard allowed_origins with allow_credentials=true.', 'explicit origins when credentials are enabled', ['allowed_origins' => $origins, 'allow_credentials' => true]);
+        }
+        if (in_array('*', $origins, true) && $this->isProduction($this->config['app'] ?? [])) {
             $this->issue('medium', 'wildcard_cors_origin', 'cors.allowed_origins', 'Wildcard CORS origins should be avoided in production APIs.', 'explicit origins', '*');
+        }
+
+        foreach (['allowed_methods', 'allowed_headers', 'exposed_headers'] as $key) {
+            foreach ((array)($cors[$key] ?? []) as $value) {
+                if (is_scalar($value) && preg_match('/[
+]/', (string)$value)) {
+                    $this->issue('high', 'cors_header_injection_' . $key, 'cors.' . $key, 'CORS header config values must not contain CR/LF characters.', 'single-line token', $value);
+                }
+            }
         }
     }
 
@@ -580,6 +646,19 @@ class SecurityConfigValidator
                     $this->issue('medium', 'invalid_permissions_policy_directives', 'security_headers.permissions_policy.directives', 'Permissions-Policy directives must be an associative array.', 'array', $permissions['directives']);
                 }
             }
+        }
+    }
+
+    private function validateSuggestions(): void
+    {
+        $suggestions = $this->section('suggestions', false);
+        if ($suggestions === null) {
+            return;
+        }
+        $this->bool($suggestions, 'enabled', 'suggestions.enabled', required: false);
+        $this->intRange($suggestions, 'max_results', 'suggestions.max_results', 1, 50, required: false);
+        if (isset($suggestions['rules']) && !is_array($suggestions['rules'])) {
+            $this->issue('medium', 'invalid_suggestion_rules', 'suggestions.rules', 'suggestions.rules must be an array when provided.', 'array', $suggestions['rules']);
         }
     }
 

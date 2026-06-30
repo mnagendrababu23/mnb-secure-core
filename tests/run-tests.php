@@ -36,6 +36,8 @@ use Mnb\SecurityCore\Files\SecureFileManager;
 use Mnb\SecurityCore\Files\UploadSecurityProfile;
 use Mnb\SecurityCore\Files\HeuristicMalwareScanner;
 use Mnb\SecurityCore\Http\Middleware\ApiTokenMiddleware;
+use Mnb\SecurityCore\Http\Middleware\AutoAuditMiddleware;
+use Mnb\SecurityCore\Http\Middleware\CorsMiddleware;
 use Mnb\SecurityCore\Http\Middleware\HttpsMiddleware;
 use Mnb\SecurityCore\Http\Middleware\RateLimitMiddleware;
 use Mnb\SecurityCore\Http\Middleware\RateLimitPolicyMiddleware;
@@ -50,6 +52,7 @@ use Mnb\SecurityCore\Http\Response;
 use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
 use Mnb\SecurityCore\Logging\SecurityAuditEvent;
 use Mnb\SecurityCore\Logging\SecurityAuditTrail;
+use Mnb\SecurityCore\Logging\AutoAuditLogger;
 use Mnb\SecurityCore\RateLimit\DatabaseRateLimiter;
 use Mnb\SecurityCore\RateLimit\FileRateLimiter;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicy;
@@ -83,6 +86,7 @@ use Mnb\SecurityCore\Throughput\ThroughputMeter;
 use Mnb\SecurityCore\Throughput\ThroughputMonitor;
 use Mnb\SecurityCore\Throughput\ThroughputPlanner;
 use Mnb\SecurityCore\Http\Middleware\ThroughputMiddleware;
+use Mnb\SecurityCore\Suggestions\AutoSuggestionEngine;
 
 $base = sys_get_temp_dir() . '/mnb_secure_core_v1_0_tests_' . getmypid();
 @mkdir($base, 0777, true);
@@ -317,6 +321,31 @@ ok(
     && str_contains($autoNonceResponse->headers()['Content-Security-Policy'] ?? '', "'nonce-" . $autoNonceResponse->body() . "'"),
     'security headers middleware can generate request-scoped CSP nonce automatically'
 );
+
+$corsMiddleware = new CorsMiddleware([
+    'allowed_origins' => ['https://app.example.com'],
+    'allowed_origin_patterns' => ['https://*.trusted.test'],
+    'allowed_methods' => ['GET', 'POST', 'OPTIONS'],
+    'allowed_headers' => ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+    'exposed_headers' => ['X-Request-ID'],
+    'allow_credentials' => true,
+    'max_age' => 300,
+]);
+$corsPreflight = new Request('OPTIONS', '/api/data', [], [], [
+    'origin' => 'https://app.example.com',
+    'access-control-request-method' => 'POST',
+    'access-control-request-headers' => 'Content-Type, X-CSRF-Token',
+]);
+$corsAllowed = (new MiddlewarePipeline([$corsMiddleware]))->handle($corsPreflight, fn() => Response::text('should-not-run'));
+$corsDenied = (new MiddlewarePipeline([$corsMiddleware]))->handle(new Request('GET', '/api/data', [], [], ['origin' => 'https://evil.example']), fn() => Response::text('ok'));
+ok($corsAllowed->status() === 204 && ($corsAllowed->headers()['Access-Control-Allow-Origin'] ?? '') === 'https://app.example.com' && ($corsAllowed->headers()['Access-Control-Allow-Credentials'] ?? '') === 'true' && $corsDenied->status() === 403, 'cors middleware handles credentialed preflight and denies untrusted origins');
+
+$corsConfigReport = (new SecurityConfigValidator(['app' => ['env' => 'production'], 'cors' => ['allowed_origins' => ['*'], 'allowed_methods' => ['GET'], 'allowed_headers' => ['Content-Type'], 'allow_credentials' => true]]))->validate();
+ok(!$corsConfigReport['passed'] && count(array_filter($corsConfigReport['errors'], fn($issue) => ($issue['key'] ?? '') === 'wildcard_cors_with_credentials')) === 1, 'security config validator blocks wildcard CORS with credentials');
+
+$suggestions = (new AutoSuggestionEngine())->suggest('cors audit login upload doctor', 5);
+$codeSuggestions = (new AutoSuggestionEngine())->suggestFromCode('<?php $kernel = new SecurityKernel($config); $m = new ApiTokenMiddleware($tokens);', 5);
+ok(count($suggestions) >= 3 && $suggestions[0]['confidence'] > 0 && count(array_filter($codeSuggestions, fn($item) => ($item['id'] ?? '') === 'missing_request_trust')) === 1, 'auto suggestion engine returns suggestions from typed words and user code');
 
 $request = new Request('GET', '/', [], [], [], ['HTTPS' => 'off']);
 $pipeline = new MiddlewarePipeline([new HttpsMiddleware(true)]);
@@ -613,6 +642,22 @@ $structuredVerify = $structuredAudit->verifyDetailed();
 ok($structuredVerify['valid'] && count($structuredEntries) === 3 && $structuredEntries[0]['category'] === 'auth' && $structuredEntries[1]['category'] === 'admin', 'structured audit trail records categorized auth/admin/sensitive events');
 ok(!str_contains(json_encode($structuredEntries), 'plain-secret-should-redact') && !str_contains(json_encode($structuredEntries), 'secret-key'), 'structured audit trail redacts secrets recursively');
 ok(count($structuredAudit->read(null, 'admin')) === 1, 'structured audit reader filters by category');
+
+$autoAuditFile = $base . '/audit/auto-audit.log';
+$autoTrail = new SecurityAuditTrail(new TamperEvidentAuditLogger($autoAuditFile));
+$autoLogger = new AutoAuditLogger($autoTrail, ['enabled' => true]);
+$autoLogger->add(['user_id' => 10], ['resource' => 'student', 'id' => 5], [], ['password' => 'must-redact']);
+$autoLogger->emailSent(['user_id' => 10], ['to_fingerprint' => SecurityAuditEvent::fingerprint('parent@example.com')]);
+$autoLogger->passwordVerificationFailed(['email_fingerprint' => SecurityAuditEvent::fingerprint('user@example.com')]);
+$autoEntries = (new TamperEvidentAuditLogger($autoAuditFile))->read(null);
+ok(count($autoEntries) === 3 && $autoEntries[0]['action'] === 'record.add' && $autoEntries[1]['category'] === 'email' && $autoEntries[2]['outcome'] === 'failure' && !str_contains(json_encode($autoEntries), 'must-redact'), 'auto audit logger records add/email/password outcomes and redacts secrets');
+
+$autoMiddlewareFile = $base . '/audit/auto-middleware.log';
+$autoMiddleware = new AutoAuditMiddleware(new SecurityAuditTrail(new TamperEvidentAuditLogger($autoMiddlewareFile)), ['enabled' => true]);
+$autoRequest = (new Request('POST', '/login', [], ['email' => 'user@example.com', 'password' => 'secret'], [], ['REMOTE_ADDR' => '127.0.0.2']))->withAttribute('route_name', 'auth.login');
+$autoResponse = (new MiddlewarePipeline([$autoMiddleware]))->handle($autoRequest, fn() => Response::json(['status' => false], 401));
+$autoMiddlewareEntries = (new TamperEvidentAuditLogger($autoMiddlewareFile))->read(null, 'auth');
+ok($autoResponse->status() === 401 && count($autoMiddlewareEntries) === 1 && $autoMiddlewareEntries[0]['action'] === 'auth.login' && $autoMiddlewareEntries[0]['outcome'] === 'failure' && !str_contains(json_encode($autoMiddlewareEntries), 'secret'), 'auto audit middleware infers failed login without logging raw password');
 
 $secretFile = $base . '/source.php';
 file_put_contents($secretFile, "<?php\n\$api_key = 'abcdefghijklmnopqrstuvwxyz123456';\n");

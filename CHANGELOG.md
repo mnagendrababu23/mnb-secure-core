@@ -26,6 +26,15 @@ All notable changes to `mnb-secure-core` are documented here.
 - `Request::fromGlobals()` accepts an optional trusted-proxies array while existing zero-argument usage remains valid.
 - `Request` now includes optional `withAttribute()` / `attribute()` helpers for downstream auth context without breaking existing request handling.
 
+
+### v1.0.1 Auto Audit, CORS, and Suggestions Add-on
+
+- Added `AutoAuditLogger` and `AutoAuditMiddleware` for safe automatic audit events around add, edit, update, delete, submissions, email sent, login, register, and password-verification flows.
+- Added richer CORS handling with credential-safe origin reflection, preflight method/header validation, origin patterns, exposed headers, max-age, private-network opt-in, and stronger config validation.
+- Added `AutoSuggestionEngine` for developer/app suggestions based on typed words or pasted PHP code snippets.
+- Added kernel helpers: `autoAuditLogger()`, `autoAuditMiddleware()`, `corsMiddleware()`, and `suggestionEngine()`.
+- Added config/env options for automatic audit logging, CORS policy, and suggestions.
+
 ### v1.0.1 Release Readiness Pack
 
 - Added GitHub pull request template with compatibility, security, and verification checklist.

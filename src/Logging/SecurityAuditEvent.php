@@ -22,6 +22,8 @@ class SecurityAuditEvent
     public const CATEGORY_ADMIN = 'admin';
     public const CATEGORY_DATABASE = 'database';
     public const CATEGORY_SENSITIVE = 'sensitive';
+    public const CATEGORY_SUBMISSION = 'submission';
+    public const CATEGORY_EMAIL = 'email';
     public const CATEGORY_SYSTEM = 'system';
 
     /** @param array<string,mixed> $actor @param array<string,mixed> $target @param array<string,mixed> $context @param array<string,mixed> $meta */

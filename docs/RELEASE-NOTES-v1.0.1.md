@@ -76,3 +76,13 @@ git pull origin main
 git tag v1.0.1
 git push origin v1.0.1
 ```
+
+
+## Auto audit, CORS, and suggestions add-on
+
+Additional v1.0.1 additions include:
+
+- `AutoAuditLogger` and `AutoAuditMiddleware` for safe automatic add/edit/delete/submission/email/auth/password-verification audit events.
+- Improved `CorsMiddleware` and `CorsPolicy` with credential-safe origin reflection, preflight validation, exposed headers, origin patterns, max-age, and private-network opt-in.
+- `AutoSuggestionEngine` for suggestions from typed words or pasted PHP code snippets.
+- Kernel helpers: `autoAuditLogger()`, `autoAuditMiddleware()`, `corsMiddleware()`, and `suggestionEngine()`.

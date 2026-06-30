@@ -26,6 +26,8 @@ use Mnb\SecurityCore\RateLimit\RedisRateLimiter;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicy;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicyRegistry;
 use Mnb\SecurityCore\Http\Middleware\RateLimitPolicyMiddleware;
+use Mnb\SecurityCore\Http\Middleware\AutoAuditMiddleware;
+use Mnb\SecurityCore\Http\Middleware\CorsMiddleware;
 use Mnb\SecurityCore\Http\Middleware\RequestTrustMiddleware;
 use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
 use Mnb\SecurityCore\Http\Request;
@@ -35,7 +37,9 @@ use Mnb\SecurityCore\Logging\FileLogger;
 use Mnb\SecurityCore\Logging\SecurityAuditTrail;
 use Mnb\SecurityCore\Logging\NullSecurityAuditTrail;
 use Mnb\SecurityCore\Logging\TamperEvidentAuditLogger;
+use Mnb\SecurityCore\Logging\AutoAuditLogger;
 use Mnb\SecurityCore\Contracts\LoggerInterface;
+use Mnb\SecurityCore\Suggestions\AutoSuggestionEngine;
 use Mnb\SecurityCore\Security\ServerIdentityHider;
 use PDO;
 
@@ -168,6 +172,20 @@ class SecurityKernel
         return new SecurityAuditTrail($this->auditLogger(), $logger);
     }
 
+    public function autoAuditLogger(?SecurityAuditTrail $audit = null): AutoAuditLogger
+    {
+        $auditConfig = is_array($this->config['audit'] ?? null) ? $this->config['audit'] : [];
+        $autoConfig = is_array($auditConfig['auto'] ?? null) ? $auditConfig['auto'] : [];
+        return new AutoAuditLogger($audit ?: $this->auditTrail(), $autoConfig);
+    }
+
+    public function autoAuditMiddleware(?SecurityAuditTrail $audit = null): AutoAuditMiddleware
+    {
+        $auditConfig = is_array($this->config['audit'] ?? null) ? $this->config['audit'] : [];
+        $autoConfig = is_array($auditConfig['auto'] ?? null) ? $auditConfig['auto'] : [];
+        return new AutoAuditMiddleware($this->autoAuditLogger($audit), $autoConfig);
+    }
+
     public function malwareScanner(): MalwareScannerInterface
     {
         $config = $this->config['uploads']['scanner'] ?? [];
@@ -216,9 +234,21 @@ class SecurityKernel
         return new RequestTrustMiddleware($this->config['origin_protection'] ?? []);
     }
 
+    public function corsMiddleware(): CorsMiddleware
+    {
+        return new CorsMiddleware($this->config['cors'] ?? []);
+    }
+
     public function securityHeadersMiddleware(?callable $nonceResolver = null): SecurityHeadersMiddleware
     {
         return new SecurityHeadersMiddleware($this->config['security_headers'] ?? [], $nonceResolver);
+    }
+
+    public function suggestionEngine(array $customRules = []): AutoSuggestionEngine
+    {
+        $suggestionConfig = is_array($this->config['suggestions'] ?? null) ? $this->config['suggestions'] : [];
+        $rules = is_array($suggestionConfig['rules'] ?? null) ? $suggestionConfig['rules'] : [];
+        return new AutoSuggestionEngine(array_merge($rules, $customRules));
     }
 
     public function pdo(): PDO

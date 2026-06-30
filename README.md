@@ -1007,6 +1007,68 @@ mnb-secure-core/
 └── README.md
 ```
 
+
+## 34. Auto audit, CORS, and suggestions add-on
+
+This v1.0.1 add-on includes three extra developer-facing helpers.
+
+### Auto audit logger
+
+Enable request-outcome audit logging from config:
+
+```php
+'audit' => [
+    'enabled' => true,
+    'auto' => [
+        'enabled' => true,
+        'log_reads' => false,
+        'excluded_paths' => ['health', 'metrics'],
+    ],
+],
+```
+
+Use it in the middleware pipeline after request trust and before application handlers:
+
+```php
+$pipeline = new MiddlewarePipeline([
+    $kernel->requestTrustMiddleware(),
+    $kernel->corsMiddleware(),
+    $kernel->securityHeadersMiddleware(),
+    $kernel->autoAuditMiddleware(),
+]);
+```
+
+The middleware safely infers actions such as `auth.login`, `auth.register`, `auth.password_verification`, `submission.created`, `email.sent`, `record.add`, `record.edit`, `record.update`, and `record.delete` from method/path/route/status. It does not store raw request bodies or passwords. For explicit app events, use:
+
+```php
+$autoAudit = $kernel->autoAuditLogger();
+$autoAudit->emailSent(['user_id' => 10], ['to_fingerprint' => SecurityAuditEvent::fingerprint('user@example.com')]);
+$autoAudit->passwordVerificationFailed(['email_fingerprint' => SecurityAuditEvent::fingerprint('user@example.com')]);
+```
+
+### CORS / cross-origin middleware
+
+Use the improved CORS middleware for API cross-origin fixes:
+
+```php
+$cors = $kernel->corsMiddleware();
+```
+
+Supported config includes explicit origins, wildcard subdomain patterns, credential-safe origin reflection, preflight method/header checks, exposed headers, `Access-Control-Max-Age`, and optional Private Network Access support. Avoid `allowed_origins => ['*']` when `allow_credentials` is enabled.
+
+### Auto suggestions
+
+Use suggestions to guide developers or app users based on typed words or pasted code:
+
+```php
+$suggestions = $kernel->suggestionEngine()->suggest('cors audit login upload doctor');
+$codeHints = $kernel->suggestionEngine()->suggestFromCode($phpCode);
+```
+
+The engine suggests relevant v1.0.1 helpers such as auto audit, CORS policy, request trust, security headers, rate policies, auth context, upload profiles, and doctor checks.
+
+---
+
 ## Release readiness and public support
 
 For public GitHub releases, use the included release readiness docs and templates:

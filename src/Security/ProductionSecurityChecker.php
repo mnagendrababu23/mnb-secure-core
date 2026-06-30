@@ -19,6 +19,7 @@ class ProductionSecurityChecker
         $uploads = $this->config['uploads'] ?? [];
         $audit = $this->config['audit'] ?? [];
         $securityHeaders = $this->config['security_headers'] ?? [];
+        $cors = $this->config['cors'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -39,6 +40,15 @@ class ProductionSecurityChecker
             $issues[] = ['level' => 'high', 'key' => 'audit_logging_disabled', 'message' => 'Structured audit logging should stay enabled in production for auth, token, upload, admin, database, and sensitive actions.'];
         }
         if (($app['env'] ?? 'local') === 'production') {
+            if (is_array($cors)) {
+                $origins = is_array($cors['allowed_origins'] ?? null) ? $cors['allowed_origins'] : [];
+                if (in_array('*', $origins, true)) {
+                    $issues[] = ['level' => !empty($cors['allow_credentials']) ? 'high' : 'medium', 'key' => 'wildcard_cors_origin', 'message' => 'Production CORS should use explicit allowed origins; wildcard origins are risky and cannot be combined with credentials.'];
+                }
+                if (!empty($cors['allow_credentials']) && in_array('*', $origins, true)) {
+                    $issues[] = ['level' => 'high', 'key' => 'cors_credentials_with_wildcard', 'message' => 'CORS allow_credentials=true must not be used with wildcard allowed_origins.'];
+                }
+            }
             if (array_key_exists('enabled', $securityHeaders) && empty($securityHeaders['enabled'])) {
                 $issues[] = ['level' => 'high', 'key' => 'security_headers_disabled', 'message' => 'Security response headers should be enabled in production.'];
             }

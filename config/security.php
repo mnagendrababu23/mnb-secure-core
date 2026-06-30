@@ -30,6 +30,14 @@ return [
         'file' => $_ENV['AUDIT_FILE'] ?? ((__DIR__ . '/../storage/audit/security-audit.log')),
         'mirror_to_log' => filter_var($_ENV['AUDIT_MIRROR_TO_LOG'] ?? false, FILTER_VALIDATE_BOOL),
         'log_file' => $_ENV['AUDIT_LOG_FILE'] ?? ((__DIR__ . '/../storage/logs/security-audit.log')),
+        'auto' => [
+            // Enable to automatically log safe request outcomes for add/edit/delete/submission/email/auth routes.
+            'enabled' => filter_var($_ENV['AUDIT_AUTO_ENABLED'] ?? false, FILTER_VALIDATE_BOOL),
+            'log_reads' => filter_var($_ENV['AUDIT_AUTO_LOG_READS'] ?? false, FILTER_VALIDATE_BOOL),
+            'log_preflight' => filter_var($_ENV['AUDIT_AUTO_LOG_PREFLIGHT'] ?? false, FILTER_VALIDATE_BOOL),
+            'excluded_paths' => array_values(array_filter(array_map('trim', explode(',', $_ENV['AUDIT_AUTO_EXCLUDED_PATHS'] ?? 'health,healthz,metrics,favicon.ico')))),
+            'sensitive_input_keys' => ['password', 'password_confirmation', 'current_password', 'new_password', 'token', 'api_token', 'secret', 'api_key', 'authorization', 'cookie', 'session', 'csrf', 'otp', 'private_key'],
+        ],
     ],
 
     'limits' => [
@@ -99,9 +107,16 @@ return [
     ],
 
     'cors' => [
-        'allowed_origins' => ['http://localhost'],
+        'enabled' => filter_var($_ENV['CORS_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'allowed_origins' => array_values(array_filter(array_map('trim', explode(',', $_ENV['CORS_ALLOWED_ORIGINS'] ?? 'http://localhost')))),
+        'allowed_origin_patterns' => array_values(array_filter(array_map('trim', explode(',', $_ENV['CORS_ALLOWED_ORIGIN_PATTERNS'] ?? '')))),
         'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        'allowed_headers' => ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+        'allowed_headers' => ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Requested-With'],
+        'exposed_headers' => ['X-Request-ID', 'X-RateLimit-Policy', 'X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+        'allow_credentials' => filter_var($_ENV['CORS_ALLOW_CREDENTIALS'] ?? false, FILTER_VALIDATE_BOOL),
+        'allow_null_origin' => filter_var($_ENV['CORS_ALLOW_NULL_ORIGIN'] ?? false, FILTER_VALIDATE_BOOL),
+        'allow_private_network' => filter_var($_ENV['CORS_ALLOW_PRIVATE_NETWORK'] ?? false, FILTER_VALIDATE_BOOL),
+        'max_age' => (int)($_ENV['CORS_MAX_AGE'] ?? 600),
     ],
     'security_headers' => [
         'enabled' => filter_var($_ENV['SECURITY_HEADERS_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
@@ -143,6 +158,12 @@ return [
         'cross_origin_opener_policy' => $_ENV['CROSS_ORIGIN_OPENER_POLICY'] ?? 'same-origin',
         'cross_origin_resource_policy' => $_ENV['CROSS_ORIGIN_RESOURCE_POLICY'] ?? 'same-origin',
         'cross_origin_embedder_policy' => $_ENV['CROSS_ORIGIN_EMBEDDER_POLICY'] ?? null,
+    ],
+
+    'suggestions' => [
+        'enabled' => filter_var($_ENV['SUGGESTIONS_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'max_results' => (int)($_ENV['SUGGESTIONS_MAX_RESULTS'] ?? 8),
+        'rules' => [],
     ],
 
     'origin_protection' => [
