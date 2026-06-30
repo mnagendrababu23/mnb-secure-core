@@ -18,6 +18,7 @@ class ProductionSecurityChecker
         $originProtection = $this->config['origin_protection'] ?? [];
         $uploads = $this->config['uploads'] ?? [];
         $audit = $this->config['audit'] ?? [];
+        $securityHeaders = $this->config['security_headers'] ?? [];
 
         if (($app['env'] ?? 'local') === 'production' && !empty($app['debug'])) {
             $issues[] = ['level' => 'critical', 'key' => 'debug_enabled', 'message' => 'APP_DEBUG must be false in production.'];
@@ -36,6 +37,32 @@ class ProductionSecurityChecker
         }
         if (($app['env'] ?? 'local') === 'production' && array_key_exists('enabled', $audit) && empty($audit['enabled'])) {
             $issues[] = ['level' => 'high', 'key' => 'audit_logging_disabled', 'message' => 'Structured audit logging should stay enabled in production for auth, token, upload, admin, database, and sensitive actions.'];
+        }
+        if (($app['env'] ?? 'local') === 'production') {
+            if (array_key_exists('enabled', $securityHeaders) && empty($securityHeaders['enabled'])) {
+                $issues[] = ['level' => 'high', 'key' => 'security_headers_disabled', 'message' => 'Security response headers should be enabled in production.'];
+            }
+            $hsts = $securityHeaders['hsts'] ?? false;
+            $hstsEnabled = is_bool($hsts) ? $hsts : (is_array($hsts) ? !empty($hsts['enabled']) : false);
+            if (!empty($app['force_https']) && !$hstsEnabled) {
+                $issues[] = ['level' => 'medium', 'key' => 'hsts_disabled', 'message' => 'Enable HSTS after HTTPS is stable so browsers remember to use HTTPS.'];
+            }
+            $csp = $securityHeaders['csp'] ?? true;
+            $cspEnabled = is_bool($csp) ? $csp : (is_array($csp) ? (!array_key_exists('enabled', $csp) || !empty($csp['enabled'])) : true);
+            if (!$cspEnabled) {
+                $issues[] = ['level' => 'medium', 'key' => 'csp_disabled', 'message' => 'Content-Security-Policy should be enabled in production.'];
+            }
+            if (is_array($csp) && !empty($csp['directives']['script-src']) && empty($csp['report_only'])) {
+                $scriptSrc = is_array($csp['directives']['script-src']) ? $csp['directives']['script-src'] : preg_split('/\s+/', (string)$csp['directives']['script-src']);
+                if (in_array("'unsafe-inline'", $scriptSrc ?: [], true)) {
+                    $issues[] = ['level' => 'medium', 'key' => 'csp_unsafe_inline_scripts', 'message' => 'Production enforcing CSP should avoid script-src unsafe-inline. Prefer nonce or hash based scripts.'];
+                }
+            }
+            $permissions = $securityHeaders['permissions_policy'] ?? ['preset' => 'strict'];
+            $preset = is_array($permissions) ? strtolower((string)($permissions['preset'] ?? 'strict')) : strtolower((string)$permissions);
+            if (in_array($preset, ['none', 'disabled', 'off'], true)) {
+                $issues[] = ['level' => 'medium', 'key' => 'permissions_policy_disabled', 'message' => 'Permissions-Policy should restrict browser features in production.'];
+            }
         }
         if (empty($cookies['http_only'])) {
             $issues[] = ['level' => 'high', 'key' => 'httponly_disabled', 'message' => 'HttpOnly cookie flag should be enabled.'];

@@ -104,10 +104,45 @@ return [
         'allowed_headers' => ['Content-Type', 'Authorization', 'X-CSRF-Token'],
     ],
     'security_headers' => [
-        'hsts' => false,
+        'enabled' => filter_var($_ENV['SECURITY_HEADERS_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+        'hsts' => [
+            'enabled' => filter_var($_ENV['HSTS_ENABLED'] ?? false, FILTER_VALIDATE_BOOL),
+            'max_age' => (int)($_ENV['HSTS_MAX_AGE'] ?? 31536000),
+            'include_subdomains' => filter_var($_ENV['HSTS_INCLUDE_SUBDOMAINS'] ?? true, FILTER_VALIDATE_BOOL),
+            'preload' => filter_var($_ENV['HSTS_PRELOAD'] ?? false, FILTER_VALIDATE_BOOL),
+            'only_on_https' => true,
+        ],
+        'csp' => [
+            'enabled' => filter_var($_ENV['CSP_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'report_only' => filter_var($_ENV['CSP_REPORT_ONLY'] ?? false, FILTER_VALIDATE_BOOL),
+            'nonce_enabled' => filter_var($_ENV['CSP_NONCE_ENABLED'] ?? true, FILTER_VALIDATE_BOOL),
+            'auto_nonce' => filter_var($_ENV['CSP_AUTO_NONCE'] ?? false, FILTER_VALIDATE_BOOL),
+            'nonce_directives' => ['script-src', 'style-src'],
+            'directives' => [
+                'default-src' => ["'self'"],
+                'script-src' => ["'self'"],
+                'style-src' => ["'self'"],
+                'img-src' => ["'self'", 'data:'],
+                'font-src' => ["'self'", 'data:'],
+                'connect-src' => ["'self'"],
+                'object-src' => ["'none'"],
+                'base-uri' => ["'self'"],
+                'form-action' => ["'self'"],
+                'frame-ancestors' => ["'self'"],
+            ],
+        ],
+        // Legacy frame_ancestors remains supported when custom csp.directives is not supplied.
         'frame_ancestors' => "'self'",
         'content_type_options' => 'nosniff',
         'referrer_policy' => 'strict-origin-when-cross-origin',
+        'x_frame_options' => 'SAMEORIGIN',
+        'permissions_policy' => [
+            // strict, balanced, minimal, custom, none
+            'preset' => $_ENV['PERMISSIONS_POLICY_PRESET'] ?? 'strict',
+        ],
+        'cross_origin_opener_policy' => $_ENV['CROSS_ORIGIN_OPENER_POLICY'] ?? 'same-origin',
+        'cross_origin_resource_policy' => $_ENV['CROSS_ORIGIN_RESOURCE_POLICY'] ?? 'same-origin',
+        'cross_origin_embedder_policy' => $_ENV['CROSS_ORIGIN_EMBEDDER_POLICY'] ?? null,
     ],
 
     'origin_protection' => [

@@ -476,10 +476,109 @@ class SecurityConfigValidator
         if ($headers === null) {
             return;
         }
-        $this->bool($headers, 'hsts', 'security_headers.hsts', required: false);
-        foreach (['frame_ancestors', 'content_type_options', 'referrer_policy'] as $key) {
-            if (isset($headers[$key]) && !$this->isStringLike($headers[$key])) {
-                $this->issue('medium', 'invalid_security_header_' . $key, 'security_headers.' . $key, "security_headers.{$key} should be a string.", 'string', $headers[$key]);
+
+        $this->bool($headers, 'enabled', 'security_headers.enabled', required: false);
+
+        foreach (['content_type_options', 'referrer_policy', 'frame_ancestors', 'x_frame_options', 'cross_origin_opener_policy', 'cross_origin_resource_policy', 'cross_origin_embedder_policy'] as $key) {
+            if (isset($headers[$key]) && $headers[$key] !== null && $headers[$key] !== false && !$this->isStringLike($headers[$key])) {
+                $this->issue('medium', 'invalid_security_header_' . $key, 'security_headers.' . $key, "security_headers.{$key} should be a string when enabled.", 'string', $headers[$key]);
+            }
+            if (isset($headers[$key]) && is_string($headers[$key]) && preg_match('/[\r\n]/', $headers[$key])) {
+                $this->issue('high', 'header_injection_' . $key, 'security_headers.' . $key, "security_headers.{$key} must not contain CR/LF characters.", 'single-line header value', $headers[$key]);
+            }
+        }
+
+        $hsts = $headers['hsts'] ?? null;
+        if (is_bool($hsts) || $hsts === null) {
+            // Legacy boolean config remains supported.
+        } elseif (is_array($hsts)) {
+            $this->bool($hsts, 'enabled', 'security_headers.hsts.enabled', required: false);
+            $this->intRange($hsts, 'max_age', 'security_headers.hsts.max_age', 0, 63072000, required: false);
+            $this->bool($hsts, 'include_subdomains', 'security_headers.hsts.include_subdomains', required: false);
+            $this->bool($hsts, 'preload', 'security_headers.hsts.preload', required: false);
+            $this->bool($hsts, 'only_on_https', 'security_headers.hsts.only_on_https', required: false);
+            if (!empty($hsts['preload'])) {
+                $maxAge = (int)($hsts['max_age'] ?? 0);
+                if ($maxAge < 31536000 || empty($hsts['include_subdomains'])) {
+                    $this->issue('medium', 'hsts_preload_requirements_missing', 'security_headers.hsts', 'HSTS preload requires max_age >= 31536000 and include_subdomains=true.', 'preload-ready HSTS settings', $hsts);
+                }
+            }
+        } else {
+            $this->issue('high', 'invalid_security_headers_hsts', 'security_headers.hsts', 'security_headers.hsts must be boolean or an HSTS settings array.', 'bool|array', $hsts);
+        }
+
+        $app = is_array($this->config['app'] ?? null) ? $this->config['app'] : [];
+        if ($this->isProduction($app)) {
+            $hstsEnabled = is_bool($hsts) ? $hsts : (is_array($hsts) ? !empty($hsts['enabled']) : false);
+            $forceHttps = !empty($app['force_https']) || str_starts_with((string)($app['url'] ?? ''), 'https://');
+            if ($forceHttps && !$hstsEnabled) {
+                $this->issue('medium', 'hsts_disabled_for_https_production', 'security_headers.hsts.enabled', 'Production HTTPS apps should enable HSTS after confirming HTTPS is stable.', 'true', false);
+            }
+        }
+
+        $csp = $headers['csp'] ?? null;
+        if ($csp === null) {
+            return;
+        }
+        if (is_bool($csp)) {
+            return;
+        }
+        if (!is_array($csp)) {
+            $this->issue('high', 'invalid_csp_config', 'security_headers.csp', 'security_headers.csp must be boolean or array.', 'bool|array', $csp);
+            return;
+        }
+
+        foreach (['enabled', 'report_only', 'nonce_enabled', 'auto_nonce'] as $key) {
+            $this->bool($csp, $key, 'security_headers.csp.' . $key, required: false);
+        }
+        if (isset($csp['nonce_directives'])) {
+            $this->stringList($csp['nonce_directives'], 'security_headers.csp.nonce_directives', false);
+        }
+        if (isset($csp['directives']) && !is_array($csp['directives'])) {
+            $this->issue('high', 'invalid_csp_directives', 'security_headers.csp.directives', 'CSP directives must be an associative array.', 'array', $csp['directives']);
+        }
+        foreach ((array)($csp['directives'] ?? []) as $directive => $sources) {
+            $directive = (string)$directive;
+            if (!preg_match('/^[a-z][a-z0-9-]*$/', $directive)) {
+                $this->issue('high', 'invalid_csp_directive_name', 'security_headers.csp.directives.' . $directive, 'CSP directive names may contain only lowercase letters, numbers, and dashes.', 'safe directive name', $directive);
+                continue;
+            }
+            if (is_string($sources)) {
+                $sources = preg_split('/\s+/', trim($sources)) ?: [];
+            }
+            if (!is_array($sources)) {
+                $this->issue('high', 'invalid_csp_sources_' . $directive, 'security_headers.csp.directives.' . $directive, 'CSP directive sources must be a string or array of strings.', 'string|string[]', $sources);
+                continue;
+            }
+            foreach ($sources as $source) {
+                if (!$this->isStringLike($source) || trim((string)$source) === '' || str_contains((string)$source, ';') || preg_match('/[\r\n]/', (string)$source)) {
+                    $this->issue('high', 'invalid_csp_source_' . $directive, 'security_headers.csp.directives.' . $directive, 'CSP source values must be non-empty single tokens without CR/LF or semicolons.', 'safe CSP source token', $source);
+                    break;
+                }
+            }
+            if ($this->isProduction($app) && $directive === 'script-src' && in_array("'unsafe-inline'", $sources, true) && empty($csp['report_only'])) {
+                $this->issue('medium', 'csp_script_unsafe_inline', 'security_headers.csp.directives.script-src', "Avoid 'unsafe-inline' in production enforcing CSP. Prefer nonces or hashes.", 'nonce/hash based scripts', $sources);
+            }
+            if ($this->isProduction($app) && in_array('*', $sources, true) && empty($csp['report_only'])) {
+                $this->issue('medium', 'csp_wildcard_source_' . $directive, 'security_headers.csp.directives.' . $directive, 'Avoid wildcard CSP sources in production enforcing mode.', 'explicit sources', $sources);
+            }
+        }
+
+        $permissions = $headers['permissions_policy'] ?? null;
+        if ($permissions !== null && $permissions !== false) {
+            if (is_string($permissions)) {
+                $permissions = ['preset' => $permissions];
+            }
+            if (!is_array($permissions)) {
+                $this->issue('medium', 'invalid_permissions_policy', 'security_headers.permissions_policy', 'permissions_policy must be a preset string or config array.', 'string|array', $permissions);
+            } else {
+                $preset = strtolower((string)($permissions['preset'] ?? 'strict'));
+                if (!in_array($preset, ['strict', 'balanced', 'minimal', 'custom', 'none', 'disabled', 'off'], true)) {
+                    $this->issue('medium', 'unknown_permissions_policy_preset', 'security_headers.permissions_policy.preset', 'Unknown Permissions-Policy preset.', 'strict|balanced|minimal|custom|none', $preset);
+                }
+                if (isset($permissions['directives']) && !is_array($permissions['directives'])) {
+                    $this->issue('medium', 'invalid_permissions_policy_directives', 'security_headers.permissions_policy.directives', 'Permissions-Policy directives must be an associative array.', 'array', $permissions['directives']);
+                }
             }
         }
     }

@@ -43,6 +43,7 @@ use Mnb\SecurityCore\Http\Middleware\RequestTrustMiddleware;
 use Mnb\SecurityCore\Http\Middleware\ServerIdentityProtectionMiddleware;
 use Mnb\SecurityCore\Http\Middleware\TrustedHostMiddleware;
 use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
+use Mnb\SecurityCore\Http\SecurityHeadersBuilder;
 use Mnb\SecurityCore\Http\MiddlewarePipeline;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Http\Response;
@@ -54,6 +55,7 @@ use Mnb\SecurityCore\RateLimit\FileRateLimiter;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicy;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicyRegistry;
 use Mnb\SecurityCore\Security\ProductionSecurityChecker;
+use Mnb\SecurityCore\Security\CspNonceManager;
 use Mnb\SecurityCore\Security\SecurityConfigValidator;
 use Mnb\SecurityCore\Security\VulnerabilityMatrix;
 use Mnb\SecurityCore\Pentest\PentestChecklist;
@@ -284,6 +286,35 @@ ok($archivePolicy->allowsExtension('zip') && !$archivePolicy->allowsExtension('p
 $headersPipeline = new MiddlewarePipeline([new SecurityHeadersMiddleware(['hsts' => true])]);
 $headersResponse = $headersPipeline->handle(new Request('GET', '/', [], [], [], ['HTTPS' => 'on']), fn() => Response::text('ok'));
 ok(isset($headersResponse->headers()['Content-Security-Policy']) && isset($headersResponse->headers()['Strict-Transport-Security']), 'security headers middleware applies CSP and HSTS');
+
+$headersBuilder = new SecurityHeadersBuilder([
+    'hsts' => ['enabled' => true, 'max_age' => 63072000, 'include_subdomains' => true, 'preload' => true],
+    'csp' => [
+        'enabled' => true,
+        'nonce_enabled' => true,
+        'nonce_directives' => ['script-src'],
+        'directives' => ['default-src' => ["'self'"], 'script-src' => ["'self'"], 'object-src' => ["'none'"]],
+    ],
+    'permissions_policy' => ['preset' => 'balanced'],
+]);
+$builtHeaders = $headersBuilder->headers('abc123', new Request('GET', '/', [], [], [], ['HTTPS' => 'on']));
+ok(
+    str_contains($builtHeaders['Content-Security-Policy'] ?? '', "'nonce-abc123'")
+    && ($builtHeaders['Strict-Transport-Security'] ?? '') === 'max-age=63072000; includeSubDomains; preload'
+    && str_contains($builtHeaders['Permissions-Policy'] ?? '', 'camera=()'),
+    'security headers builder supports CSP nonce, HSTS preload and permissions policy presets'
+);
+
+$autoNonceMiddleware = new SecurityHeadersMiddleware(['csp' => ['auto_nonce' => true, 'nonce_enabled' => true, 'directives' => ['script-src' => ["'self'"]]]]);
+$autoNonceResponse = (new MiddlewarePipeline([$autoNonceMiddleware]))->handle(new Request('GET', '/nonce'), function (Request $request): Response {
+    $nonce = $request->attribute(CspNonceManager::REQUEST_ATTRIBUTE);
+    return Response::text(is_string($nonce) && $nonce !== '' ? $nonce : 'missing');
+});
+ok(
+    $autoNonceResponse->body() !== 'missing'
+    && str_contains($autoNonceResponse->headers()['Content-Security-Policy'] ?? '', "'nonce-" . $autoNonceResponse->body() . "'"),
+    'security headers middleware can generate request-scoped CSP nonce automatically'
+);
 
 $request = new Request('GET', '/', [], [], [], ['HTTPS' => 'off']);
 $pipeline = new MiddlewarePipeline([new HttpsMiddleware(true)]);

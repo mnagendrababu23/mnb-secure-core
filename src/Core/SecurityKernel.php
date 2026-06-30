@@ -27,6 +27,7 @@ use Mnb\SecurityCore\RateLimit\RateLimitPolicy;
 use Mnb\SecurityCore\RateLimit\RateLimitPolicyRegistry;
 use Mnb\SecurityCore\Http\Middleware\RateLimitPolicyMiddleware;
 use Mnb\SecurityCore\Http\Middleware\RequestTrustMiddleware;
+use Mnb\SecurityCore\Http\Middleware\SecurityHeadersMiddleware;
 use Mnb\SecurityCore\Http\Request;
 use Mnb\SecurityCore\Memory\MemoryConfig;
 use Mnb\SecurityCore\Memory\MemoryGuard;
@@ -213,6 +214,11 @@ class SecurityKernel
     public function requestTrustMiddleware(): RequestTrustMiddleware
     {
         return new RequestTrustMiddleware($this->config['origin_protection'] ?? []);
+    }
+
+    public function securityHeadersMiddleware(?callable $nonceResolver = null): SecurityHeadersMiddleware
+    {
+        return new SecurityHeadersMiddleware($this->config['security_headers'] ?? [], $nonceResolver);
     }
 
     public function pdo(): PDO
